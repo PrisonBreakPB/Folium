@@ -10,12 +10,16 @@ which means it's done working and ready to report back.
 """
 
 import concurrent.futures
+import contextvars
 from .llm import LLM
 from .tools import ALL_TOOLS, get_tool
 from .tools.base import Tool
 from .tools.agent import AgentTool
 from .prompt import system_prompt
-from .context import ContextManager
+from .context import ContextManager, estimate_tokens
+from .observability import mark_current_span_status, observe_trace, span
+from .observability.context import active_observer, current_span_id, current_trace_id
+from .observability.redaction import compact_payload
 
 
 class Agent:
@@ -32,6 +36,8 @@ class Agent:
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
         self._system = system_prompt(self.tools)
+        self.session_id: str | None = None
+        self.turn_index = 0
 
         # wire up sub-agent capability
         for t in self.tools:
@@ -46,47 +52,95 @@ class Agent:
 
     def chat(self, user_input: str, on_token=None, on_tool=None) -> str:
         """Process one user message. May involve multiple LLM/tool rounds."""
+        self.turn_index += 1
+        observer = active_observer()
+        cfg = observer.config
+        user_payload = compact_payload(
+            user_input,
+            include_full=cfg.full_user_input,
+            max_preview_chars=cfg.max_preview_chars,
+            redact=cfg.redact_secrets,
+        )
+        metadata = {
+            "model": self.llm.model,
+            "user_input": user_payload,
+            "max_rounds": self.max_rounds,
+        }
+        with observe_trace(
+            "user_task",
+            "agent",
+            metadata=metadata,
+            session_id=self.session_id,
+            turn_index=self.turn_index,
+        ):
+            result = self._chat_impl(user_input, on_token=on_token, on_tool=on_tool)
+            active_observer().record({
+                "event": "agent_result",
+                "trace_id": current_trace_id(),
+                "span_id": current_span_id(),
+                "name": "user_task",
+                "type": "agent",
+                "status": "max_rounds" if result == "(reached maximum tool-call rounds)" else "ok",
+                "metadata": {
+                    "final_response": compact_payload(
+                        result,
+                        include_full=False,
+                        max_preview_chars=cfg.max_preview_chars,
+                        redact=cfg.redact_secrets,
+                    ),
+                    "message_count": len(self.messages),
+                    "estimated_context_tokens": estimate_tokens(self.messages),
+                },
+            })
+            return result
+
+    def _chat_impl(self, user_input: str, on_token=None, on_tool=None) -> str:
         self.messages.append({"role": "user", "content": user_input})
-        self.context.maybe_compress(self.messages, self.llm)
+        self._maybe_compress_observed("after_user_message")
 
-        for _ in range(self.max_rounds):
-            resp = self.llm.chat(
-                messages=self._full_messages(),
-                tools=self._tool_schemas(),
-                on_token=on_token,
-            )
+        for round_index in range(1, self.max_rounds + 1):
+            with span("agent_round", "agent", metadata={
+                "round_index": round_index,
+                "message_count": len(self.messages),
+                "estimated_context_tokens": estimate_tokens(self.messages),
+            }):
+                resp = self.llm.chat(
+                    messages=self._full_messages(),
+                    tools=self._tool_schemas(),
+                    on_token=on_token,
+                )
 
-            # no tool calls -> LLM is done, return text
-            if not resp.tool_calls:
+                # no tool calls -> LLM is done, return text
+                if not resp.tool_calls:
+                    self.messages.append(resp.message)
+                    return resp.content
+
+                # tool calls -> execute (parallel when multiple, like Claude Code's
+                # StreamingToolExecutor which runs independent tools concurrently)
                 self.messages.append(resp.message)
-                return resp.content
 
-            # tool calls -> execute (parallel when multiple, like Claude Code's
-            # StreamingToolExecutor which runs independent tools concurrently)
-            self.messages.append(resp.message)
-
-            if len(resp.tool_calls) == 1:
-                tc = resp.tool_calls[0]
-                if on_tool:
-                    on_tool(tc.name, tc.arguments)
-                result = self._exec_tool(tc)
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
-            else:
-                # parallel execution for multiple tool calls
-                results = self._exec_tools_parallel(resp.tool_calls, on_tool)
-                for tc, result in zip(resp.tool_calls, results):
+                if len(resp.tool_calls) == 1:
+                    tc = resp.tool_calls[0]
+                    if on_tool:
+                        on_tool(tc.name, tc.arguments)
+                    result = self._exec_tool(tc)
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": result,
                     })
+                else:
+                    # parallel execution for multiple tool calls
+                    results = self._exec_tools_parallel(resp.tool_calls, on_tool)
+                    for tc, result in zip(resp.tool_calls, results):
+                        self.messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        })
 
-            # compress if tool outputs are big
-            self.context.maybe_compress(self.messages, self.llm)
+                # compress if tool outputs are big
+                self._maybe_compress_observed("after_tool_results")
 
         return "(reached maximum tool-call rounds)"
 
@@ -95,12 +149,45 @@ class Agent:
         tool = get_tool(tc.name)
         if tool is None:
             return f"Error: unknown tool '{tc.name}'"
-        try:
-            return tool.execute(**tc.arguments)
-        except TypeError as e:
-            return f"Error: bad arguments for {tc.name}: {e}"
-        except Exception as e:
-            return f"Error executing {tc.name}: {e}"
+        observer = active_observer()
+        cfg = observer.config
+        metadata = {
+            "tool_call_id": tc.id,
+            "tool_name": tc.name,
+            "arguments": compact_payload(
+                tc.arguments,
+                include_full=cfg.full_tool_args,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            ),
+        }
+        with span(tc.name, "tool", metadata=metadata):
+            try:
+                result = tool.execute(**tc.arguments)
+            except TypeError as e:
+                result = f"Error: bad arguments for {tc.name}: {e}"
+            except Exception as e:
+                result = f"Error executing {tc.name}: {e}"
+            status = "error" if result.startswith("Error") or result.startswith("⚠") else "ok"
+            if status == "error":
+                mark_current_span_status("error")
+            observer.record({
+                "event": "tool_result",
+                "trace_id": current_trace_id(),
+                "span_id": current_span_id(),
+                "name": tc.name,
+                "type": "tool",
+                "status": status,
+                "metadata": {
+                    "result": compact_payload(
+                        result,
+                        include_full=cfg.full_tool_output,
+                        max_preview_chars=cfg.max_preview_chars,
+                        redact=cfg.redact_secrets,
+                    )
+                },
+            })
+            return result
 
     def _exec_tools_parallel(self, tool_calls, on_tool=None) -> list[str]:
         """Run multiple tool calls concurrently using threads.
@@ -114,9 +201,38 @@ class Agent:
                 on_tool(tc.name, tc.arguments)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(self._exec_tool, tc) for tc in tool_calls]
+            futures = [
+                pool.submit(contextvars.copy_context().run, self._exec_tool, tc)
+                for tc in tool_calls
+            ]
             return [f.result() for f in futures]
 
     def reset(self):
         """Clear conversation history."""
         self.messages.clear()
+
+    def _maybe_compress_observed(self, trigger: str) -> bool:
+        before_tokens = estimate_tokens(self.messages)
+        before_messages = len(self.messages)
+        with span("context_compression", "context", metadata={
+            "trigger": trigger,
+            "before_tokens": before_tokens,
+            "before_messages": before_messages,
+        }):
+            compressed = self.context.maybe_compress(self.messages, self.llm)
+            if compressed:
+                active_observer().record({
+                    "event": "context_compressed",
+                    "trace_id": current_trace_id(),
+                    "span_id": current_span_id(),
+                    "name": "context_compression",
+                    "type": "context",
+                    "metadata": {
+                        "trigger": trigger,
+                        "before_tokens": before_tokens,
+                        "after_tokens": estimate_tokens(self.messages),
+                        "before_messages": before_messages,
+                        "after_messages": len(self.messages),
+                    },
+                })
+        return compressed

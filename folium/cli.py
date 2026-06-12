@@ -15,6 +15,7 @@ from .agent import Agent
 from .llm import LLM, LiteLLM
 from .config import Config
 from .session import save_session, load_session, list_sessions
+from .observability import list_traces, read_trace_summary
 from . import __version__
 
 console = Console()
@@ -77,6 +78,7 @@ def main():
         loaded = load_session(args.resume)
         if loaded:
             agent.messages, loaded_model = loaded
+            agent.session_id = args.resume
             # restore the model from the saved session unless overridden by CLI
             if not args.model:
                 agent.llm.model = loaded_model
@@ -187,6 +189,7 @@ def _repl(agent: Agent, config: Config):
             continue
         if user_input == "/save":
             sid = save_session(agent.messages, config.model)
+            agent.session_id = sid
             console.print(f"[green]Session saved: {sid}[/green]")
             console.print(f"Resume with: folium -r {sid}")
             continue
@@ -205,7 +208,36 @@ def _repl(agent: Agent, config: Config):
                 console.print("[dim]No saved sessions.[/dim]")
             else:
                 for s in sessions:
-                    console.print(f"  [cyan]{s['id']}[/cyan] ({s['model']}, {s['saved_at']}) {s['preview']}")
+                    console.print(f"  [cyan]{s['id']}[/cyan] ({s['model']}, {s['updated_at']}) {s['preview']}")
+            continue
+        if user_input == "/traces":
+            traces = list_traces()
+            if not traces:
+                console.print("[dim]No traces found.[/dim]")
+            else:
+                for t in traces:
+                    console.print(
+                        f"  [cyan]{t['trace_id']}[/cyan] status={t['status']} "
+                        f"duration={t['duration_ms']}ms llm={t['llm_calls']} "
+                        f"tools={t['tool_calls']} errors={t['errors']}"
+                    )
+            continue
+        if user_input.startswith("/trace "):
+            trace_id = user_input.split(" ", 1)[1].strip()
+            summary = read_trace_summary(trace_id)
+            if not summary:
+                console.print("[red]Trace not found.[/red]")
+            else:
+                console.print(f"[bold]Trace:[/bold] {summary['trace_id']}")
+                console.print(f"Status: {summary['status']}")
+                console.print(f"Duration: {summary['duration_ms']}ms")
+                console.print(f"LLM calls: {summary['llm_calls']}")
+                console.print(f"Tool calls: {summary['tool_calls']}")
+                console.print(f"Errors: {summary['errors']}")
+                for s in summary.get("spans", [])[:20]:
+                    console.print(
+                        f"  {s['type']}:{s['name']} {s['status']} {s['duration_ms']}ms"
+                    )
             continue
 
         # call the agent
@@ -243,6 +275,8 @@ def _show_help():
         "  /diff          Show files modified this session\n"
         "  /save          Save session to disk\n"
         "  /sessions      List saved sessions\n"
+        "  /traces        List recent execution traces\n"
+        "  /trace <id>    Show a trace summary\n"
         "  quit           Exit Folium\n"
         "\n"
         "[bold]Input:[/bold]\n"

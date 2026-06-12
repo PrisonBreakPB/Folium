@@ -14,6 +14,9 @@ import time
 from dataclasses import dataclass, field
 
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
+from .observability import span
+from .observability.context import active_observer, current_span_id, current_trace_id
+from .observability.redaction import compact_payload
 
 
 @dataclass
@@ -113,6 +116,32 @@ class LLM:
         on_token=None,
     ) -> LLMResponse:
         """Send messages, stream back response, handle tool calls."""
+        observer = active_observer()
+        cfg = observer.config
+        llm_metadata = {
+            "model": self.model,
+            "message_count": len(messages),
+            "tools_count": len(tools or []),
+            "parameters": {
+                k: v for k, v in self.extra.items()
+                if k in {"temperature", "max_tokens", "top_p"}
+            },
+            "input": compact_payload(
+                messages,
+                include_full=cfg.full_llm_input,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            ),
+        }
+        with span("chat.completions", "llm", metadata=llm_metadata):
+            return self._chat_observed(messages, tools, on_token)
+
+    def _chat_observed(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        on_token=None,
+    ) -> LLMResponse:
         params: dict = {
             "model": self.model,
             "messages": messages,
@@ -134,6 +163,8 @@ class LLM:
         tc_map: dict[int, dict] = {}  # index -> {id, name, arguments_str}
         prompt_tok = 0
         completion_tok = 0
+        first_token_at = None
+        stream_started_at = time.time()
 
         for chunk in stream:
             # usage info comes in the final chunk
@@ -147,6 +178,8 @@ class LLM:
 
             # accumulate text
             if delta.content:
+                if first_token_at is None:
+                    first_token_at = time.time()
                 content_parts.append(delta.content)
                 if on_token:
                     on_token(delta.content)
@@ -178,12 +211,37 @@ class LLM:
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
 
-        return LLMResponse(
+        response = LLMResponse(
             content="".join(content_parts),
             tool_calls=parsed,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
         )
+        cfg = active_observer().config
+        active_observer().record({
+            "event": "llm_result",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "chat.completions",
+            "type": "llm",
+            "metadata": {
+                "model": self.model,
+                "prompt_tokens": prompt_tok,
+                "completion_tokens": completion_tok,
+                "tool_call_count": len(parsed),
+                "time_to_first_token_ms": (
+                    int((first_token_at - stream_started_at) * 1000)
+                    if first_token_at is not None else None
+                ),
+                "output": compact_payload(
+                    response.content,
+                    include_full=cfg.full_llm_output,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+            },
+        })
+        return response
 
     def _call_with_retry(self, params: dict, max_retries: int = 3):
         """Retry on transient errors with exponential backoff."""
@@ -238,6 +296,33 @@ class LiteLLM(LLM):
         on_token=None,
     ) -> LLMResponse:
         """Send messages via litellm, stream back response, handle tool calls."""
+        observer = active_observer()
+        cfg = observer.config
+        llm_metadata = {
+            "model": self.model,
+            "provider": "litellm",
+            "message_count": len(messages),
+            "tools_count": len(tools or []),
+            "parameters": {
+                k: v for k, v in self.extra.items()
+                if k in {"temperature", "max_tokens", "top_p"}
+            },
+            "input": compact_payload(
+                messages,
+                include_full=cfg.full_llm_input,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            ),
+        }
+        with span("litellm.completion", "llm", metadata=llm_metadata):
+            return self._chat_observed(messages, tools, on_token)
+
+    def _chat_observed(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        on_token=None,
+    ) -> LLMResponse:
         params: dict = {
             "model": self.model,
             "messages": messages,
@@ -253,6 +338,8 @@ class LiteLLM(LLM):
         tc_map: dict[int, dict] = {}
         prompt_tok = 0
         completion_tok = 0
+        first_token_at = None
+        stream_started_at = time.time()
 
         for chunk in stream:
             usage = getattr(chunk, "usage", None)
@@ -265,6 +352,8 @@ class LiteLLM(LLM):
             delta = chunk.choices[0].delta
 
             if getattr(delta, "content", None):
+                if first_token_at is None:
+                    first_token_at = time.time()
                 content_parts.append(delta.content)
                 if on_token:
                     on_token(delta.content)
@@ -294,12 +383,37 @@ class LiteLLM(LLM):
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
 
-        return LLMResponse(
+        response = LLMResponse(
             content="".join(content_parts),
             tool_calls=parsed,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
         )
+        cfg = active_observer().config
+        active_observer().record({
+            "event": "llm_result",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "litellm.completion",
+            "type": "llm",
+            "metadata": {
+                "model": self.model,
+                "prompt_tokens": prompt_tok,
+                "completion_tokens": completion_tok,
+                "tool_call_count": len(parsed),
+                "time_to_first_token_ms": (
+                    int((first_token_at - stream_started_at) * 1000)
+                    if first_token_at is not None else None
+                ),
+                "output": compact_payload(
+                    response.content,
+                    include_full=cfg.full_llm_output,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+            },
+        })
+        return response
 
     def _call_with_retry(self, params: dict, max_retries: int = 3):
         """Retry on transient errors with exponential backoff via litellm."""

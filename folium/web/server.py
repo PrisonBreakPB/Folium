@@ -13,6 +13,7 @@ from ..config import Config
 from ..session import save_session, load_session, list_sessions, delete_session
 from ..context import estimate_tokens
 from ..tools.edit import _changed_files
+from ..observability import list_traces, read_trace_summary
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -61,6 +62,7 @@ def _auto_save():
     if agent and agent.messages:
         sid = save_session(agent.messages, config.model, _state["session_id"])
         _state["session_id"] = sid
+        agent.session_id = sid
 
 
 # ── endpoints ───────────────────────────────────────────────
@@ -80,6 +82,7 @@ async def chat(req: ChatRequest):
     on_token, on_tool = _make_bridge(queue)
 
     async with _chat_lock:
+        _state["agent"].session_id = _state["session_id"]
         task = asyncio.create_task(
             asyncio.to_thread(_state["agent"].chat, req.message, on_token=on_token, on_tool=on_tool)
         )
@@ -115,6 +118,7 @@ async def new_conversation():
     _auto_save()
     _state["agent"].reset()
     _state["session_id"] = None
+    _state["agent"].session_id = None
     return {"result": "New conversation started.", "session_id": _state["session_id"]}
 
 
@@ -138,6 +142,7 @@ async def switch_conversation(req: SwitchRequest):
     messages, model = loaded
     _state["agent"].messages = messages
     _state["session_id"] = req.session_id
+    _state["agent"].session_id = req.session_id
     # return messages so frontend can render them
     return {
         "result": f"Switched to {req.session_id}",
@@ -165,6 +170,7 @@ async def command(req: CommandRequest):
     if cmd in ("/reset", "reset"):
         agent.reset()
         _state["session_id"] = None
+        agent.session_id = None
         return {"result": "Conversation reset."}
 
     if cmd in ("/tokens", "tokens"):
@@ -202,6 +208,39 @@ async def command(req: CommandRequest):
         lines = [f"  {s['id']} ({s['model']}, {s['updated_at']}) {s['preview']}" for s in sessions]
         return {"result": "\n".join(lines)}
 
+    if cmd in ("/traces", "traces"):
+        traces = list_traces()
+        if not traces:
+            return {"result": "No traces found."}
+        lines = [
+            (
+                f"  {t['trace_id']} status={t['status']} "
+                f"duration={t['duration_ms']}ms llm={t['llm_calls']} "
+                f"tools={t['tool_calls']} errors={t['errors']}"
+            )
+            for t in traces
+        ]
+        return {"result": "\n".join(lines)}
+
+    if cmd.startswith("/trace ") or cmd.startswith("trace "):
+        trace_id = cmd.split(" ", 1)[1].strip()
+        summary = read_trace_summary(trace_id)
+        if not summary:
+            return JSONResponse({"error": "Trace not found"}, status_code=404)
+        lines = [
+            f"Trace: {summary['trace_id']}",
+            f"Status: {summary['status']}",
+            f"Duration: {summary['duration_ms']}ms",
+            f"LLM calls: {summary['llm_calls']}",
+            f"Tool calls: {summary['tool_calls']}",
+            f"Errors: {summary['errors']}",
+        ]
+        for s in summary.get("spans", [])[:20]:
+            lines.append(
+                f"- {s['type']}:{s['name']} {s['status']} {s['duration_ms']}ms"
+            )
+        return {"result": "\n".join(lines)}
+
     if cmd.startswith("/model ") or cmd.startswith("model "):
         new_model = cmd.split(" ", 1)[1].strip()
         agent.llm.model = new_model
@@ -212,7 +251,7 @@ async def command(req: CommandRequest):
         return {"result": f"Current model: {config.model}"}
 
     if cmd in ("/help", "help"):
-        return {"result": "Commands: /help /reset /tokens /compact /diff /save /sessions /model <name>"}
+        return {"result": "Commands: /help /reset /tokens /compact /diff /save /sessions /traces /trace <id> /model <name>"}
 
     return {"result": f"Unknown command: {cmd}"}
 
@@ -223,6 +262,7 @@ def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 
     _state["agent"] = agent
     _state["config"] = config
     _state["session_id"] = None
+    agent.session_id = None
 
     import uvicorn
     uvicorn.run(app, host=host, port=port, log_level="info")
