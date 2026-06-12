@@ -6,7 +6,7 @@ provider by changing OPENAI_BASE_URL + OPENAI_API_KEY. That's it.
 
 For providers that are NOT OpenAI-compatible (AWS Bedrock, Google Vertex,
 etc.), use the LiteLLM backend which routes to 100+ providers through a
-single unified interface. Set CORECODER_PROVIDER=litellm.
+single unified interface. Set FOLIUM_PROVIDER=litellm.
 """
 
 import json
@@ -211,7 +211,7 @@ class LiteLLM(LLM):
     a single interface to switch between any provider by changing
     the model string.
 
-    Set CORECODER_PROVIDER=litellm and use LiteLLM model strings
+    Set FOLIUM_PROVIDER=litellm and use LiteLLM model strings
     like ``anthropic/claude-3-haiku``, ``bedrock/anthropic.claude-v2``,
     ``vertex_ai/gemini-pro``, etc.
     """

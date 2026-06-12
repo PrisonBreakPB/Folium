@@ -1,4 +1,4 @@
-"""Web frontend for CoreCoder."""
+"""Web frontend for Folium."""
 
 from .server import run_server
 

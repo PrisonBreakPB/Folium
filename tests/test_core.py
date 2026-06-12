@@ -3,10 +3,10 @@
 import os
 import pathlib
 
-from corecoder import Agent, LLM, Config, ALL_TOOLS, __version__
-from corecoder.context import ContextManager, estimate_tokens
-from corecoder.session import save_session, load_session, list_sessions
-from corecoder.tools import get_tool
+from folium import Agent, LLM, Config, ALL_TOOLS, __version__
+from folium.context import ContextManager, estimate_tokens
+from folium.session import save_session, load_session, list_sessions
+from folium.tools import get_tool
 
 
 def test_version():
@@ -22,16 +22,16 @@ def test_public_api_exports():
 
 
 def test_config_from_env():
-    os.environ["CORECODER_MODEL"] = "test-model"
+    os.environ["FOLIUM_MODEL"] = "test-model"
     c = Config.from_env()
     assert c.model == "test-model"
-    del os.environ["CORECODER_MODEL"]
+    del os.environ["FOLIUM_MODEL"]
 
 
 def test_config_defaults():
     # temporarily clear relevant env vars
     saved = {}
-    for k in ["CORECODER_MODEL", "CORECODER_MAX_TOKENS"]:
+    for k in ["FOLIUM_MODEL", "FOLIUM_MAX_TOKENS"]:
         if k in os.environ:
             saved[k] = os.environ.pop(k)
 
@@ -86,7 +86,7 @@ def test_session_save_load():
     assert loaded[0] == msgs
     assert loaded[1] == "test-model"
     # cleanup
-    pathlib.Path.home().joinpath(".corecoder/sessions/pytest_test_session.json").unlink()
+    pathlib.Path.home().joinpath(".folium/sessions/pytest_test_session.json").unlink()
 
 
 def test_session_name_is_sanitized():
@@ -94,7 +94,7 @@ def test_session_name_is_sanitized():
     sid = save_session(msgs, "test-model", "../Research Notes!")
 
     assert sid == "Research-Notes"
-    path = pathlib.Path.home().joinpath(".corecoder/sessions/Research-Notes.json")
+    path = pathlib.Path.home().joinpath(".folium/sessions/Research-Notes.json")
     assert path.exists()
     assert load_session("../Research Notes!") is not None
     path.unlink()
@@ -112,7 +112,7 @@ def test_list_sessions():
 # --- Cost estimation ---
 
 def test_cost_estimation_known_model():
-    from corecoder.llm import LLM
+    from folium.llm import LLM
     llm = LLM.__new__(LLM)
     llm.model = "gpt-5.4"
     llm.total_prompt_tokens = 1_000_000
@@ -122,7 +122,7 @@ def test_cost_estimation_known_model():
     assert cost == 2.5 + 7.5  # $2.5/M in + $15/M out * 0.5M
 
 def test_cost_estimation_unknown_model():
-    from corecoder.llm import LLM
+    from folium.llm import LLM
     llm = LLM.__new__(LLM)
     llm.model = "some-custom-model"
     llm.total_prompt_tokens = 1000
@@ -133,7 +133,7 @@ def test_cost_estimation_unknown_model():
 # --- Changed files tracking ---
 
 def test_edit_tracks_changed_files(tmp_path):
-    from corecoder.tools.edit import _changed_files
+    from folium.tools.edit import _changed_files
     _changed_files.clear()
     edit = get_tool("edit_file")
     path = tmp_path / "sample.py"
@@ -144,7 +144,7 @@ def test_edit_tracks_changed_files(tmp_path):
 
 
 def test_write_tracks_changed_files(tmp_path):
-    from corecoder.tools.edit import _changed_files
+    from folium.tools.edit import _changed_files
     _changed_files.clear()
     write = get_tool("write_file")
     path = tmp_path / "tracked.txt"

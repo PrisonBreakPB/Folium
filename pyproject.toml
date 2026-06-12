@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "corecoder"
+name = "folium"
 version = "0.3.0"
 description = "Minimal AI coding agent (~1400 LoC) inspired by Claude Code. Works with any LLM. (formerly NanoCoder)"
 readme = "README.md"
@@ -37,16 +37,16 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["corecoder"]
+packages = ["folium"]
 
 [project.optional-dependencies]
 litellm = ["litellm>=1.60.0,<2.0.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-corecoder = "corecoder.cli:main"
+folium = "folium.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/he-yufeng/CoreCoder"
-Repository = "https://github.com/he-yufeng/CoreCoder"
-Issues = "https://github.com/he-yufeng/CoreCoder/issues"
+Homepage = "https://github.com/yangchenb/Folium"
+Repository = "https://github.com/yangchenb/Folium"
+Issues = "https://github.com/yangchenb/Folium/issues"

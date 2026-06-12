@@ -1,4 +1,4 @@
-"""FastAPI server with SSE streaming for CoreCoder."""
+"""FastAPI server with SSE streaming for Folium."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ _state = {
 }
 _chat_lock = asyncio.Lock()
 
-app = FastAPI(title="CoreCoder")
+app = FastAPI(title="Folium")
 
 
 # ── request models ──────────────────────────────────────────

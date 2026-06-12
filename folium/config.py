@@ -41,17 +41,17 @@ class Config:
         _load_dotenv()
         # pick up common env vars automatically
         api_key = (
-            os.getenv("CORECODER_API_KEY")
+            os.getenv("FOLIUM_API_KEY")
             or os.getenv("OPENAI_API_KEY")
             or os.getenv("DEEPSEEK_API_KEY")
             or ""
         )
         return cls(
-            model=os.getenv("CORECODER_MODEL", "gpt-4o"),
+            model=os.getenv("FOLIUM_MODEL", "gpt-4o"),
             api_key=api_key,
-            base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("CORECODER_BASE_URL"),
-            max_tokens=int(os.getenv("CORECODER_MAX_TOKENS", "4096")),
-            temperature=float(os.getenv("CORECODER_TEMPERATURE", "0")),
-            max_context_tokens=int(os.getenv("CORECODER_MAX_CONTEXT", "128000")),
-            provider=os.getenv("CORECODER_PROVIDER", "openai"),
+            base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("FOLIUM_BASE_URL"),
+            max_tokens=int(os.getenv("FOLIUM_MAX_TOKENS", "4096")),
+            temperature=float(os.getenv("FOLIUM_TEMPERATURE", "0")),
+            max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", "128000")),
+            provider=os.getenv("FOLIUM_PROVIDER", "openai"),
         )

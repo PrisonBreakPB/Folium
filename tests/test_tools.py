@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from corecoder.tools import ALL_TOOLS, get_tool
+from folium.tools import ALL_TOOLS, get_tool
 
 
 def test_tool_count():
@@ -80,7 +80,7 @@ def test_read_file(tmp_path):
 
 def test_read_file_not_found():
     read = get_tool("read_file")
-    r = read.execute(file_path="/tmp/corecoder_nonexistent_file.txt")
+    r = read.execute(file_path="/tmp/folium_nonexistent_file.txt")
     assert "not found" in r.lower() or "Error" in r
 
 
