@@ -24,6 +24,35 @@ def read_trace_summary(trace_id: str, trace_dir: str | Path | None = None) -> di
     return _file_summary(path, include_spans=True)
 
 
+def delete_traces_for_session(session_id: str, trace_dir: str | Path | None = None) -> int:
+    """Delete trace files associated with a session. Returns deleted file count."""
+    root = Path(trace_dir) if trace_dir else ObservabilityConfig.from_env().trace_dir
+    if not root.exists():
+        return 0
+
+    deleted = 0
+    for path in root.glob("*.jsonl"):
+        if _trace_matches_session(path, session_id):
+            path.unlink()
+            deleted += 1
+    return deleted
+
+
+def _trace_matches_session(path: Path, session_id: str) -> bool:
+    try:
+        with path.open(encoding="utf-8") as fp:
+            for line in fp:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("session_id") == session_id:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def _file_summary(path: Path, include_spans: bool = False) -> dict:
     starts: dict[str, dict] = {}
     spans: list[dict] = []

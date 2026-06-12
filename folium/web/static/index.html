@@ -176,6 +176,19 @@ body {
   color: var(--text);
   border-radius: 12px 12px 12px 4px;
 }
+.msg.process {
+  align-self: flex-start;
+  background: #f6f3ea;
+  color: #5f625a;
+  border: 1px solid #ded8c9;
+  border-left: 4px solid #9aaa91;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: system-ui, sans-serif;
+  line-height: 1.55;
+  max-width: 86%;
+}
 .msg.system {
   align-self: center;
   background: transparent;
@@ -188,15 +201,26 @@ body {
 }
 
 .tool-tag {
-  display: inline-block;
-  background: var(--bg);
-  color: var(--accent);
+  display: block;
+  background: #fffdf8;
+  color: #3f6f4d;
   font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 3px;
-  margin-top: 8px;
-  font-family: system-ui, sans-serif;
-  border: 1px solid var(--border);
+  padding: 6px 8px;
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  border: 1px solid #e4dfd2;
+  border-radius: 5px;
+}
+
+.process-title {
+  color: #586253;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.process-body {
+  color: #6f736b;
 }
 
 /* ── input area ─────────────────── */
@@ -247,7 +271,7 @@ body {
     <div class="brand">Folium</div>
     <div class="brand-sub" id="modelInfo"></div>
   </div>
-  <button class="new-btn" onclick="newConversation()">+ New conversation</button>
+  <button class="new-btn" onclick="newConversation()">+ 新建对话</button>
   <div class="conv-list" id="convList"></div>
 </div>
 
@@ -255,19 +279,17 @@ body {
   <div class="topbar">
     <span class="session-label" id="sessionId"></span>
     <div class="cmd-bar">
-      <button onclick="sendCmd('/help')">Help</button>
-      <button onclick="sendCmd('/tokens')">Tokens</button>
-      <button onclick="sendCmd('/compact')">Compact</button>
-      <button onclick="sendCmd('/diff')">Diff</button>
-      <button onclick="sendCmd('/save')">Save</button>
+      <button onclick="sendCmd('/help')">帮助</button>
+      <button onclick="sendCmd('/tokens')">Token 用量</button>
+      <button onclick="sendCmd('/compact')">压缩上下文</button>
     </div>
   </div>
 
   <div class="messages" id="messages"></div>
 
   <div class="input-area">
-    <textarea id="input" placeholder="Ask anything..." rows="1"></textarea>
-    <button id="sendBtn" onclick="sendMessage()">Send</button>
+    <textarea id="input" placeholder="请输入你的问题..." rows="1"></textarea>
+    <button id="sendBtn" onclick="sendMessage()">发送</button>
   </div>
 </div>
 
@@ -296,7 +318,7 @@ async function loadConversations() {
   const resp = await fetch('/conversations');
   const data = await resp.json();
   const current = data.current;
-  sessionIdEl.textContent = current ? current : 'New conversation';
+  sessionIdEl.textContent = current ? current : '新建对话';
 
   convListEl.innerHTML = '';
   for (const s of data.sessions) {
@@ -304,7 +326,7 @@ async function loadConversations() {
     div.className = 'conv-item' + (s.id === current ? ' active' : '');
     div.innerHTML = `
       <span class="delete-btn" onclick="deleteConv('${s.id}', event)">&#x2715;</span>
-      ${s.preview || '(Empty)'}
+      ${s.preview || '(空对话)'}
       <div class="conv-time">${s.updated_at}</div>
     `;
     div.onclick = () => switchConv(s.id);
@@ -326,7 +348,7 @@ async function switchConv(id) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({session_id: id})
   });
-  if (!resp.ok) { alert('Switch failed'); return; }
+  if (!resp.ok) { alert('切换失败'); return; }
   const data = await resp.json();
 
   messagesEl.innerHTML = '';
@@ -338,7 +360,7 @@ async function switchConv(id) {
     } else if (role === 'assistant' && content) {
       appendMsg('assistant', content);
     } else if (role === 'tool') {
-      appendMsg('system', '[tool result] ' + content.slice(0, 100));
+      appendProcess('工具结果', content.slice(0, 160));
     }
   }
   loadConversations();
@@ -346,12 +368,21 @@ async function switchConv(id) {
 
 async function deleteConv(id, event) {
   event.stopPropagation();
-  if (!confirm('Delete this conversation?')) return;
+  if (!confirm('确认删除这个对话吗？相关的本地持久化记录和执行 trace 也会一起删除。')) return;
   const resp = await fetch('/delete', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({session_id: id})
   });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    alert(err.error || '删除失败');
+    return;
+  }
+  const data = await resp.json();
+  if (data.deleted_current) {
+    messagesEl.innerHTML = '';
+  }
   loadConversations();
 }
 
@@ -377,6 +408,24 @@ function appendMsg(role, text) {
   return div;
 }
 
+function appendProcess(title, text = '') {
+  const div = document.createElement('div');
+  div.className = 'msg process';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'process-title';
+  titleEl.textContent = title;
+  div.appendChild(titleEl);
+  if (text) {
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'process-body';
+    bodyEl.textContent = text;
+    div.appendChild(bodyEl);
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
 // ── send message ─────────────────────────────
 async function sendMessage() {
   const text = inputEl.value.trim();
@@ -388,7 +437,16 @@ async function sendMessage() {
   sendBtn.disabled = true;
 
   appendMsg('user', text);
-  const assistantDiv = appendMsg('assistant', '');
+  let assistantDiv = null;
+  let processDiv = null;
+  let processBody = null;
+
+  function ensureAssistant() {
+    if (!assistantDiv) {
+      assistantDiv = appendMsg('assistant', '');
+    }
+    return assistantDiv;
+  }
 
   try {
     const resp = await fetch('/chat', {
@@ -399,7 +457,7 @@ async function sendMessage() {
 
     if (!resp.ok) {
       const err = await resp.json();
-      assistantDiv.textContent = err.error || 'Request failed';
+      ensureAssistant().textContent = err.error || '请求失败';
       return;
     }
 
@@ -422,19 +480,25 @@ async function sendMessage() {
           const event = JSON.parse(line.slice(6));
 
           if (event.type === 'token') {
-            assistantDiv.textContent += event.content;
+            ensureAssistant().textContent += event.content;
             messagesEl.scrollTop = messagesEl.scrollHeight;
           } else if (event.type === 'tool') {
+            if (!processDiv) {
+              processDiv = appendProcess('执行过程');
+              processBody = document.createElement('div');
+              processBody.className = 'process-body';
+              processDiv.appendChild(processBody);
+            }
             const tag = document.createElement('div');
             tag.className = 'tool-tag';
             const brief = Object.entries(event.kwargs)
               .map(([k,v]) => k + '=' + String(v).slice(0,30))
               .join(', ');
-            tag.textContent = '> ' + event.name + '(' + brief + ')';
-            assistantDiv.appendChild(tag);
+            tag.textContent = event.name + '(' + brief + ')';
+            processBody.appendChild(tag);
             messagesEl.scrollTop = messagesEl.scrollHeight;
           } else if (event.type === 'error') {
-            assistantDiv.textContent += '\n❌ ' + event.content;
+            ensureAssistant().textContent += '\n❌ ' + event.content;
           }
         }
       }
@@ -442,7 +506,7 @@ async function sendMessage() {
 
     loadConversations();
   } catch (e) {
-    assistantDiv.textContent += '\n❌ Connection error: ' + e.message;
+    ensureAssistant().textContent += '\n❌ 连接错误：' + e.message;
   } finally {
     busy = false;
     sendBtn.disabled = false;

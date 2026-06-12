@@ -11,15 +11,22 @@ which means it's done working and ready to report back.
 
 import concurrent.futures
 import contextvars
+from dataclasses import dataclass
 from .llm import LLM
 from .tools import ALL_TOOLS, get_tool
-from .tools.base import Tool
+from .tools.base import Tool, ToolValidationError
 from .tools.agent import AgentTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
+
+
+@dataclass
+class ToolExecutionResult:
+    content: str
+    status: str
 
 
 class Agent:
@@ -29,12 +36,14 @@ class Agent:
         tools: list[Tool] | None = None,
         max_context_tokens: int = 128_000,
         max_rounds: int = 50,
+        max_bad_tool_calls: int = 5,
     ):
         self.llm = llm
         self.tools = tools if tools is not None else ALL_TOOLS
         self.messages: list[dict] = []
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
+        self.max_bad_tool_calls = max_bad_tool_calls
         self._system = system_prompt(self.tools)
         self.session_id: str | None = None
         self.turn_index = 0
@@ -97,6 +106,7 @@ class Agent:
     def _chat_impl(self, user_input: str, on_token=None, on_tool=None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         self._maybe_compress_observed("after_user_message")
+        bad_tool_calls = 0
 
         for round_index in range(1, self.max_rounds + 1):
             with span("agent_round", "agent", metadata={
@@ -127,8 +137,9 @@ class Agent:
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": result,
+                        "content": result.content,
                     })
+                    bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
                     # parallel execution for multiple tool calls
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
@@ -136,19 +147,23 @@ class Agent:
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": result,
+                            "content": result.content,
                         })
+                        bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
+
+                if bad_tool_calls >= self.max_bad_tool_calls:
+                    return f"连续 {bad_tool_calls} 次工具调用失败，已停止当前任务。"
 
                 # compress if tool outputs are big
                 self._maybe_compress_observed("after_tool_results")
 
         return "(reached maximum tool-call rounds)"
 
-    def _exec_tool(self, tc) -> str:
-        """Execute a single tool call, returning the result string."""
+    def _exec_tool(self, tc) -> ToolExecutionResult:
+        """Execute a single tool call."""
         tool = get_tool(tc.name)
         if tool is None:
-            return f"Error: unknown tool '{tc.name}'"
+            return ToolExecutionResult(f"Error: unknown tool '{tc.name}'", "error")
         observer = active_observer()
         cfg = observer.config
         metadata = {
@@ -163,13 +178,16 @@ class Agent:
         }
         with span(tc.name, "tool", metadata=metadata):
             try:
-                result = tool.execute(**tc.arguments)
-            except TypeError as e:
-                result = f"Error: bad arguments for {tc.name}: {e}"
+                arguments = tool.validate_arguments(tc.arguments)
+                result = tool.execute(**arguments)
+                status = "error" if result.startswith("Error") or result.startswith("⚠") else "ok"
+            except ToolValidationError as e:
+                result = f"Error: {e}"
+                status = "bad_arguments"
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
-            status = "error" if result.startswith("Error") or result.startswith("⚠") else "ok"
-            if status == "error":
+                status = "error"
+            if status in {"error", "bad_arguments"}:
                 mark_current_span_status("error")
             observer.record({
                 "event": "tool_result",
@@ -187,9 +205,9 @@ class Agent:
                     )
                 },
             })
-            return result
+            return ToolExecutionResult(result, status)
 
-    def _exec_tools_parallel(self, tool_calls, on_tool=None) -> list[str]:
+    def _exec_tools_parallel(self, tool_calls, on_tool=None) -> list[ToolExecutionResult]:
         """Run multiple tool calls concurrently using threads.
 
         This is inspired by Claude Code's StreamingToolExecutor which starts
@@ -206,6 +224,12 @@ class Agent:
                 for tc in tool_calls
             ]
             return [f.result() for f in futures]
+
+    @staticmethod
+    def _count_bad_tool_call_streak(result: ToolExecutionResult, current: int) -> int:
+        if result.status == "bad_arguments":
+            return current + 1
+        return 0
 
     def reset(self):
         """Clear conversation history."""

@@ -28,6 +28,11 @@ def _new_session_id() -> str:
     return f"session_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
+def new_session_id() -> str:
+    """Create a session ID without writing a session file."""
+    return _new_session_id()
+
+
 def _session_path(session_id: str) -> Path:
     path = (SESSIONS_DIR / f"{_normalize_session_id(session_id)}.json").resolve()
     root = SESSIONS_DIR.resolve()

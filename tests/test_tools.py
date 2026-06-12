@@ -31,6 +31,12 @@ def test_bash_basic():
     assert "hello" in bash.execute(command="echo hello")
 
 
+def test_bash_utf8_output():
+    bash = get_tool("bash")
+    r = bash.execute(command=f'"{sys.executable}" -c "print(\'中文输出\')"')
+    assert "中文输出" in r
+
+
 def test_bash_exit_code():
     bash = get_tool("bash")
     r = bash.execute(command="exit 42")
@@ -76,6 +82,16 @@ def test_read_file(tmp_path):
     r = read.execute(file_path=str(path))
     assert "line1" in r
     assert "line2" in r
+
+
+def test_read_file_utf8_chinese(tmp_path):
+    read = get_tool("read_file")
+    path = tmp_path / "中文.md"
+    path.write_text("科研智能体\n第二行\n", encoding="utf-8")
+    r = read.execute(file_path=str(path))
+    assert "科研智能体" in r
+    assert "绉" not in r
+    assert "鏅" not in r
 
 
 def test_read_file_not_found():

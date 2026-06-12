@@ -10,7 +10,7 @@ from .context import (
     span,
 )
 from .recorder import JSONLRecorder, NullRecorder
-from .summary import list_traces, read_trace_summary
+from .summary import delete_traces_for_session, list_traces, read_trace_summary
 
 __all__ = [
     "ObservabilityConfig",
@@ -22,6 +22,7 @@ __all__ = [
     "mark_current_span_status",
     "observe_trace",
     "span",
+    "delete_traces_for_session",
     "list_traces",
     "read_trace_summary",
 ]

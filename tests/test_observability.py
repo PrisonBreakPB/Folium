@@ -6,7 +6,7 @@ from folium.llm import LLMResponse, ToolCall
 from folium.observability.context import Observer, _observer_var
 from folium.observability.config import ObservabilityConfig
 from folium.observability.redaction import compact_payload
-from folium.observability.summary import list_traces, read_trace_summary
+from folium.observability.summary import delete_traces_for_session, list_traces, read_trace_summary
 class FakeLLM:
     model = "fake-model"
 
@@ -120,6 +120,21 @@ class ObservabilityTests(unittest.TestCase):
                 self.assertEqual(summary["tool_calls"], 2)
             finally:
                 _observer_var.reset(token)
+
+    def test_delete_traces_for_session(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            keep = trace_dir / "trace_keep.jsonl"
+            delete = trace_dir / "trace_delete.jsonl"
+            keep.write_text('{"event":"span_start","trace_id":"trace_keep","session_id":"session_keep"}\n', encoding="utf-8")
+            delete.write_text('{"event":"span_start","trace_id":"trace_delete","session_id":"session_delete"}\n', encoding="utf-8")
+
+            self.assertEqual(delete_traces_for_session("session_delete", trace_dir), 1)
+            self.assertTrue(keep.exists())
+            self.assertFalse(delete.exists())
 
 
 if __name__ == "__main__":

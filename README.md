@@ -1,111 +1,137 @@
 # Folium
 
-> 基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 二开 —— 一个极简 AI 编程 Agent 蓝图。
-
+> 基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 二开的科研智能体改造项目。
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[English](README.md) | [中文](README_CN.md)
+Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改造成面向科研场景的智能体系统。项目会围绕科研调研、报告生成、论文写作、实验代码生成与执行，以及 Agent Harness 工程组件持续扩展。
 
-**CoreCoder 的二开版本（~1,400 行 Python）。**
+## 当前能力
 
-CoreCoder 把 Claude Code 的关键架构模式浓缩在 ~1,400 行 Python 里。Folium 是在此基础上进行的二开项目。
+- Web 对话界面：支持新建对话、切换历史对话、流式响应和工具调用展示
+- CLI 入口：支持交互式对话、单次 prompt、会话恢复和内置命令
+- OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
+- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理
+- 工具系统：支持读文件、写文件、搜索、编辑、执行 shell 命令和子 Agent，执行前会统一校验工具参数
+- 会话持久化：对话内容保存到项目内 `conversations/`
+- 上下文压缩：在上下文变大时压缩工具输出、总结旧对话或执行硬压缩
+- 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
 
----
+## 运行方式
 
-```
-$ folium -m deepseek-chat
-
-You > 读一下 main.py，修掉拼错的 import
-
-  > read_file(file_path='main.py')
-  > edit_file(file_path='main.py', ...)
-
---- a/main.py
-+++ b/main.py
-@@ -1 +1 @@
--from utils import halper
-+from utils import helper
-
-修好了：halper → helper。
-```
-
-## 你能得到什么
-
-| 设计模式 | Claude Code | Folium |
-|---|---|---|
-| 搜索替换编辑（唯一匹配 + diff） | FileEditTool | `tools/edit.py` — 70 行 |
-| 并行工具执行 | StreamingToolExecutor（530行） | `agent.py` — ThreadPool |
-| 三层上下文压缩 | HISTORY_SNIP → Microcompact → CONTEXT_COLLAPSE | `context.py` — 145 行 |
-| 子代理隔离上下文 | AgentTool（1,397行） | `tools/agent.py` — 50 行 |
-| 危险命令拦截 | BashTool（1,143行） | `tools/bash.py` — 95 行 |
-| 会话持久化 | QueryEngine（1,295行） | `session.py` — 65 行 |
-| 动态系统提示词 | prompts.ts（914行） | `prompt.py` — 35 行 |
-
-## 安装
+安装为本地可编辑包：
 
 ```bash
 pip install -e .
 ```
 
-选你的模型，任何 OpenAI 兼容 API 都行。可以 `export` 环境变量，也可以在项目根目录放一个 `.env` 文件：
+在项目根目录创建 `.env`，或在 shell 中设置环境变量：
 
 ```bash
-# DeepSeek V3
-export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com
-folium -m deepseek-chat
-
-# OpenAI GPT-5
-export OPENAI_API_KEY=sk-...
-folium -m gpt-5
-
-# Qwen 3.5
-export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-folium -m qwen-max
-
-# Ollama（本地）
-export OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1
-folium -m qwen3:32b
-
-# 单次模式
-folium -p "给 parse_config() 加上错误处理"
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.deepseek.com
+FOLIUM_MODEL=deepseek-chat
 ```
 
-## 架构
+启动 Web 界面：
 
-整个项目一目了然：
-
-```
-folium/
-├── cli.py            REPL + 命令                   218 行
-├── agent.py          Agent 循环 + 并行执行          122 行
-├── llm.py            流式客户端 + 重试              156 行
-├── context.py        三层压缩                       196 行
-├── session.py        会话保存/恢复                   68 行
-├── prompt.py         系统提示词                      33 行
-├── config.py         环境变量配置                    55 行
-└── tools/
-    ├── bash.py       Shell + 安全 + cd 追踪         115 行
-    ├── edit.py       搜索替换 + diff                  85 行
-    ├── read.py       文件读取                         53 行
-    ├── write.py      文件写入                         36 行
-    ├── glob_tool.py  文件搜索                         47 行
-    ├── grep.py       内容搜索                         78 行
-    └── agent.py      子代理生成                       58 行
+```bash
+python -m folium
 ```
 
-## 当库用
+默认访问：
 
-```python
-from folium import Agent, LLM
-
-llm = LLM(model="deepseek-chat", api_key="your-key", base_url="https://api.deepseek.com")
-agent = Agent(llm=llm)
-response = agent.chat("找出项目里所有 TODO 注释并列出来")
+```text
+http://localhost:8000
 ```
 
-## 加自定义工具（约 20 行）
+启动 CLI：
+
+```bash
+python -m folium --cli
+```
+
+单次任务：
+
+```bash
+python -m folium --cli -p "读一下 README.md，总结当前项目能力"
+```
+
+## 配置
+
+常用环境变量：
+
+```text
+OPENAI_API_KEY              模型 API key
+OPENAI_BASE_URL             OpenAI 兼容 API 地址
+FOLIUM_API_KEY              Folium 专用 API key，优先级高于 OPENAI_API_KEY
+FOLIUM_BASE_URL             Folium 专用 base URL
+FOLIUM_MODEL                默认模型，默认 gpt-4o
+FOLIUM_PROVIDER             openai 或 litellm
+FOLIUM_MAX_TOKENS           单次输出 token 上限
+FOLIUM_TEMPERATURE          采样温度
+FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
+```
+
+如果使用 Ollama 这类本地 OpenAI 兼容服务：
+
+```bash
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
+FOLIUM_MODEL=qwen3:32b
+```
+
+## Web 界面
+
+Web 入口提供：
+
+- 新建对话
+- 历史对话列表
+- 切换和删除历史对话
+- 流式输出
+- 工具调用标签
+- 常用命令按钮：帮助、Token 用量、压缩上下文
+
+当前行为说明：
+
+- 点击“新建对话”会进入一个空白对话状态
+- 空白对话不会立刻持久化
+- 发送第一条消息后，对话才会保存到 `conversations/`
+- 切换到其他对话前，当前已有内容的对话会自动保存
+
+## CLI 命令
+
+```text
+/help           查看帮助
+/model          查看当前模型
+/model <名称>   切换模型
+/tokens         查看累计 token 用量和费用估算
+/compact        手动压缩上下文
+/diff           查看当前会话修改过的文件
+/save           手动保存会话
+/sessions       列出已保存会话
+/traces         列出最近执行 trace
+/trace <id>     查看某个 trace 摘要
+/reset          清空当前对话历史
+quit            退出
+```
+
+## 工具
+
+内置工具位于 `folium/tools/`：
+
+```text
+read_file       读取文件，支持 offset/limit
+write_file      创建或覆盖文件
+edit_file       基于唯一字符串匹配的安全编辑，返回 diff
+glob            按 glob 模式查找文件
+grep            按正则搜索文件内容
+bash            执行 shell 命令，包含危险命令拦截、超时和输出截断
+agent           启动子 Agent 处理独立子任务
+```
+
+工具接口保持简单：
 
 ```python
 from folium.tools.base import Tool
@@ -113,28 +139,128 @@ from folium.tools.base import Tool
 class HttpTool(Tool):
     name = "http"
     description = "请求一个 URL。"
-    parameters = {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
+    parameters = {
+        "type": "object",
+        "properties": {"url": {"type": "string"}},
+        "required": ["url"],
+    }
 
     def execute(self, url: str) -> str:
         import urllib.request
         return urllib.request.urlopen(url).read().decode()[:5000]
 ```
 
-## 命令
+工具调用流程：
 
-```
-/model           查看当前模型
-/model <名称>    切换模型
-/compact         压缩上下文（对标 Claude Code 的 /compact）
-/tokens          查看 token 用量 + 费用估算
-/diff            查看本次会话修改的文件
-/save            保存会话
-/sessions        列出已保存的会话
-/reset           清空历史
-quit             退出
+```text
+模型输出工具调用
+-> 根据工具名找到 Tool
+-> 使用 Tool.validate_arguments() 按 parameters 校验参数
+-> 校验通过后调用 execute()
+-> 校验失败时返回参数错误，不执行真实工具
 ```
 
-保存的会话 ID 会先安全化再作为文件名，恢复数据始终留在 `~/.folium/sessions` 目录内。
+如果连续 5 次工具参数校验失败，Agent 会停止当前任务并返回：
+
+```text
+连续 5 次工具调用失败，已停止当前任务。
+```
+
+新增工具时需要：
+
+- 继承 `folium.tools.base.Tool`
+- 声明 `name`、`description`、`parameters`
+- 在 `parameters` 中使用 JSON Schema object 描述参数，并写清 `required`
+- 实现 `execute`
+- 注册到 `folium/tools/__init__.py` 的 `ALL_TOOLS`
+- 补充 schema/参数校验测试，有副作用的工具还要覆盖主要成功和失败路径
+
+## 本地可观测性
+
+Folium 已经加入本地 JSONL trace 记录。一次用户输入会生成一个 trace，一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
+
+默认保存位置：
+
+```text
+conversations/traces/
+```
+
+当前记录内容包括：
+
+- `user_task`：一次用户输入触发的完整 Agent 执行
+- `agent_round`：每轮 Agent 循环
+- `llm`：模型调用、消息数量、工具数量、token、首 token 时间、输出摘要
+- `tool`：工具名称、参数、结果摘要、耗时、错误状态
+- `context_compression`：上下文压缩前后的 token 和消息数量
+- `agent_result`：最终回复摘要、消息数量和上下文 token 估算
+
+可观测性配置：
+
+```text
+FOLIUM_OBSERVABILITY=1
+FOLIUM_TRACE_MODE=all
+FOLIUM_TRACE_FULL_USER_INPUT=1
+FOLIUM_TRACE_FULL_LLM_INPUT=0
+FOLIUM_TRACE_FULL_LLM_OUTPUT=0
+FOLIUM_TRACE_FULL_TOOL_ARGS=1
+FOLIUM_TRACE_FULL_TOOL_OUTPUT=0
+FOLIUM_TRACE_REDACT_SECRETS=1
+FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
+```
+
+查看 trace：
+
+```text
+/traces
+/trace <trace_id>
+```
+
+## 项目结构
+
+```text
+folium/
+├── __main__.py              Web/CLI 入口分发
+├── cli.py                   CLI REPL 和命令
+├── agent.py                 Agent 主循环、工具调用和观测插桩
+├── llm.py                   OpenAI 兼容 LLM 客户端和 LiteLLM 后端
+├── context.py               上下文估算与压缩
+├── session.py               会话保存、读取、切换和删除
+├── config.py                环境变量配置
+├── prompt.py                系统提示词
+├── observability/           本地 trace、span、脱敏和摘要读取
+├── tools/                   内置工具
+└── web/
+    ├── server.py            FastAPI + SSE 后端
+    └── static/index.html    Web 前端
+```
+
+## 科研智能体改造方向
+
+后续计划围绕科研工作流和 Harness 组件继续扩展：
+
+- 科研主题调研
+- 结构化报告生成
+- TeX 论文写作
+- Python 实验代码生成与运行
+- Agentic RAG 和证据链追踪
+- 沙箱执行与文件影响追踪
+- Artifact 记录，如报告、TeX、代码、图表、实验日志
+- 评估与反馈机制
+- Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
+
+## 测试
+
+当前可用的 unittest：
+
+```bash
+python -m unittest tests.test_tool_validation tests.test_tool_encoding tests.test_observability tests.test_web_server tests.test_session
+```
+
+如果安装了 pytest，也可以运行：
+
+```bash
+pytest
+```
 
 ## License
 

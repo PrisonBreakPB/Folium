@@ -38,6 +38,7 @@ def test_config_defaults():
     c = Config.from_env()
     assert c.model == "gpt-4o"
     assert c.max_tokens == 4096
+    assert c.max_context_tokens == 1_000_000
     assert c.temperature == 0.0
 
     os.environ.update(saved)

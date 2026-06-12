@@ -4,6 +4,13 @@ from pathlib import Path
 from .base import Tool
 
 
+def _read_text_prefer_utf8(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return path.read_text(errors="replace")
+
+
 class ReadFileTool(Tool):
     name = "read_file"
     description = (
@@ -37,7 +44,7 @@ class ReadFileTool(Tool):
             if not p.is_file():
                 return f"Error: {file_path} is a directory, not a file"
 
-            text = p.read_text(errors="replace")
+            text = _read_text_prefer_utf8(p)
             lines = text.splitlines()
             total = len(lines)
 

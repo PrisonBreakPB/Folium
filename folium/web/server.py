@@ -10,10 +10,10 @@ from pydantic import BaseModel
 
 from ..agent import Agent
 from ..config import Config
-from ..session import save_session, load_session, list_sessions, delete_session
+from ..session import save_session, load_session, list_sessions, delete_session, new_session_id
 from ..context import estimate_tokens
 from ..tools.edit import _changed_files
-from ..observability import list_traces, read_trace_summary
+from ..observability import delete_traces_for_session, list_traces, read_trace_summary
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -22,6 +22,7 @@ _state = {
     "agent": None,
     "config": None,
     "session_id": None,
+    "dirty": False,
 }
 _chat_lock = asyncio.Lock()
 
@@ -59,10 +60,11 @@ def _auto_save():
     """Save current conversation to disk."""
     agent = _state["agent"]
     config = _state["config"]
-    if agent and agent.messages:
+    if agent and agent.messages and _state["dirty"]:
         sid = save_session(agent.messages, config.model, _state["session_id"])
         _state["session_id"] = sid
         agent.session_id = sid
+        _state["dirty"] = False
 
 
 # ── endpoints ───────────────────────────────────────────────
@@ -82,6 +84,8 @@ async def chat(req: ChatRequest):
     on_token, on_tool = _make_bridge(queue)
 
     async with _chat_lock:
+        if _state["session_id"] is None:
+            _state["session_id"] = new_session_id()
         _state["agent"].session_id = _state["session_id"]
         task = asyncio.create_task(
             asyncio.to_thread(_state["agent"].chat, req.message, on_token=on_token, on_tool=on_tool)
@@ -91,6 +95,7 @@ async def chat(req: ChatRequest):
             if t.exception():
                 queue.put_nowait({"type": "error", "content": str(t.exception())})
             else:
+                _state["dirty"] = True
                 queue.put_nowait({"type": "done", "content": ""})
         task.add_done_callback(_on_complete)
 
@@ -119,6 +124,7 @@ async def new_conversation():
     _state["agent"].reset()
     _state["session_id"] = None
     _state["agent"].session_id = None
+    _state["dirty"] = False
     return {"result": "New conversation started.", "session_id": _state["session_id"]}
 
 
@@ -143,6 +149,7 @@ async def switch_conversation(req: SwitchRequest):
     _state["agent"].messages = messages
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
+    _state["dirty"] = False
     # return messages so frontend can render them
     return {
         "result": f"Switched to {req.session_id}",
@@ -153,11 +160,20 @@ async def switch_conversation(req: SwitchRequest):
 
 @app.post("/delete")
 async def delete_conversation(req: SwitchRequest):
-    if req.session_id == _state["session_id"]:
-        return JSONResponse({"error": "Cannot delete current conversation"}, status_code=400)
+    deleted_current = req.session_id == _state["session_id"]
     deleted = delete_session(req.session_id)
     if deleted:
-        return {"result": f"Deleted {req.session_id}"}
+        deleted_traces = delete_traces_for_session(req.session_id)
+        if deleted_current:
+            _state["agent"].reset()
+            _state["session_id"] = None
+            _state["agent"].session_id = None
+            _state["dirty"] = False
+        return {
+            "result": f"Deleted {req.session_id}",
+            "deleted_traces": deleted_traces,
+            "deleted_current": deleted_current,
+        }
     return JSONResponse({"error": "Session not found"}, status_code=404)
 
 
@@ -171,6 +187,7 @@ async def command(req: CommandRequest):
         agent.reset()
         _state["session_id"] = None
         agent.session_id = None
+        _state["dirty"] = False
         return {"result": "Conversation reset."}
 
     if cmd in ("/tokens", "tokens"):
@@ -198,6 +215,7 @@ async def command(req: CommandRequest):
         return {"result": f"Files modified ({len(files)}):\n" + "\n".join(files)}
 
     if cmd in ("/save", "save"):
+        _state["dirty"] = True
         _auto_save()
         return {"result": f"Session saved: {_state['session_id']}"}
 
@@ -262,6 +280,7 @@ def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 
     _state["agent"] = agent
     _state["config"] = config
     _state["session_id"] = None
+    _state["dirty"] = False
     agent.session_id = None
 
     import uvicorn
