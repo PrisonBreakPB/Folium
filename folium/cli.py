@@ -102,8 +102,11 @@ def _run_once(agent: Agent, prompt: str):
     def on_token(tok):
         print(tok, end="", flush=True)
 
-    def on_tool(name, kwargs):
-        console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
+    def on_tool(name, kwargs, status=None):
+        if status:
+            console.print(f"\n[dim]< {name} status={status}[/dim]")
+        else:
+            console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
     agent.chat(prompt, on_token=on_token, on_tool=on_tool)
     print()
@@ -247,8 +250,11 @@ def _repl(agent: Agent, config: Config):
             streamed.append(tok)
             print(tok, end="", flush=True)
 
-        def on_tool(name, kwargs):
-            console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
+        def on_tool(name, kwargs, status=None):
+            if status:
+                console.print(f"\n[dim]< {name} status={status}[/dim]")
+            else:
+                console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
         try:
             response = agent.chat(user_input, on_token=on_token, on_tool=on_tool)

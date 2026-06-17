@@ -48,8 +48,11 @@ def _make_bridge(queue: asyncio.Queue):
     def on_token(tok: str):
         queue.put_nowait({"type": "token", "content": tok})
 
-    def on_tool(name: str, kwargs: dict):
-        queue.put_nowait({"type": "tool", "name": name, "kwargs": kwargs})
+    def on_tool(name: str, kwargs: dict, status: str | None = None):
+        event = {"type": "tool", "name": name, "kwargs": kwargs}
+        if status is not None:
+            event["status"] = status
+        queue.put_nowait(event)
 
     return on_token, on_tool
 

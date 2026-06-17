@@ -9,6 +9,7 @@ Claude Code's BashTool is 1,143 lines. This is the distilled version:
 
 import os
 import re
+import signal
 import subprocess
 from .base import Tool
 
@@ -61,35 +62,43 @@ class BashTool(Tool):
         cwd = _cwd or os.getcwd()
 
         try:
-            proc = subprocess.run(
+            creationflags = 0
+            start_new_session = os.name != "nt"
+            if os.name == "nt":
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            proc = subprocess.Popen(
                 command,
                 shell=True,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
                 cwd=cwd,
+                text=True,
+                start_new_session=start_new_session,
+                creationflags=creationflags,
             )
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _terminate_process_tree(proc)
+                stdout, stderr = proc.communicate()
+                out = stdout or ""
+                if stderr:
+                    out += f"\n[stderr]\n{stderr}"
+                out += f"\nError: timed out after {timeout}s and terminated process"
+                return _truncate_output(out)
 
             # track cd commands so next command runs in the right place
             if proc.returncode == 0:
                 _update_cwd(command, cwd)
-            out = proc.stdout
-            if proc.stderr:
-                out += f"\n[stderr]\n{proc.stderr}"
+            out = stdout
+            if stderr:
+                out += f"\n[stderr]\n{stderr}"
             if proc.returncode != 0:
                 out += f"\n[exit code: {proc.returncode}]"
-            # keep head + tail to preserve the most useful info
-            if len(out) > 15_000:
-                out = (
-                    out[:6000]
-                    + f"\n\n... truncated ({len(out)} chars total) ...\n\n"
-                    + out[-3000:]
-                )
-            return out.strip() or "(no output)"
-        except subprocess.TimeoutExpired:
-            return f"Error: timed out after {timeout}s"
+            return _truncate_output(out)
         except Exception as e:
             return f"Error running command: {e}"
 
@@ -115,3 +124,34 @@ def _update_cwd(command: str, current_cwd: str):
                 new_dir = os.path.normpath(os.path.join(current_cwd, os.path.expanduser(target)))
                 if os.path.isdir(new_dir):
                     _cwd = new_dir
+
+
+def _terminate_process_tree(proc: subprocess.Popen):
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            text=True,
+        )
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _truncate_output(out: str) -> str:
+    # keep head + tail to preserve the most useful info
+    if len(out) > 15_000:
+        out = (
+            out[:6000]
+            + f"\n\n... truncated ({len(out)} chars total) ...\n\n"
+            + out[-3000:]
+        )
+    return out.strip() or "(no output)"

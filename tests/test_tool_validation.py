@@ -1,9 +1,39 @@
 import unittest
+import time
 
 from folium.agent import Agent
 from folium.llm import LLMResponse, ToolCall
 from folium.tools import ALL_TOOLS, get_tool
-from folium.tools.base import ToolValidationError
+from folium.tools.base import Tool, ToolValidationError
+
+
+class BlockingTool(Tool):
+    name = "blocking"
+    description = "Block longer than the agent tool timeout."
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+    def execute(self):
+        time.sleep(2)
+        return "done"
+
+
+class TimeoutEchoTool(Tool):
+    name = "timeout_echo"
+    description = "Echo the timeout value."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "timeout": {"type": "integer"},
+        },
+        "required": ["timeout"],
+    }
+
+    def execute(self, timeout: int):
+        return f"timeout={timeout}"
 
 
 class ToolValidationTests(unittest.TestCase):
@@ -55,6 +85,24 @@ class ToolValidationTests(unittest.TestCase):
         self.assertEqual(result.status, "bad_arguments")
         self.assertIn("bad arguments for bash", result.content)
         self.assertIn("missing required field 'command'", result.content)
+
+    def test_agent_tool_execution_times_out(self):
+        agent = Agent(llm=None, tools=[BlockingTool()], tool_timeout=1)
+        tc = ToolCall(id="call_1", name="blocking", arguments={})
+
+        result = agent._exec_tool(tc)
+
+        self.assertEqual(result.status, "timeout")
+        self.assertIn("timed out after 1s", result.content)
+
+    def test_agent_clamps_tool_timeout_argument(self):
+        agent = Agent(llm=None, tools=[TimeoutEchoTool()], tool_timeout=3)
+        tc = ToolCall(id="call_1", name="timeout_echo", arguments={"timeout": 120})
+
+        result = agent._exec_tool(tc)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.content, "timeout=3")
 
     def test_agent_stops_after_five_bad_tool_arguments(self):
         class BadToolLLM:

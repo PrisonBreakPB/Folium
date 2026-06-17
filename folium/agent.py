@@ -11,9 +11,10 @@ which means it's done working and ready to report back.
 
 import concurrent.futures
 import contextvars
+import threading
 from dataclasses import dataclass
 from .llm import LLM
-from .tools import ALL_TOOLS, get_tool
+from .tools import ALL_TOOLS
 from .tools.base import Tool, ToolValidationError
 from .tools.agent import AgentTool
 from .prompt import system_prompt
@@ -37,6 +38,7 @@ class Agent:
         max_context_tokens: int = 128_000,
         max_rounds: int = 50,
         max_bad_tool_calls: int = 5,
+        tool_timeout: int = 120,
     ):
         self.llm = llm
         self.tools = tools if tools is not None else ALL_TOOLS
@@ -44,6 +46,8 @@ class Agent:
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
         self.max_bad_tool_calls = max_bad_tool_calls
+        self.tool_timeout = tool_timeout
+        self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self._system = system_prompt(self.tools)
         self.session_id: str | None = None
         self.turn_index = 0
@@ -134,6 +138,8 @@ class Agent:
                     if on_tool:
                         on_tool(tc.name, tc.arguments)
                     result = self._exec_tool(tc)
+                    if on_tool:
+                        on_tool(tc.name, tc.arguments, result.status)
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -160,8 +166,41 @@ class Agent:
         return "(reached maximum tool-call rounds)"
 
     def _exec_tool(self, tc) -> ToolExecutionResult:
+        timed_out = threading.Event()
+        future = self._tool_executor.submit(
+            contextvars.copy_context().run,
+            self._exec_tool_impl,
+            tc,
+            timed_out,
+        )
+        try:
+            return future.result(timeout=self.tool_timeout)
+        except concurrent.futures.TimeoutError:
+            timed_out.set()
+            future.cancel()
+            observer = active_observer()
+            message = f"Error: tool '{tc.name}' timed out after {self.tool_timeout}s"
+            observer.record({
+                "event": "tool_result",
+                "trace_id": current_trace_id(),
+                "span_id": current_span_id(),
+                "name": tc.name,
+                "type": "tool",
+                "status": "timeout",
+                "metadata": {
+                    "result": compact_payload(
+                        message,
+                        include_full=False,
+                        max_preview_chars=observer.config.max_preview_chars,
+                        redact=observer.config.redact_secrets,
+                    )
+                },
+            })
+            return ToolExecutionResult(message, "timeout")
+
+    def _exec_tool_impl(self, tc, timed_out: threading.Event | None = None) -> ToolExecutionResult:
         """Execute a single tool call."""
-        tool = get_tool(tc.name)
+        tool = self._get_tool(tc.name)
         if tool is None:
             return ToolExecutionResult(f"Error: unknown tool '{tc.name}'", "error")
         observer = active_observer()
@@ -179,15 +218,23 @@ class Agent:
         with span(tc.name, "tool", metadata=metadata):
             try:
                 arguments = tool.validate_arguments(tc.arguments)
+                if (
+                    "timeout" in arguments
+                    and isinstance(arguments["timeout"], int)
+                    and arguments["timeout"] > self.tool_timeout
+                ):
+                    arguments["timeout"] = self.tool_timeout
                 result = tool.execute(**arguments)
-                status = "error" if result.startswith("Error") or result.startswith("⚠") else "ok"
+                status = _status_from_tool_result(result)
             except ToolValidationError as e:
                 result = f"Error: {e}"
                 status = "bad_arguments"
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
                 status = "error"
-            if status in {"error", "bad_arguments"}:
+            if timed_out and timed_out.is_set():
+                return ToolExecutionResult(result, status)
+            if status in {"error", "bad_arguments", "timeout"}:
                 mark_current_span_status("error")
             observer.record({
                 "event": "tool_result",
@@ -223,7 +270,18 @@ class Agent:
                 pool.submit(contextvars.copy_context().run, self._exec_tool, tc)
                 for tc in tool_calls
             ]
-            return [f.result() for f in futures]
+            results = [f.result() for f in futures]
+
+        if on_tool:
+            for tc, result in zip(tool_calls, results):
+                on_tool(tc.name, tc.arguments, result.status)
+        return results
+
+    def _get_tool(self, name: str) -> Tool | None:
+        for tool in self.tools:
+            if tool.name == name:
+                return tool
+        return None
 
     @staticmethod
     def _count_bad_tool_call_streak(result: ToolExecutionResult, current: int) -> int:
@@ -260,3 +318,11 @@ class Agent:
                     },
                 })
         return compressed
+
+
+def _status_from_tool_result(result: str) -> str:
+    if result.startswith("Error: timed out") or "timed out after" in result:
+        return "timeout"
+    if result.startswith("Error") or result.startswith("\u26a0"):
+        return "error"
+    return "ok"

@@ -212,6 +212,12 @@ body {
   border-radius: 5px;
 }
 
+.tool-tag.error {
+  background: #fff6f2;
+  color: #9c3d23;
+  border-color: #edc5b7;
+}
+
 .process-title {
   color: #586253;
   font-size: 12px;
@@ -491,10 +497,15 @@ async function sendMessage() {
             }
             const tag = document.createElement('div');
             tag.className = 'tool-tag';
-            const brief = Object.entries(event.kwargs)
-              .map(([k,v]) => k + '=' + String(v).slice(0,30))
-              .join(', ');
-            tag.textContent = event.name + '(' + brief + ')';
+            if (event.status) {
+              tag.textContent = event.name + ' status=' + event.status;
+              if (event.status !== 'ok') tag.className += ' error';
+            } else {
+              const brief = Object.entries(event.kwargs)
+                .map(([k,v]) => k + '=' + String(v).slice(0,30))
+                .join(', ');
+              tag.textContent = event.name + '(' + brief + ')';
+            }
             processBody.appendChild(tag);
             messagesEl.scrollTop = messagesEl.scrollHeight;
           } else if (event.type === 'error') {
