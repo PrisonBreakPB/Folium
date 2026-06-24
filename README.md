@@ -175,6 +175,32 @@ class HttpTool(Tool):
 - 注册到 `folium/tools/__init__.py` 的 `ALL_TOOLS`
 - 补充 schema/参数校验测试，有副作用的工具还要覆盖主要成功和失败路径
 
+## Skills
+
+Folium 支持轻量级 skill。Skill 位于项目根目录的 `skills/`，每个 skill 使用一个目录和一个 `SKILL.md`：
+
+```text
+skills/
+├── literature-review/SKILL.md
+├── latex-writing/SKILL.md
+└── experiment-runner/SKILL.md
+```
+
+启动时 Agent 会扫描 `skills/*/SKILL.md`，只把 skill 的名称、描述和文件路径加入系统提示词。完整 `SKILL.md` 不会预先塞进上下文；模型在判断任务匹配某个 skill 时，会先用 `read_file` 读取对应文件，再按其中的工作流执行。
+
+`SKILL.md` 需要包含简单 frontmatter：
+
+```markdown
+---
+name: literature-review
+description: Use for literature surveys, related work, paper comparison, research reports, and organizing findings from academic papers.
+---
+
+# Literature Review Skill
+
+...
+```
+
 ## 本地可观测性
 
 Folium 已经加入本地 JSONL trace 记录。一次用户输入会生成一个 trace，一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。

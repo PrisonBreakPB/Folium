@@ -21,6 +21,7 @@ from .tools.agent import AgentTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
+from .skills import load_skills
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
@@ -53,7 +54,8 @@ class Agent:
         self.max_bad_tool_calls = max_bad_tool_calls
         self.tool_timeout = tool_timeout
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-        self._system = system_prompt(self.tools)
+        self.skills = load_skills()
+        self._system = system_prompt(self.tools, self.skills)
         self.session_id: str | None = None
         self.turn_index = 0
 

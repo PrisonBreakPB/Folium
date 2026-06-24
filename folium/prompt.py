@@ -4,9 +4,10 @@ import os
 import platform
 
 
-def system_prompt(tools) -> str:
+def system_prompt(tools, skills=None) -> str:
     cwd = os.getcwd()
     tool_list = "\n".join(f"- **{t.name}**: {t.description}" for t in tools)
+    skills_section = _skills_section(skills or [])
     uname = platform.uname()
 
     return f"""\
@@ -24,6 +25,8 @@ You help with three core tasks:
 # Tools
 {tool_list}
 
+{skills_section}
+
 # Rules
 1. **Cite sources.** When referencing papers or findings, always mention the source (author, year, title).
 2. **Read before edit.** Always read a file before modifying it.
@@ -32,3 +35,39 @@ You help with three core tasks:
 5. **Be concise.** Show data over prose. Explain only what's necessary.
 6. **Ask when unsure.** If the topic is ambiguous, ask for clarification rather than guessing.
 """
+
+
+def _skills_section(skills) -> str:
+    if not skills:
+        return ""
+
+    skill_items = "\n".join(
+        "  <skill>\n"
+        f"    <name>{_xml_escape(skill.name)}</name>\n"
+        f"    <description>{_xml_escape(skill.description)}</description>\n"
+        f"    <location>{_xml_escape(str(skill.skill_file))}</location>\n"
+        "  </skill>"
+        for skill in skills
+    )
+    return f"""# Skills
+<skill_system>
+You have access to skills that provide optimized workflows for specific research tasks.
+
+Progressive loading pattern:
+1. When the user query matches a skill's use case, call `read_file` on that skill's SKILL.md file first.
+2. Read and follow the skill workflow before choosing a general approach.
+3. Load additional resources referenced by the skill only when needed.
+4. Do not load every skill preemptively.
+
+<available_skills>
+{skill_items}
+</available_skills>
+</skill_system>"""
+
+
+def _xml_escape(text: str) -> str:
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
