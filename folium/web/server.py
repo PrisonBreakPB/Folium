@@ -221,6 +221,15 @@ async def command(req: CommandRequest):
             return {"result": f"Compressed: {before} -> {after} tokens ({len(agent.messages)} messages)"}
         return {"result": f"Nothing to compress ({before} tokens, {len(agent.messages)} messages)"}
 
+    if cmd in ("/skills", "skills"):
+        skills = getattr(agent, "skills", [])
+        if not skills:
+            return {"result": "No skills found. Add skills under skills/<name>/SKILL.md."}
+        lines = ["Available skills:"]
+        for skill in skills:
+            lines.append(f"- {skill.name}: {skill.description}\n  {skill.skill_file}")
+        return {"result": "\n".join(lines)}
+
     if cmd in ("/diff", "diff"):
         if not _changed_files:
             return {"result": "No files modified this session."}
@@ -282,7 +291,7 @@ async def command(req: CommandRequest):
         return {"result": f"Current model: {config.model}"}
 
     if cmd in ("/help", "help"):
-        return {"result": "Commands: /help /reset /tokens /compact /diff /save /sessions /traces /trace <id> /model <name>"}
+        return {"result": "Commands: /help /reset /skills /tokens /compact /diff /save /sessions /traces /trace <id> /model <name>"}
 
     return {"result": f"Unknown command: {cmd}"}
 
