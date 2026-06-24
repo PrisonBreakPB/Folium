@@ -12,6 +12,7 @@ from ..agent import Agent
 from ..config import Config
 from ..session import save_session, load_session, list_sessions, delete_session, new_session_id
 from ..context import estimate_tokens
+from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
 
@@ -44,17 +45,19 @@ class SwitchRequest(BaseModel):
 # ── SSE bridge: sync callbacks → async queue ────────────────
 
 def _make_bridge(queue: asyncio.Queue):
-    """Create on_token/on_tool callbacks that push events into an asyncio.Queue."""
+    """Create callbacks that push agent events into an asyncio.Queue."""
     def on_token(tok: str):
         queue.put_nowait({"type": "token", "content": tok})
 
     def on_tool(name: str, kwargs: dict, status: str | None = None):
-        event = {"type": "tool", "name": name, "kwargs": kwargs}
-        if status is not None:
-            event["status"] = status
+        # Web uses structured on_event updates; keep this callback for Agent
+        # compatibility without duplicating tool rows in the UI.
+        return None
+
+    def on_event(event: dict):
         queue.put_nowait(event)
 
-    return on_token, on_tool
+    return on_token, on_tool, on_event
 
 
 # ── auto-save helper ────────────────────────────────────────
@@ -84,14 +87,20 @@ async def chat(req: ChatRequest):
         return JSONResponse({"error": "A chat is already in progress"}, status_code=409)
 
     queue: asyncio.Queue = asyncio.Queue()
-    on_token, on_tool = _make_bridge(queue)
+    on_token, on_tool, on_event = _make_bridge(queue)
 
     async with _chat_lock:
         if _state["session_id"] is None:
             _state["session_id"] = new_session_id()
         _state["agent"].session_id = _state["session_id"]
         task = asyncio.create_task(
-            asyncio.to_thread(_state["agent"].chat, req.message, on_token=on_token, on_tool=on_tool)
+            asyncio.to_thread(
+                _state["agent"].chat,
+                req.message,
+                on_token=on_token,
+                on_tool=on_tool,
+                on_event=on_event,
+            )
         )
 
         def _on_complete(t):
@@ -105,6 +114,7 @@ async def chat(req: ChatRequest):
         async def event_stream():
             while True:
                 event = await queue.get()
+                event = repair_mojibake_payload(event)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 if event["type"] in ("done", "error"):
                     break
@@ -157,7 +167,7 @@ async def switch_conversation(req: SwitchRequest):
     return {
         "result": f"Switched to {req.session_id}",
         "session_id": _state["session_id"],
-        "messages": messages,
+        "messages": repair_mojibake_payload(messages),
     }
 
 

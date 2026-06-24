@@ -12,22 +12,27 @@ which means it's done working and ready to report back.
 import concurrent.futures
 import contextvars
 import threading
+import time
 from dataclasses import dataclass
-from .llm import LLM
+from .llm import LLM, LLMResponse, estimate_cost
 from .tools import ALL_TOOLS
 from .tools.base import Tool, ToolValidationError
 from .tools.agent import AgentTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens
+from .config import DEFAULT_MAX_CONTEXT_TOKENS
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
+from .encoding import repair_mojibake_text
 
 
 @dataclass
 class ToolExecutionResult:
     content: str
     status: str
+    preview: str = ""
+    duration_ms: int | None = None
 
 
 class Agent:
@@ -35,7 +40,7 @@ class Agent:
         self,
         llm: LLM,
         tools: list[Tool] | None = None,
-        max_context_tokens: int = 128_000,
+        max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
         max_rounds: int = 50,
         max_bad_tool_calls: int = 5,
         tool_timeout: int = 120,
@@ -58,12 +63,14 @@ class Agent:
                 t._parent_agent = self
 
     def _full_messages(self) -> list[dict]:
-        return [{"role": "system", "content": self._system}] + self.messages
+        return [{"role": "system", "content": self._system}] + [
+            _model_message(m) for m in self.messages
+        ]
 
     def _tool_schemas(self) -> list[dict]:
         return [t.schema() for t in self.tools]
 
-    def chat(self, user_input: str, on_token=None, on_tool=None) -> str:
+    def chat(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
         """Process one user message. May involve multiple LLM/tool rounds."""
         self.turn_index += 1
         observer = active_observer()
@@ -86,7 +93,8 @@ class Agent:
             session_id=self.session_id,
             turn_index=self.turn_index,
         ):
-            result = self._chat_impl(user_input, on_token=on_token, on_tool=on_tool)
+            self._emit_event(on_event, "agent_status", message="开始处理请求")
+            result = self._chat_impl(user_input, on_token=on_token, on_tool=on_tool, on_event=on_event)
             active_observer().record({
                 "event": "agent_result",
                 "trace_id": current_trace_id(),
@@ -107,12 +115,14 @@ class Agent:
             })
             return result
 
-    def _chat_impl(self, user_input: str, on_token=None, on_tool=None) -> str:
+    def _chat_impl(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
         self.messages.append({"role": "user", "content": user_input})
         self._maybe_compress_observed("after_user_message")
+        self._emit_context_update(on_event)
         bad_tool_calls = 0
 
         for round_index in range(1, self.max_rounds + 1):
+            self._emit_event(on_event, "agent_status", message=f"模型推理第 {round_index} 轮")
             with span("agent_round", "agent", metadata={
                 "round_index": round_index,
                 "message_count": len(self.messages),
@@ -123,50 +133,68 @@ class Agent:
                     tools=self._tool_schemas(),
                     on_token=on_token,
                 )
+                assistant_message = self._assistant_message(resp)
+                self._emit_usage(on_event, resp, round_index)
 
                 # no tool calls -> LLM is done, return text
                 if not resp.tool_calls:
-                    self.messages.append(resp.message)
+                    self.messages.append(assistant_message)
+                    self._attach_usage_context(assistant_message)
+                    self._emit_context_update(on_event)
+                    self._emit_event(on_event, "agent_status", message="生成最终回复")
                     return resp.content
 
                 # tool calls -> execute (parallel when multiple, like Claude Code's
                 # StreamingToolExecutor which runs independent tools concurrently)
-                self.messages.append(resp.message)
+                self.messages.append(assistant_message)
+                self._attach_usage_context(assistant_message)
 
                 if len(resp.tool_calls) == 1:
                     tc = resp.tool_calls[0]
                     if on_tool:
                         on_tool(tc.name, tc.arguments)
+                    self._emit_tool_start(on_event, tc)
                     result = self._exec_tool(tc)
                     if on_tool:
                         on_tool(tc.name, tc.arguments, result.status)
+                    self._emit_tool_result(on_event, tc, result)
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
+                        "name": tc.name,
                         "content": result.content,
                     })
+                    self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
                     # parallel execution for multiple tool calls
+                    for tc in resp.tool_calls:
+                        self._emit_tool_start(on_event, tc)
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
                     for tc, result in zip(resp.tool_calls, results):
+                        self._emit_tool_result(on_event, tc, result)
                         self.messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
+                            "name": tc.name,
                             "content": result.content,
                         })
+                        self._emit_context_update(on_event)
                         bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
 
                 if bad_tool_calls >= self.max_bad_tool_calls:
+                    self._emit_event(on_event, "agent_status", message="连续工具参数错误，已停止任务", status="error")
                     return f"连续 {bad_tool_calls} 次工具调用失败，已停止当前任务。"
 
                 # compress if tool outputs are big
-                self._maybe_compress_observed("after_tool_results")
+                self._maybe_compress_observed("after_tool_results", on_event=on_event)
+                self._emit_context_update(on_event)
 
         return "(reached maximum tool-call rounds)"
 
     def _exec_tool(self, tc) -> ToolExecutionResult:
         timed_out = threading.Event()
+        started_at = time.perf_counter()
         future = self._tool_executor.submit(
             contextvars.copy_context().run,
             self._exec_tool_impl,
@@ -180,6 +208,7 @@ class Agent:
             future.cancel()
             observer = active_observer()
             message = f"Error: tool '{tc.name}' timed out after {self.tool_timeout}s"
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             observer.record({
                 "event": "tool_result",
                 "trace_id": current_trace_id(),
@@ -196,13 +225,14 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(message, "timeout")
+            return ToolExecutionResult(message, "timeout", preview=_preview_text(message), duration_ms=duration_ms)
 
     def _exec_tool_impl(self, tc, timed_out: threading.Event | None = None) -> ToolExecutionResult:
         """Execute a single tool call."""
         tool = self._get_tool(tc.name)
         if tool is None:
-            return ToolExecutionResult(f"Error: unknown tool '{tc.name}'", "error")
+            message = f"Error: unknown tool '{tc.name}'"
+            return ToolExecutionResult(message, "error", preview=_preview_text(message))
         observer = active_observer()
         cfg = observer.config
         metadata = {
@@ -216,6 +246,7 @@ class Agent:
             ),
         }
         with span(tc.name, "tool", metadata=metadata):
+            started_at = time.perf_counter()
             try:
                 arguments = tool.validate_arguments(tc.arguments)
                 if (
@@ -225,6 +256,7 @@ class Agent:
                 ):
                     arguments["timeout"] = self.tool_timeout
                 result = tool.execute(**arguments)
+                result = repair_mojibake_text(result)
                 status = _status_from_tool_result(result)
             except ToolValidationError as e:
                 result = f"Error: {e}"
@@ -232,8 +264,9 @@ class Agent:
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
                 status = "error"
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
             if timed_out and timed_out.is_set():
-                return ToolExecutionResult(result, status)
+                return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
             if status in {"error", "bad_arguments", "timeout"}:
                 mark_current_span_status("error")
             observer.record({
@@ -252,7 +285,7 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(result, status)
+            return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
 
     def _exec_tools_parallel(self, tool_calls, on_tool=None) -> list[ToolExecutionResult]:
         """Run multiple tool calls concurrently using threads.
@@ -277,6 +310,79 @@ class Agent:
                 on_tool(tc.name, tc.arguments, result.status)
         return results
 
+    def _emit_tool_start(self, on_event, tc):
+        self._emit_event(
+            on_event,
+            "tool_start",
+            name=tc.name,
+            arguments_preview=_brief_arguments(tc.arguments),
+        )
+
+    def _emit_tool_result(self, on_event, tc, result: ToolExecutionResult):
+        event_type = "tool_error" if result.status in {"error", "bad_arguments", "timeout"} else "tool_result"
+        self._emit_event(
+            on_event,
+            event_type,
+            name=tc.name,
+            status=result.status,
+            duration_ms=result.duration_ms,
+            preview=result.preview or _preview_text(result.content),
+            content=_preview_text(result.content, max_chars=6000),
+        )
+
+    def _assistant_message(self, resp: LLMResponse) -> dict:
+        message = resp.message
+        total_tokens = resp.prompt_tokens + resp.completion_tokens
+        message["_usage"] = {
+            "model": self.llm.model,
+            "prompt_tokens": resp.prompt_tokens,
+            "completion_tokens": resp.completion_tokens,
+            "total_tokens": total_tokens,
+            "cost": estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens),
+        }
+        return message
+
+    def _attach_usage_context(self, message: dict):
+        usage = message.get("_usage")
+        if not isinstance(usage, dict):
+            return
+        usage["estimated_context_tokens"] = estimate_tokens(self.messages)
+        usage["max_context_tokens"] = self.context.max_tokens
+
+    def _emit_usage(self, on_event, resp: LLMResponse, round_index: int):
+        cumulative_prompt = getattr(self.llm, "total_prompt_tokens", 0)
+        cumulative_completion = getattr(self.llm, "total_completion_tokens", 0)
+        self._emit_event(
+            on_event,
+            "usage_update",
+            model=self.llm.model,
+            round_index=round_index,
+            prompt_tokens=resp.prompt_tokens,
+            completion_tokens=resp.completion_tokens,
+            total_tokens=resp.prompt_tokens + resp.completion_tokens,
+            cost=estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens),
+            cumulative_prompt_tokens=cumulative_prompt,
+            cumulative_completion_tokens=cumulative_completion,
+            cumulative_total_tokens=cumulative_prompt + cumulative_completion,
+            cumulative_cost=getattr(self.llm, "estimated_cost", None),
+            estimated_context_tokens=estimate_tokens(self.messages),
+            max_context_tokens=self.context.max_tokens,
+        )
+
+    def _emit_context_update(self, on_event):
+        self._emit_event(
+            on_event,
+            "context_update",
+            estimated_context_tokens=estimate_tokens(self.messages),
+            max_context_tokens=self.context.max_tokens,
+            message_count=len(self.messages),
+        )
+
+    @staticmethod
+    def _emit_event(on_event, event_type: str, **payload):
+        if on_event:
+            on_event({"type": event_type, **payload})
+
     def _get_tool(self, name: str) -> Tool | None:
         for tool in self.tools:
             if tool.name == name:
@@ -293,7 +399,7 @@ class Agent:
         """Clear conversation history."""
         self.messages.clear()
 
-    def _maybe_compress_observed(self, trigger: str) -> bool:
+    def _maybe_compress_observed(self, trigger: str, on_event=None) -> bool:
         before_tokens = estimate_tokens(self.messages)
         before_messages = len(self.messages)
         with span("context_compression", "context", metadata={
@@ -303,6 +409,15 @@ class Agent:
         }):
             compressed = self.context.maybe_compress(self.messages, self.llm)
             if compressed:
+                self._emit_event(
+                    on_event,
+                    "context_compress",
+                    trigger=trigger,
+                    before_tokens=before_tokens,
+                    after_tokens=estimate_tokens(self.messages),
+                    before_messages=before_messages,
+                    after_messages=len(self.messages),
+                )
                 active_observer().record({
                     "event": "context_compressed",
                     "trace_id": current_trace_id(),
@@ -326,3 +441,29 @@ def _status_from_tool_result(result: str) -> str:
     if result.startswith("Error") or result.startswith("\u26a0"):
         return "error"
     return "ok"
+
+
+def _brief_arguments(arguments: dict) -> str:
+    parts = []
+    for key, value in (arguments or {}).items():
+        text = str(value).replace("\n", "\\n")
+        if len(text) > 80:
+            text = text[:77] + "..."
+        parts.append(f"{key}={text}")
+    return ", ".join(parts)
+
+
+def _preview_text(text: str, max_chars: int = 1200) -> str:
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    head = text[:800].rstrip()
+    tail = text[-300:].lstrip()
+    return f"{head}\n... truncated ({len(text)} chars total) ...\n{tail}"
+
+
+def _model_message(message: dict) -> dict:
+    allowed = {"role", "content", "tool_calls", "tool_call_id", "name"}
+    return {k: v for k, v in message.items() if k in allowed}

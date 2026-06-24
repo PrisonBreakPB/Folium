@@ -15,6 +15,8 @@ Folium implements the same idea in 3 layers:
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from .config import DEFAULT_MAX_CONTEXT_TOKENS
+
 if TYPE_CHECKING:
     from .llm import LLM
 
@@ -35,7 +37,7 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 
 class ContextManager:
-    def __init__(self, max_tokens: int = 128_000):
+    def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS):
         self.max_tokens = max_tokens
         # layer thresholds (fraction of max_tokens)
         self._snip_at = int(max_tokens * 0.50)    # 50% -> snip tool outputs

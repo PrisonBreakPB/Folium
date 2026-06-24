@@ -10,6 +10,7 @@ Claude Code's BashTool is 1,143 lines. This is the distilled version:
 import os
 import re
 import signal
+import locale
 import subprocess
 from .base import Tool
 
@@ -56,7 +57,7 @@ class BashTool(Tool):
         # safety check
         warning = _check_dangerous(command)
         if warning:
-            return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            return f"[Warning] Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
 
         # use tracked working directory
         cwd = _cwd or os.getcwd()
@@ -72,23 +73,24 @@ class BashTool(Tool):
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                encoding="utf-8",
-                errors="replace",
                 cwd=cwd,
-                text=True,
                 start_new_session=start_new_session,
                 creationflags=creationflags,
             )
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
+                stdout_bytes, stderr_bytes = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
                 _terminate_process_tree(proc)
-                stdout, stderr = proc.communicate()
+                stdout_bytes, stderr_bytes = proc.communicate()
+                stdout = _decode_process_output(stdout_bytes)
+                stderr = _decode_process_output(stderr_bytes)
                 out = stdout or ""
                 if stderr:
                     out += f"\n[stderr]\n{stderr}"
                 out += f"\nError: timed out after {timeout}s and terminated process"
                 return _truncate_output(out)
+            stdout = _decode_process_output(stdout_bytes)
+            stderr = _decode_process_output(stderr_bytes)
 
             # track cd commands so next command runs in the right place
             if proc.returncode == 0:
@@ -144,6 +146,25 @@ def _terminate_process_tree(proc: subprocess.Popen):
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _decode_process_output(data: bytes | str | None) -> str:
+    if not data:
+        return ""
+    if isinstance(data, str):
+        return data
+
+    encodings = ["utf-8-sig", locale.getpreferredencoding(False), "gbk", "cp936"]
+    tried = set()
+    for encoding in encodings:
+        if not encoding or encoding in tried:
+            continue
+        tried.add(encoding)
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
 
 
 def _truncate_output(out: str) -> str:

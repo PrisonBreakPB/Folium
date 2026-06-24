@@ -33,6 +33,15 @@ class Tool(ABC):
         if not isinstance(arguments, dict):
             raise ToolValidationError(self.name, ["arguments must be an object"])
 
+        # When the LLM returns arguments that fail JSON parsing, the llm layer
+        # wraps the raw string in a __malformed_arguments__ key.  Surface the
+        # real error so the LLM can adjust, instead of just saying "missing field".
+        if "__malformed_arguments__" in arguments:
+            raise ToolValidationError(self.name, [
+                f"arguments JSON could not be parsed: {arguments['__parse_error__']}",
+                f"raw argument text was: {arguments['__malformed_arguments__'][:500]}",
+            ])
+
         schema = self.parameters
         if schema.get("type") != "object":
             raise ToolValidationError(self.name, ["tool parameters schema must be an object"])

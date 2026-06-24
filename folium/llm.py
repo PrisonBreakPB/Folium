@@ -83,6 +83,18 @@ _PRICING = {
 }
 
 
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
+    """Estimate USD cost for a token pair using the local pricing table."""
+    pricing = _PRICING.get(model)
+    if not pricing:
+        return None
+    input_rate, output_rate = pricing
+    return (
+        prompt_tokens * input_rate / 1_000_000
+        + completion_tokens * output_rate / 1_000_000
+    )
+
+
 class LLM:
     def __init__(
         self,
@@ -100,14 +112,7 @@ class LLM:
     @property
     def estimated_cost(self) -> float | None:
         """Rough cost estimate in USD. Returns None if model not in pricing table."""
-        pricing = _PRICING.get(self.model)
-        if not pricing:
-            return None
-        input_rate, output_rate = pricing
-        return (
-            self.total_prompt_tokens * input_rate / 1_000_000
-            + self.total_completion_tokens * output_rate / 1_000_000
-        )
+        return estimate_cost(self.model, self.total_prompt_tokens, self.total_completion_tokens)
 
     def chat(
         self,
@@ -204,8 +209,15 @@ class LLM:
             raw = tc_map[idx]
             try:
                 args = json.loads(raw["args"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
+            except json.JSONDecodeError as e:
+                # Don't silently drop arguments — return the raw string as a
+                # special "malformed_arguments" tool call so the agent loop can
+                # feed the parse error back to the LLM instead of cycling on
+                # empty args forever.
+                args = {
+                    "__malformed_arguments__": raw["args"],
+                    "__parse_error__": str(e),
+                }
             parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=args))
 
         self.total_prompt_tokens += prompt_tok
@@ -218,6 +230,20 @@ class LLM:
             completion_tokens=completion_tok,
         )
         cfg = active_observer().config
+        # Record raw tool-call arguments BEFORE json.loads so we can
+        # distinguish "model sent {}" from "model sent malformed JSON
+        # that was silently dropped".  Only log non-empty ones.
+        raw_tc_args = {}
+        for idx in sorted(tc_map):
+            raw = tc_map[idx]
+            name = raw.get("name", "?")
+            raw_args = raw.get("args", "")
+            raw_tc_args[f"{idx}:{name}"] = compact_payload(
+                raw_args,
+                include_full=cfg.full_tool_args,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            )
         active_observer().record({
             "event": "llm_result",
             "trace_id": current_trace_id(),
@@ -233,6 +259,7 @@ class LLM:
                     int((first_token_at - stream_started_at) * 1000)
                     if first_token_at is not None else None
                 ),
+                "tool_calls_raw_args": raw_tc_args,
                 "output": compact_payload(
                     response.content,
                     include_full=cfg.full_llm_output,
@@ -376,8 +403,11 @@ class LiteLLM(LLM):
             raw = tc_map[idx]
             try:
                 args = json.loads(raw["args"])
-            except (json.JSONDecodeError, KeyError):
-                args = {}
+            except json.JSONDecodeError as e:
+                args = {
+                    "__malformed_arguments__": raw["args"],
+                    "__parse_error__": str(e),
+                }
             parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=args))
 
         self.total_prompt_tokens += prompt_tok
@@ -390,6 +420,17 @@ class LiteLLM(LLM):
             completion_tokens=completion_tok,
         )
         cfg = active_observer().config
+        raw_tc_args = {}
+        for idx in sorted(tc_map):
+            raw = tc_map[idx]
+            name = raw.get("name", "?")
+            raw_args = raw.get("args", "")
+            raw_tc_args[f"{idx}:{name}"] = compact_payload(
+                raw_args,
+                include_full=cfg.full_tool_args,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            )
         active_observer().record({
             "event": "llm_result",
             "trace_id": current_trace_id(),
@@ -405,6 +446,7 @@ class LiteLLM(LLM):
                     int((first_token_at - stream_started_at) * 1000)
                     if first_token_at is not None else None
                 ),
+                "tool_calls_raw_args": raw_tc_args,
                 "output": compact_payload(
                     response.content,
                     include_full=cfg.full_llm_output,

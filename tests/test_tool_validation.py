@@ -131,6 +131,7 @@ class ToolValidationTests(unittest.TestCase):
         self.assertEqual(result, "连续 5 次工具调用失败，已停止当前任务。")
         self.assertEqual(agent.llm.calls, 5)
         self.assertEqual(len([m for m in agent.messages if m["role"] == "tool"]), 5)
+        self.assertEqual(agent.messages[-1]["name"], "write_file")
         self.assertIn("missing required field 'file_path'", agent.messages[-1]["content"])
 
 

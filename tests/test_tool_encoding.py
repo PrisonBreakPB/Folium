@@ -25,6 +25,16 @@ class ToolEncodingTests(unittest.TestCase):
 
         self.assertIn("中文输出", result)
 
+    def test_bash_decodes_gbk_output(self):
+        command = (
+            f'"{sys.executable}" -c '
+            '"import sys; sys.stdout.buffer.write(\'中文输出\'.encode(\'gbk\'))"'
+        )
+
+        result = get_tool("bash").execute(command=command)
+
+        self.assertIn("中文输出", result)
+
 
 if __name__ == "__main__":
     unittest.main()

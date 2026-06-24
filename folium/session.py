@@ -10,6 +10,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from .encoding import repair_mojibake_text
 
 SESSIONS_DIR = Path(os.getcwd()) / "conversations"
 _SAFE_SESSION_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -107,7 +108,7 @@ def list_sessions() -> list[dict]:
             preview = ""
             for m in data.get("messages", []):
                 if m.get("role") == "user" and m.get("content"):
-                    preview = m["content"][:80]
+                    preview = repair_mojibake_text(m["content"])[:80]
                     break
             sessions.append({
                 "id": data.get("id", f.stem),

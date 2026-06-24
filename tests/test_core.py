@@ -4,6 +4,7 @@ import os
 import pathlib
 
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
+from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
 from folium.context import ContextManager, estimate_tokens
 from folium.session import save_session, load_session, list_sessions
 from folium.tools import get_tool
@@ -38,7 +39,7 @@ def test_config_defaults():
     c = Config.from_env()
     assert c.model == "gpt-4o"
     assert c.max_tokens == 4096
-    assert c.max_context_tokens == 1_000_000
+    assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
 
     os.environ.update(saved)
