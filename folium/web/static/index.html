@@ -272,47 +272,6 @@ body {
   white-space: nowrap;
 }
 
-.session-stats {
-  padding: 10px 22px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.session-stats-title {
-  color: var(--text-muted);
-  font-size: 11px;
-  margin-bottom: 8px;
-}
-
-.session-stats-grid {
-  display: flex;
-  gap: 20px;
-  align-items: end;
-}
-
-.session-stat {
-  min-width: 0;
-}
-
-.session-stat-label {
-  color: var(--text-muted);
-  font-size: 11px;
-  margin-bottom: 3px;
-}
-
-.session-stat-value {
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.session-stat .usage-meter {
-  margin-top: 4px;
-  height: 6px;
-}
-
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -635,7 +594,7 @@ body {
     <div class="usage-block">
       <div class="usage-title">
         <span>本轮用量</span>
-        <span id="lastModel">等待模型返回 usage</span>
+        <span id="lastModel">--</span>
       </div>
       <div class="usage-metrics">
         <div class="usage-metric">
@@ -647,8 +606,8 @@ body {
           <div class="usage-metric-value" id="lastCompletionTokens">--</div>
         </div>
         <div class="usage-metric">
-          <div class="usage-metric-label">总计</div>
-          <div class="usage-metric-value" id="lastTotalTokens">--</div>
+          <div class="usage-metric-label">缓存</div>
+          <div class="usage-metric-value" id="lastCachedTokens">--</div>
         </div>
         <div class="usage-metric">
           <div class="usage-metric-label">费用</div>
@@ -661,33 +620,19 @@ body {
         <span>会话累计</span>
         <span id="turnCount">0 轮</span>
       </div>
-      <div class="usage-value" id="cumulativeTokens">0</div>
-    </div>
-  </section>
-
-  <section class="session-stats" id="sessionStats" style="display:none" aria-label="Session statistics">
-    <div class="session-stats-title">历史统计</div>
-    <div class="session-stats-grid">
-      <div class="session-stat">
-        <div class="session-stat-label">输入（未命中）</div>
-        <div class="session-stat-value" id="statsCacheMiss">--</div>
-      </div>
-      <div class="session-stat">
-        <div class="session-stat-label">缓存命中</div>
-        <div class="session-stat-value" id="statsCached">--</div>
-      </div>
-      <div class="session-stat">
-        <div class="session-stat-label">命中率</div>
-        <div class="session-stat-value" id="statsHitRate">--</div>
-        <div class="usage-meter"><div class="usage-meter-fill" id="statsHitRateFill"></div></div>
-      </div>
-      <div class="session-stat">
-        <div class="session-stat-label">输出</div>
-        <div class="session-stat-value" id="statsCompletion">--</div>
-      </div>
-      <div class="session-stat">
-        <div class="session-stat-label">总费用</div>
-        <div class="session-stat-value" id="statsCost">--</div>
+      <div class="usage-metrics">
+        <div class="usage-metric">
+          <div class="usage-metric-label">总计</div>
+          <div class="usage-metric-value" id="cumulativeTokens">--</div>
+        </div>
+        <div class="usage-metric">
+          <div class="usage-metric-label">费用</div>
+          <div class="usage-metric-value" id="statsCost">--</div>
+        </div>
+        <div class="usage-metric">
+          <div class="usage-metric-label">命中率</div>
+          <div class="usage-metric-value" id="statsHitRate">--</div>
+        </div>
       </div>
     </div>
   </section>
@@ -783,7 +728,6 @@ async function newConversation() {
   await fetch('/new', {method: 'POST'});
   messagesEl.innerHTML = '';
   resetUsage();
-  hideSessionStats();
   loadConversations();
 }
 
@@ -832,7 +776,6 @@ async function switchConv(id) {
   }
   flushTools();
   updateUsagePanel();
-  renderSessionStats(data.stats);
   loadConversations();
 }
 
@@ -1144,12 +1087,6 @@ function applyUsageUpdate(raw) {
   usageState.cumulativeCost = usage.cumulative_cost ?? addCost(usageState.cumulativeCost, usage.cost);
   applyContextUpdate(raw, false);
   updateUsagePanel();
-  showSessionStats();
-}
-
-function showSessionStats() {
-  const panel = document.getElementById('sessionStats');
-  if (panel) panel.style.display = '';
 }
 
 function addHistoricalUsage(raw) {
@@ -1200,10 +1137,10 @@ function updateUsagePanel() {
     : `${formatNumber(context)} tokens`);
   document.getElementById('contextFill').style.width = `${percent}%`;
 
-  setText('lastModel', last?.model || '等待模型返回 usage');
+  setText('lastModel', last?.model || '--');
   setText('lastPromptTokens', last ? formatNumber(last.prompt_tokens) : '--');
   setText('lastCompletionTokens', last ? formatNumber(last.completion_tokens) : '--');
-  setText('lastTotalTokens', last ? formatNumber(last.total_tokens) : '--');
+  setText('lastCachedTokens', last ? formatNumber(last.cached_tokens) : '--');
   setText('lastCost', last ? formatCost(last.cost) : '--');
 
   setText('turnCount', `${usageState.turns.length} 轮`);
@@ -1212,20 +1149,11 @@ function updateUsagePanel() {
 }
 
 function updateSessionStatsFromUsage() {
-  const panel = document.getElementById('sessionStats');
-  if (!panel || panel.style.display === 'none') return;
   const prompt = usageState.cumulativePrompt;
   const cached = usageState.cumulativeCached;
-  const completion = usageState.cumulativeCompletion;
-  const cacheMiss = prompt - cached;
   const hitRate = prompt > 0 ? cached / prompt : 0;
-  setText('statsCacheMiss', formatNumber(cacheMiss));
-  setText('statsCached', formatNumber(cached));
-  setText('statsCompletion', formatNumber(completion));
   setText('statsCost', formatCost(usageState.cumulativeCost));
   setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
-  const fill = document.getElementById('statsHitRateFill');
-  if (fill) fill.style.width = `${Math.min(100, hitRate * 100)}%`;
 }
 
 function setText(id, text) {
@@ -1233,27 +1161,7 @@ function setText(id, text) {
   if (el) el.textContent = text;
 }
 
-function renderSessionStats(stats) {
-  const panel = document.getElementById('sessionStats');
-  if (!stats || !panel) {
-    if (panel) panel.style.display = 'none';
-    return;
-  }
-  panel.style.display = '';
-  setText('statsCacheMiss', formatNumber(stats.cache_miss_tokens));
-  setText('statsCached', formatNumber(stats.cached_tokens));
-  setText('statsCompletion', formatNumber(stats.completion_tokens));
-  setText('statsCost', formatCost(stats.cost));
-  const hitRate = stats.cache_hit_rate || 0;
-  setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
-  const fill = document.getElementById('statsHitRateFill');
-  if (fill) fill.style.width = `${Math.min(100, hitRate * 100)}%`;
-}
 
-function hideSessionStats() {
-  const panel = document.getElementById('sessionStats');
-  if (panel) panel.style.display = 'none';
-}
 
 function formatNumber(value) {
   return Math.round(numberOrZero(value)).toLocaleString();
