@@ -662,7 +662,6 @@ body {
         <span id="turnCount">0 轮</span>
       </div>
       <div class="usage-value" id="cumulativeTokens">0</div>
-      <div class="usage-sub" id="cumulativeCost">费用 --</div>
     </div>
   </section>
 
@@ -1209,7 +1208,6 @@ function updateUsagePanel() {
 
   setText('turnCount', `${usageState.turns.length} 轮`);
   setText('cumulativeTokens', formatNumber(total));
-  setText('cumulativeCost', `费用 ${formatCost(usageState.cumulativeCost)}`);
   updateSessionStatsFromUsage();
 }
 
