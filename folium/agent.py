@@ -150,6 +150,7 @@ class Agent:
                 # StreamingToolExecutor which runs independent tools concurrently)
                 self.messages.append(assistant_message)
                 self._attach_usage_context(assistant_message)
+                tool_tokens = 0
 
                 if len(resp.tool_calls) == 1:
                     tc = resp.tool_calls[0]
@@ -166,6 +167,7 @@ class Agent:
                         "name": tc.name,
                         "content": result.content,
                     })
+                    tool_tokens += _approx_tokens(result.content)
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
@@ -173,7 +175,6 @@ class Agent:
                     for tc in resp.tool_calls:
                         self._emit_tool_start(on_event, tc)
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
-                    tool_tokens = 0
                     for tc, result in zip(resp.tool_calls, results):
                         self._emit_tool_result(on_event, tc, result)
                         self.messages.append({
