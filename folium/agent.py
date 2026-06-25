@@ -19,7 +19,7 @@ from .tools import ALL_TOOLS
 from .tools.base import Tool, ToolValidationError
 from .tools.agent import AgentTool
 from .prompt import system_prompt
-from .context import ContextManager, estimate_tokens
+from .context import ContextManager, estimate_tokens, _approx_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
 from .skills import load_skills
 from .observability import mark_current_span_status, observe_trace, span
@@ -119,7 +119,7 @@ class Agent:
 
     def _chat_impl(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
         self.messages.append({"role": "user", "content": user_input})
-        self._maybe_compress_observed("after_user_message")
+        self._maybe_compress_observed("after_user_message", new_message_tokens=_approx_tokens(user_input))
         self._emit_context_update(on_event)
         bad_tool_calls = 0
 
@@ -173,6 +173,7 @@ class Agent:
                     for tc in resp.tool_calls:
                         self._emit_tool_start(on_event, tc)
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
+                    tool_tokens = 0
                     for tc, result in zip(resp.tool_calls, results):
                         self._emit_tool_result(on_event, tc, result)
                         self.messages.append({
@@ -181,6 +182,7 @@ class Agent:
                             "name": tc.name,
                             "content": result.content,
                         })
+                        tool_tokens += _approx_tokens(result.content)
                         self._emit_context_update(on_event)
                         bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
 
@@ -189,7 +191,7 @@ class Agent:
                     return f"连续 {bad_tool_calls} 次工具调用失败，已停止当前任务。"
 
                 # compress if tool outputs are big
-                self._maybe_compress_observed("after_tool_results", on_event=on_event)
+                self._maybe_compress_observed("after_tool_results", on_event=on_event, new_message_tokens=tool_tokens)
                 self._emit_context_update(on_event)
 
         return "(reached maximum tool-call rounds)"
@@ -410,9 +412,9 @@ class Agent:
         self.llm.last_prompt_tokens = 0
         self.llm.last_completion_tokens = 0
 
-    def _maybe_compress_observed(self, trigger: str, on_event=None) -> bool:
+    def _maybe_compress_observed(self, trigger: str, on_event=None, new_message_tokens: int = 0) -> bool:
         last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
-        real_tokens = last if last > 0 else estimate_tokens(self.messages)
+        real_tokens = (last + new_message_tokens) if last > 0 else estimate_tokens(self.messages)
         before_tokens = real_tokens
         before_messages = len(self.messages)
         with span("context_compression", "context", metadata={
