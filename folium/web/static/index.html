@@ -272,24 +272,6 @@ body {
   white-space: nowrap;
 }
 
-.usage-chart {
-  display: flex;
-  align-items: end;
-  gap: 4px;
-  height: 38px;
-  padding-top: 4px;
-}
-
-.usage-bar {
-  flex: 1 1 0;
-  min-width: 5px;
-  max-width: 18px;
-  height: 2px;
-  border-radius: 3px 3px 0 0;
-  background: var(--accent);
-  opacity: 0.82;
-}
-
 .session-stats {
   padding: 10px 22px;
   background: var(--surface);
@@ -681,7 +663,6 @@ body {
       </div>
       <div class="usage-value" id="cumulativeTokens">0</div>
       <div class="usage-sub" id="cumulativeCost">费用 --</div>
-      <div class="usage-chart" id="usageChart"></div>
     </div>
   </section>
 
@@ -1229,7 +1210,6 @@ function updateUsagePanel() {
   setText('turnCount', `${usageState.turns.length} 轮`);
   setText('cumulativeTokens', formatNumber(total));
   setText('cumulativeCost', `费用 ${formatCost(usageState.cumulativeCost)}`);
-  renderUsageChart();
   updateSessionStatsFromUsage();
 }
 
@@ -1248,20 +1228,6 @@ function updateSessionStatsFromUsage() {
   setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
   const fill = document.getElementById('statsHitRateFill');
   if (fill) fill.style.width = `${Math.min(100, hitRate * 100)}%`;
-}
-
-function renderUsageChart() {
-  const chart = document.getElementById('usageChart');
-  chart.innerHTML = '';
-  const recent = usageState.turns.slice(-18);
-  const max = Math.max(1, ...recent.map(u => u.total_tokens || 0));
-  for (const usage of recent) {
-    const bar = document.createElement('div');
-    bar.className = 'usage-bar';
-    bar.style.height = `${Math.max(3, Math.round((usage.total_tokens || 0) / max * 38))}px`;
-    bar.title = `${formatNumber(usage.total_tokens)} tokens`;
-    chart.appendChild(bar);
-  }
 }
 
 function setText(id, text) {
