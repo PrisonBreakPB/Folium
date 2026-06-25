@@ -290,6 +290,47 @@ body {
   opacity: 0.82;
 }
 
+.session-stats {
+  padding: 10px 22px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.session-stats-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.session-stats-grid {
+  display: flex;
+  gap: 20px;
+  align-items: end;
+}
+
+.session-stat {
+  min-width: 0;
+}
+
+.session-stat-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+
+.session-stat-value {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.session-stat .usage-meter {
+  margin-top: 4px;
+  height: 6px;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -603,7 +644,7 @@ body {
   <section class="usage-panel" aria-label="Token and cost usage">
     <div class="usage-block">
       <div class="usage-title">
-        <span>上下文估算</span>
+        <span>上下文窗口占用</span>
         <span id="contextPercent">0%</span>
       </div>
       <div class="usage-meter"><div class="usage-meter-fill" id="contextFill"></div></div>
@@ -641,6 +682,33 @@ body {
       <div class="usage-value" id="cumulativeTokens">0</div>
       <div class="usage-sub" id="cumulativeCost">费用 --</div>
       <div class="usage-chart" id="usageChart"></div>
+    </div>
+  </section>
+
+  <section class="session-stats" id="sessionStats" style="display:none" aria-label="Session statistics">
+    <div class="session-stats-title">历史统计</div>
+    <div class="session-stats-grid">
+      <div class="session-stat">
+        <div class="session-stat-label">输入（未命中）</div>
+        <div class="session-stat-value" id="statsCacheMiss">--</div>
+      </div>
+      <div class="session-stat">
+        <div class="session-stat-label">缓存命中</div>
+        <div class="session-stat-value" id="statsCached">--</div>
+      </div>
+      <div class="session-stat">
+        <div class="session-stat-label">命中率</div>
+        <div class="session-stat-value" id="statsHitRate">--</div>
+        <div class="usage-meter"><div class="usage-meter-fill" id="statsHitRateFill"></div></div>
+      </div>
+      <div class="session-stat">
+        <div class="session-stat-label">输出</div>
+        <div class="session-stat-value" id="statsCompletion">--</div>
+      </div>
+      <div class="session-stat">
+        <div class="session-stat-label">总费用</div>
+        <div class="session-stat-value" id="statsCost">--</div>
+      </div>
     </div>
   </section>
 
@@ -735,6 +803,7 @@ async function newConversation() {
   await fetch('/new', {method: 'POST'});
   messagesEl.innerHTML = '';
   resetUsage();
+  hideSessionStats();
   loadConversations();
 }
 
@@ -783,6 +852,7 @@ async function switchConv(id) {
   }
   flushTools();
   updateUsagePanel();
+  renderSessionStats(data.stats);
   loadConversations();
 }
 
@@ -1169,6 +1239,28 @@ function renderUsageChart() {
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
+}
+
+function renderSessionStats(stats) {
+  const panel = document.getElementById('sessionStats');
+  if (!stats || !panel) {
+    if (panel) panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  setText('statsCacheMiss', formatNumber(stats.cache_miss_tokens));
+  setText('statsCached', formatNumber(stats.cached_tokens));
+  setText('statsCompletion', formatNumber(stats.completion_tokens));
+  setText('statsCost', formatCost(stats.cost));
+  const hitRate = stats.cache_hit_rate || 0;
+  setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
+  const fill = document.getElementById('statsHitRateFill');
+  if (fill) fill.style.width = `${Math.min(100, hitRate * 100)}%`;
+}
+
+function hideSessionStats() {
+  const panel = document.getElementById('sessionStats');
+  if (panel) panel.style.display = 'none';
 }
 
 function formatNumber(value) {

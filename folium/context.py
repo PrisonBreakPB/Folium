@@ -44,9 +44,15 @@ class ContextManager:
         self._summarize_at = int(max_tokens * 0.70)  # 70% -> LLM summarize
         self._collapse_at = int(max_tokens * 0.90)   # 90% -> hard collapse
 
-    def maybe_compress(self, messages: list[dict], llm: LLM | None = None) -> bool:
-        """Apply compression layers as needed. Returns True if any compression happened."""
-        current = estimate_tokens(messages)
+    def maybe_compress(self, messages: list[dict], llm: LLM | None = None,
+                       real_tokens: int | None = None) -> bool:
+        """Apply compression layers as needed. Returns True if any compression happened.
+
+        Args:
+            real_tokens: Actual token count from LLM API (prompt_tokens + completion_tokens).
+                         Falls back to estimate_tokens() if not provided.
+        """
+        current = real_tokens if real_tokens is not None else estimate_tokens(messages)
         compressed = False
 
         # Layer 1: snip verbose tool outputs

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..agent import Agent
 from ..config import Config
-from ..session import save_session, load_session, list_sessions, delete_session, new_session_id
+from ..session import save_session, load_session, list_sessions, delete_session, new_session_id, calculate_session_stats
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
@@ -163,11 +163,29 @@ async def switch_conversation(req: SwitchRequest):
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
     _state["dirty"] = False
-    # return messages so frontend can render them
+
+    # restore cumulative token counts from _usage in messages
+    llm = _state["agent"].llm
+    llm.total_prompt_tokens = 0
+    llm.total_completion_tokens = 0
+    llm.total_cached_tokens = 0
+    llm.last_prompt_tokens = 0
+    llm.last_completion_tokens = 0
+    for msg in messages:
+        usage = msg.get("_usage")
+        if usage:
+            llm.total_prompt_tokens += usage.get("prompt_tokens", 0)
+            llm.total_completion_tokens += usage.get("completion_tokens", 0)
+            llm.total_cached_tokens += usage.get("cached_tokens", 0)
+            llm.last_prompt_tokens = usage.get("prompt_tokens", 0)
+            llm.last_completion_tokens = usage.get("completion_tokens", 0)
+
+    stats = calculate_session_stats(messages)
     return {
         "result": f"Switched to {req.session_id}",
         "session_id": _state["session_id"],
         "messages": repair_mojibake_payload(messages),
+        "stats": stats,
     }
 
 

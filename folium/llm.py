@@ -32,6 +32,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_tokens: int = 0
 
     @property
     def message(self) -> dict:
@@ -80,14 +81,28 @@ _PRICING = {
     "qwen-max": (0.78, 3.9),
     # Moonshot Kimi
     "kimi-k2.5": (0.6, 3),
+    # DeepSeek V4 Pro (人民币/百万 token)
+    "deepseek-v4-pro": (3, 6, 0.025),
 }
 
 
-def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Estimate USD cost for a token pair using the local pricing table."""
+def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0) -> float | None:
+    """Estimate cost for a token pair using the local pricing table.
+
+    Pricing unit is per million tokens. For models with cache pricing (3-tuple),
+    cached_tokens are charged at the reduced cache rate.
+    """
     pricing = _PRICING.get(model)
     if not pricing:
         return None
+    if len(pricing) == 3:
+        input_rate, output_rate, cache_rate = pricing
+        regular_input = prompt_tokens - cached_tokens
+        return (
+            regular_input * input_rate / 1_000_000
+            + cached_tokens * cache_rate / 1_000_000
+            + completion_tokens * output_rate / 1_000_000
+        )
     input_rate, output_rate = pricing
     return (
         prompt_tokens * input_rate / 1_000_000
@@ -108,11 +123,14 @@ class LLM:
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.total_cached_tokens = 0
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
 
     @property
     def estimated_cost(self) -> float | None:
         """Rough cost estimate in USD. Returns None if model not in pricing table."""
-        return estimate_cost(self.model, self.total_prompt_tokens, self.total_completion_tokens)
+        return estimate_cost(self.model, self.total_prompt_tokens, self.total_completion_tokens, self.total_cached_tokens)
 
     def chat(
         self,
@@ -168,6 +186,7 @@ class LLM:
         tc_map: dict[int, dict] = {}  # index -> {id, name, arguments_str}
         prompt_tok = 0
         completion_tok = 0
+        cached_tok = 0
         first_token_at = None
         stream_started_at = time.time()
 
@@ -176,6 +195,7 @@ class LLM:
             if chunk.usage:
                 prompt_tok = chunk.usage.prompt_tokens
                 completion_tok = chunk.usage.completion_tokens
+                cached_tok = getattr(chunk.usage, 'prompt_cache_hit_tokens', 0) or 0
 
             if not chunk.choices:
                 continue
@@ -222,12 +242,16 @@ class LLM:
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
+        self.total_cached_tokens += cached_tok
+        self.last_prompt_tokens = prompt_tok
+        self.last_completion_tokens = completion_tok
 
         response = LLMResponse(
             content="".join(content_parts),
             tool_calls=parsed,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
+            cached_tokens=cached_tok,
         )
         cfg = active_observer().config
         # Record raw tool-call arguments BEFORE json.loads so we can
@@ -315,6 +339,7 @@ class LiteLLM(LLM):
         self.extra = kwargs
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.total_cached_tokens = 0
 
     def chat(
         self,
@@ -365,6 +390,7 @@ class LiteLLM(LLM):
         tc_map: dict[int, dict] = {}
         prompt_tok = 0
         completion_tok = 0
+        cached_tok = 0
         first_token_at = None
         stream_started_at = time.time()
 
@@ -373,6 +399,7 @@ class LiteLLM(LLM):
             if usage:
                 prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
                 completion_tok = getattr(usage, "completion_tokens", 0) or 0
+                cached_tok = getattr(usage, "prompt_cache_hit_tokens", 0) or 0
 
             if not getattr(chunk, "choices", None):
                 continue
@@ -412,12 +439,16 @@ class LiteLLM(LLM):
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
+        self.total_cached_tokens += cached_tok
+        self.last_prompt_tokens = prompt_tok
+        self.last_completion_tokens = completion_tok
 
         response = LLMResponse(
             content="".join(content_parts),
             tool_calls=parsed,
             prompt_tokens=prompt_tok,
             completion_tokens=completion_tok,
+            cached_tokens=cached_tok,
         )
         cfg = active_observer().config
         raw_tc_args = {}

@@ -339,8 +339,9 @@ class Agent:
             "model": self.llm.model,
             "prompt_tokens": resp.prompt_tokens,
             "completion_tokens": resp.completion_tokens,
+            "cached_tokens": resp.cached_tokens,
             "total_tokens": total_tokens,
-            "cost": estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens),
+            "cost": estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens, resp.cached_tokens),
         }
         return message
 
@@ -348,7 +349,8 @@ class Agent:
         usage = message.get("_usage")
         if not isinstance(usage, dict):
             return
-        usage["estimated_context_tokens"] = estimate_tokens(self.messages)
+        last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
+        usage["estimated_context_tokens"] = last if last > 0 else estimate_tokens(self.messages)
         usage["max_context_tokens"] = self.context.max_tokens
 
     def _emit_usage(self, on_event, resp: LLMResponse, round_index: int):
@@ -361,21 +363,23 @@ class Agent:
             round_index=round_index,
             prompt_tokens=resp.prompt_tokens,
             completion_tokens=resp.completion_tokens,
+            cached_tokens=resp.cached_tokens,
             total_tokens=resp.prompt_tokens + resp.completion_tokens,
-            cost=estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens),
+            cost=estimate_cost(self.llm.model, resp.prompt_tokens, resp.completion_tokens, resp.cached_tokens),
             cumulative_prompt_tokens=cumulative_prompt,
             cumulative_completion_tokens=cumulative_completion,
             cumulative_total_tokens=cumulative_prompt + cumulative_completion,
             cumulative_cost=getattr(self.llm, "estimated_cost", None),
-            estimated_context_tokens=estimate_tokens(self.messages),
+            estimated_context_tokens=resp.prompt_tokens + resp.completion_tokens,
             max_context_tokens=self.context.max_tokens,
         )
 
     def _emit_context_update(self, on_event):
+        last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
         self._emit_event(
             on_event,
             "context_update",
-            estimated_context_tokens=estimate_tokens(self.messages),
+            estimated_context_tokens=last if last > 0 else estimate_tokens(self.messages),
             max_context_tokens=self.context.max_tokens,
             message_count=len(self.messages),
         )
@@ -398,18 +402,25 @@ class Agent:
         return 0
 
     def reset(self):
-        """Clear conversation history."""
+        """Clear conversation history and reset LLM cumulative counters."""
         self.messages.clear()
+        self.llm.total_prompt_tokens = 0
+        self.llm.total_completion_tokens = 0
+        self.llm.total_cached_tokens = 0
+        self.llm.last_prompt_tokens = 0
+        self.llm.last_completion_tokens = 0
 
     def _maybe_compress_observed(self, trigger: str, on_event=None) -> bool:
-        before_tokens = estimate_tokens(self.messages)
+        last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
+        real_tokens = last if last > 0 else estimate_tokens(self.messages)
+        before_tokens = real_tokens
         before_messages = len(self.messages)
         with span("context_compression", "context", metadata={
             "trigger": trigger,
             "before_tokens": before_tokens,
             "before_messages": before_messages,
         }):
-            compressed = self.context.maybe_compress(self.messages, self.llm)
+            compressed = self.context.maybe_compress(self.messages, self.llm, real_tokens=real_tokens or None)
             if compressed:
                 self._emit_event(
                     on_event,

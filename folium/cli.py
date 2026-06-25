@@ -83,6 +83,15 @@ def main():
             if not args.model:
                 agent.llm.model = loaded_model
                 config.model = loaded_model
+            # restore cumulative token counts from _usage in messages
+            for msg in agent.messages:
+                usage = msg.get("_usage")
+                if usage:
+                    agent.llm.total_prompt_tokens += usage.get("prompt_tokens", 0)
+                    agent.llm.total_completion_tokens += usage.get("completion_tokens", 0)
+                    agent.llm.total_cached_tokens += usage.get("cached_tokens", 0)
+                    agent.llm.last_prompt_tokens = usage.get("prompt_tokens", 0)
+                    agent.llm.last_completion_tokens = usage.get("completion_tokens", 0)
             console.print(f"[green]Resumed session: {args.resume} (model: {agent.llm.model})[/green]")
         else:
             console.print(f"[red]Session '{args.resume}' not found.[/red]")

@@ -22,3 +22,20 @@ decode*.txt
 output*.txt
 show.py
 AGENTS.md
+
+# scratch / temp files
+.runlogs/
+_decode.py
+agent.txt
+agent_questions_summary.html
+build_pid.py
+gen_pid.py
+out.txt
+path/
+pid_script.py
+review.txt
+*.html
+*_files/
+CLAUDE.md
+demo.py
+demo_plot.png

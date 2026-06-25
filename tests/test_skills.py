@@ -88,14 +88,11 @@ description: Use for experiments.
             self.assertIn("Use for experiments.", prompt)
             self.assertIn(str(skill_file), prompt)
 
-    def test_builtin_skills_are_loadable(self):
-        skills = load_skills()
-        names = {skill.name for skill in skills}
+    def test_missing_skills_directory_returns_empty_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-skills"
 
-        self.assertLessEqual(
-            {"literature-review", "latex-writing", "experiment-runner"},
-            names,
-        )
+            self.assertEqual(load_skills(missing), [])
 
 
 if __name__ == "__main__":

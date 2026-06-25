@@ -93,6 +93,40 @@ def delete_session(session_id: str) -> bool:
     return False
 
 
+def calculate_session_stats(messages: list[dict]) -> dict:
+    """Aggregate token usage stats from assistant messages' _usage field."""
+    total_prompt = 0
+    total_cached = 0
+    total_completion = 0
+    total_cost = 0.0
+
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        usage = msg.get("_usage")
+        if not usage:
+            continue
+        total_prompt += usage.get("prompt_tokens", 0)
+        total_cached += usage.get("cached_tokens", 0)
+        total_completion += usage.get("completion_tokens", 0)
+        cost = usage.get("cost")
+        if cost is not None:
+            total_cost += cost
+
+    cache_miss = total_prompt - total_cached
+    cache_hit_rate = total_cached / total_prompt if total_prompt > 0 else 0
+
+    return {
+        "prompt_tokens": total_prompt,
+        "cache_miss_tokens": cache_miss,
+        "cached_tokens": total_cached,
+        "completion_tokens": total_completion,
+        "total_tokens": total_prompt + total_completion,
+        "cost": total_cost,
+        "cache_hit_rate": cache_hit_rate,
+    }
+
+
 def list_sessions() -> list[dict]:
     """List available sessions, newest first."""
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)

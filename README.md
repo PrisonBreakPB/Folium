@@ -181,9 +181,7 @@ Folium 支持轻量级 skill。Skill 位于项目根目录的 `skills/`，每个
 
 ```text
 skills/
-├── literature-review/SKILL.md
-├── latex-writing/SKILL.md
-└── experiment-runner/SKILL.md
+└── your-skill-name/SKILL.md
 ```
 
 启动时 Agent 会扫描 `skills/*/SKILL.md`，只把 skill 的名称、描述和文件路径加入系统提示词。完整 `SKILL.md` 不会预先塞进上下文；模型在判断任务匹配某个 skill 时，会先用 `read_file` 读取对应文件，再按其中的工作流执行。
@@ -192,11 +190,11 @@ skills/
 
 ```markdown
 ---
-name: literature-review
-description: Use for literature surveys, related work, paper comparison, research reports, and organizing findings from academic papers.
+name: your-skill-name
+description: Use when the user asks for this specialized workflow.
 ---
 
-# Literature Review Skill
+# Your Skill Name
 
 ...
 ```
