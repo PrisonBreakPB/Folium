@@ -40,7 +40,7 @@ class ContextManager:
     def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS):
         self.max_tokens = max_tokens
         # layer thresholds (fraction of max_tokens)
-        self._snip_at = int(max_tokens * 0.50)    # 50% -> snip tool outputs
+        self._snip_at = int(max_tokens * 0.60)    # 60% -> snip tool outputs
         self._summarize_at = int(max_tokens * 0.70)  # 70% -> LLM summarize
         self._collapse_at = int(max_tokens * 0.90)   # 90% -> hard collapse
 
