@@ -1120,6 +1120,7 @@ function emptyUsageState() {
     last: null,
     cumulativePrompt: 0,
     cumulativeCompletion: 0,
+    cumulativeCached: 0,
     cumulativeCost: null,
     estimatedContextTokens: 0,
     maxContextTokens: 0
@@ -1140,6 +1141,7 @@ function normalizeUsage(raw) {
     model: raw.model || '',
     prompt_tokens: prompt,
     completion_tokens: completion,
+    cached_tokens: numberOrZero(raw.cached_tokens),
     total_tokens: total,
     cost: numberOrNull(raw.cost),
     cumulative_prompt_tokens: numberOrZero(raw.cumulative_prompt_tokens),
@@ -1158,9 +1160,16 @@ function applyUsageUpdate(raw) {
   usageState.turns.push(usage);
   usageState.cumulativePrompt = usage.cumulative_prompt_tokens || usageState.cumulativePrompt + usage.prompt_tokens;
   usageState.cumulativeCompletion = usage.cumulative_completion_tokens || usageState.cumulativeCompletion + usage.completion_tokens;
+  usageState.cumulativeCached = usageState.cumulativeCached + usage.cached_tokens;
   usageState.cumulativeCost = usage.cumulative_cost ?? addCost(usageState.cumulativeCost, usage.cost);
   applyContextUpdate(raw, false);
   updateUsagePanel();
+  showSessionStats();
+}
+
+function showSessionStats() {
+  const panel = document.getElementById('sessionStats');
+  if (panel) panel.style.display = '';
 }
 
 function addHistoricalUsage(raw) {
@@ -1170,6 +1179,7 @@ function addHistoricalUsage(raw) {
   usageState.last = usage;
   usageState.cumulativePrompt += usage.prompt_tokens;
   usageState.cumulativeCompletion += usage.completion_tokens;
+  usageState.cumulativeCached += usage.cached_tokens;
   usageState.cumulativeCost = addCost(usageState.cumulativeCost, usage.cost);
   applyContextUpdate(raw, false);
 }
@@ -1202,9 +1212,9 @@ function updateUsagePanel() {
   const total = usageState.cumulativePrompt + usageState.cumulativeCompletion;
   const maxContext = usageState.maxContextTokens;
   const context = usageState.estimatedContextTokens;
-  const percent = maxContext > 0 ? Math.min(100, Math.round(context / maxContext * 100)) : 0;
+  const percent = maxContext > 0 ? Math.min(100, context / maxContext * 100) : 0;
 
-  setText('contextPercent', `${percent}%`);
+  setText('contextPercent', `${percent.toFixed(1)}%`);
   setText('contextText', maxContext > 0
     ? `${formatNumber(context)} / ${formatNumber(maxContext)} tokens`
     : `${formatNumber(context)} tokens`);
@@ -1220,6 +1230,24 @@ function updateUsagePanel() {
   setText('cumulativeTokens', formatNumber(total));
   setText('cumulativeCost', `费用 ${formatCost(usageState.cumulativeCost)}`);
   renderUsageChart();
+  updateSessionStatsFromUsage();
+}
+
+function updateSessionStatsFromUsage() {
+  const panel = document.getElementById('sessionStats');
+  if (!panel || panel.style.display === 'none') return;
+  const prompt = usageState.cumulativePrompt;
+  const cached = usageState.cumulativeCached;
+  const completion = usageState.cumulativeCompletion;
+  const cacheMiss = prompt - cached;
+  const hitRate = prompt > 0 ? cached / prompt : 0;
+  setText('statsCacheMiss', formatNumber(cacheMiss));
+  setText('statsCached', formatNumber(cached));
+  setText('statsCompletion', formatNumber(completion));
+  setText('statsCost', formatCost(usageState.cumulativeCost));
+  setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
+  const fill = document.getElementById('statsHitRateFill');
+  if (fill) fill.style.width = `${Math.min(100, hitRate * 100)}%`;
 }
 
 function renderUsageChart() {
