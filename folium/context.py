@@ -8,8 +8,8 @@ Claude Code uses a 4-layer strategy:
 
 Folium implements the same idea in 3 layers:
   Layer 1 (tool_snip)   - replace verbose tool results with truncated versions
-  Layer 2 (summarize)   - LLM-powered summary of old conversation
-  Layer 3 (hard_collapse) - last resort: drop everything except summary + recent
+  Layer 2 (summarize)   - incremental LLM summary + protected user messages
+  Layer 3 (hard_collapse) - last resort: rebuild from summary + protected users
 """
 
 from __future__ import annotations
@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from .llm import LLM
 
 DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
+DEFAULT_PROTECTED_USER_TOKENS = 20_000
+SUMMARY_PREFIX = "[Context compressed - incremental summary]"
+HARD_SUMMARY_PREFIX = "[Hard context reset]"
 
 
 def _approx_tokens(text: str) -> int:
@@ -35,9 +38,11 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 class ContextManager:
     def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
-                 reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS):
+                 reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
+                 protected_user_tokens: int = DEFAULT_PROTECTED_USER_TOKENS):
         self.max_tokens = max_tokens
         self.reserved_output_tokens = max(0, reserved_output_tokens)
+        self.protected_user_tokens = max(1, protected_user_tokens)
         self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
@@ -102,43 +107,133 @@ class ContextManager:
         return changed
 
     def _summarize_old(self, messages: list[dict], llm: LLM | None,
-                       keep_recent: int = 8) -> bool:
-        """Layer 2: Summarize old conversation, keep recent messages intact."""
-        if len(messages) <= keep_recent:
+                       keep_recent: int = 0) -> bool:
+        """Layer 2: Incrementally summarize history and protect user messages."""
+        if not messages:
             return False
 
-        old = messages[:-keep_recent]
-        tail = messages[-keep_recent:]
+        existing_summary = self._extract_existing_summary(messages)
+        delta = self._delta_messages(messages)
+        if not delta and existing_summary:
+            return False
 
-        summary = self._get_summary(old, llm)
-
+        summary = self._get_incremental_summary(existing_summary, delta, llm)
+        protected_users = self._collect_protected_user_messages(messages)
         messages.clear()
-        messages.append({
-            "role": "user",
-            "content": f"[Context compressed - conversation summary]\n{summary}",
-        })
-        messages.append({
-            "role": "assistant",
-            "content": "Got it, I have the context from our earlier conversation.",
-        })
-        messages.extend(tail)
+        messages.extend(protected_users)
+        messages.append(self._summary_message(summary))
         return True
 
     def _hard_collapse(self, messages: list[dict], llm: LLM | None):
-        """Layer 3: Emergency compression. Keep only last 4 messages + summary."""
-        tail = messages[-4:] if len(messages) > 4 else messages[-2:]
-        summary = self._get_summary(messages[:-len(tail)], llm)
+        """Layer 3: Emergency compression. Keep protected users + summary."""
+        existing_summary = self._extract_existing_summary(messages)
+        delta = self._delta_messages(messages)
+        summary = self._get_incremental_summary(existing_summary, delta, llm)
+        protected_users = self._collect_protected_user_messages(messages)
 
         messages.clear()
+        messages.extend(protected_users)
         messages.append({
             "role": "user",
-            "content": f"[Hard context reset]\n{summary}",
+            "content": f"{HARD_SUMMARY_PREFIX}\n{summary}",
         })
-        messages.append({
-            "role": "assistant",
-            "content": "Context restored. Continuing from where we left off.",
-        })
-        messages.extend(tail)
+
+    def _summary_message(self, summary: str) -> dict:
+        return {
+            "role": "user",
+            "content": f"{SUMMARY_PREFIX}\n{summary}",
+        }
+
+    @staticmethod
+    def _is_summary_message(message: dict) -> bool:
+        if message.get("role") != "user":
+            return False
+        content = message.get("content") or ""
+        return content.startswith(f"{SUMMARY_PREFIX}\n") or content.startswith(f"{HARD_SUMMARY_PREFIX}\n")
+
+    @staticmethod
+    def _summary_text(message: dict) -> str:
+        content = message.get("content") or ""
+        for prefix in (SUMMARY_PREFIX, HARD_SUMMARY_PREFIX):
+            marker = f"{prefix}\n"
+            if content.startswith(marker):
+                return content[len(marker):]
+        return ""
+
+    def _extract_existing_summary(self, messages: list[dict]) -> str:
+        summaries = [
+            self._summary_text(message)
+            for message in messages
+            if self._is_summary_message(message)
+        ]
+        return "\n\n".join(summary for summary in summaries if summary)
+
+    def _delta_messages(self, messages: list[dict]) -> list[dict]:
+        return [
+            message
+            for message in messages
+            if not self._is_summary_message(message) and not message.get("_protected")
+        ]
+
+    def _collect_protected_user_messages(self, messages: list[dict]) -> list[dict]:
+        selected: list[dict] = []
+        used = 0
+
+        for message in reversed(messages):
+            if message.get("role") != "user" or self._is_summary_message(message):
+                continue
+            content = message.get("content") or ""
+            tokens = estimate_text_tokens(str(content))
+            if used + tokens <= self.protected_user_tokens:
+                selected.append({"role": "user", "content": content, "_protected": True})
+                used += tokens
+                continue
+            if not selected:
+                selected.append({"role": "user", "content": content, "_protected": True})
+            break
+
+        selected.reverse()
+        return selected
+
+    def _get_incremental_summary(self, existing_summary: str, delta_messages: list[dict],
+                                 llm: LLM | None) -> str:
+        if not existing_summary:
+            return self._get_summary(delta_messages, llm)
+
+        delta = self._flatten(delta_messages)
+        if not delta:
+            return existing_summary
+
+        if llm:
+            try:
+                resp = llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Update the existing conversation summary with the new messages. "
+                                "Preserve durable facts: user goals and constraints, file paths edited, "
+                                "key decisions, tool results, errors, current task state, and next steps. "
+                                "Do not repeat unchanged details unnecessarily."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Existing summary:\n{existing_summary}\n\n"
+                                f"New messages to incorporate:\n{delta[:15000]}"
+                            ),
+                        },
+                    ],
+                )
+                return resp.content
+            except Exception:
+                pass
+
+        extracted = self._extract_key_info(delta_messages)
+        if extracted and extracted != "(no extractable context)":
+            return f"{existing_summary}\n\nRecent update: {extracted}"
+        return existing_summary
 
     def _get_summary(self, messages: list[dict], llm: LLM | None) -> str:
         """Generate summary via LLM or fallback to extraction."""

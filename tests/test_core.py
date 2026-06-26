@@ -2,10 +2,11 @@
 
 import os
 import pathlib
+from unittest import mock
 
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
 from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
-from folium.context import ContextManager, DEFAULT_RESERVED_OUTPUT_TOKENS, estimate_tokens
+from folium.context import ContextManager, DEFAULT_RESERVED_OUTPUT_TOKENS, SUMMARY_PREFIX, estimate_tokens
 from folium.session import save_session, load_session, list_sessions
 from folium.tools import get_tool
 
@@ -87,6 +88,74 @@ def test_context_compress():
     after = estimate_tokens(msgs)
     assert after < before
     assert len(msgs) < 40  # should be compressed
+
+
+class FakeLLM:
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, messages, tools=None, on_token=None):
+        self.calls.append(messages)
+        content = "summary"
+        if "Existing summary:" in messages[-1]["content"]:
+            content = "updated summary"
+        return type("Resp", (), {"content": content})()
+
+
+def test_context_compress_uses_incremental_summary_without_recent_tail():
+    ctx = ContextManager(max_tokens=1000)
+    llm = FakeLLM()
+    msgs = [
+        {"role": "user", "content": "first request"},
+        {"role": "assistant", "content": "assistant detail"},
+        {"role": "tool", "tool_call_id": "t1", "content": "tool output"},
+        {"role": "user", "content": "latest request"},
+    ]
+
+    assert ctx._summarize_old(msgs, llm)
+
+    assert [m["role"] for m in msgs] == ["user", "user", "user"]
+    assert msgs[0]["content"] == "first request"
+    assert msgs[1]["content"] == "latest request"
+    assert msgs[0]["_protected"] is True
+    assert msgs[2]["content"].startswith(f"{SUMMARY_PREFIX}\nsummary")
+    assert not any(m.get("role") in {"assistant", "tool"} for m in msgs)
+
+
+def test_context_compress_updates_existing_summary_with_delta_only():
+    ctx = ContextManager(max_tokens=1000)
+    llm = FakeLLM()
+    msgs = [
+        {"role": "user", "content": "old protected", "_protected": True},
+        {"role": "user", "content": f"{SUMMARY_PREFIX}\nold summary"},
+        {"role": "assistant", "content": "new assistant fact"},
+        {"role": "user", "content": "new user request"},
+    ]
+
+    assert ctx._summarize_old(msgs, llm)
+
+    update_prompt = llm.calls[-1][-1]["content"]
+    assert "Existing summary:\nold summary" in update_prompt
+    assert "new assistant fact" in update_prompt
+    assert "new user request" in update_prompt
+    assert "old protected" not in update_prompt
+    assert msgs[-1]["content"].startswith(f"{SUMMARY_PREFIX}\nupdated summary")
+
+
+def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
+    ctx = ContextManager(max_tokens=1000, protected_user_tokens=5)
+    msgs = [
+        {"role": "user", "content": "older"},
+        {"role": "assistant", "content": "assistant"},
+        {"role": "user", "content": "latest very long request"},
+    ]
+
+    with mock.patch("folium.context.estimate_text_tokens", side_effect=lambda text: 10 if "latest" in text else 1):
+        protected = ctx._collect_protected_user_messages(msgs)
+
+    assert len(protected) == 1
+    assert protected[0]["content"] == "latest very long request"
+    assert protected[0]["_protected"] is True
 
 
 # --- Session ---

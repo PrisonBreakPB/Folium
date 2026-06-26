@@ -213,8 +213,8 @@ Folium 采用三层渐进式上下文压缩策略，使用 LLM API 返回的真�
 | 层级 | 触发阈值 | 操作 | 成本 |
 |------|---------|------|------|
 | Layer 1 | 60% | 截断 tool 输出（保留首尾各 3 行） | 零 LLM 调用 |
-| Layer 2 | 70% | LLM 摘要旧对话，保留最近 8 条 | 调 LLM |
-| Layer 3 | 90% | 紧急压缩，只保留最近 4 条 + 摘要 | 调 LLM |
+| Layer 2 | 70% | 增量更新历史摘要，并按预算保护最近用户原文 | 调 LLM |
+| Layer 3 | 90% | 紧急压缩，重建为用户原文保护 + 摘要 | 调 LLM |
 
 触发时机：
 - 用户消息加入后（`after_user_message`）
@@ -225,6 +225,7 @@ Token 计算：
 - 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前 fallback 使用本地估算器
 - 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
 - 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
+- 压缩后不再保留 recent tail；系统会从真实用户消息中倒序保护最近原文，默认预算 20000 tokens。若最近一条用户消息本身超过预算，也会整条保留。该预算使用同一个本地 token 估算器：优先 tokenizer，失败再回退 `len(text) // 3`
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）
