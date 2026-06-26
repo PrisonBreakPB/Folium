@@ -73,6 +73,8 @@ FOLIUM_PROVIDER             openai 或 litellm
 FOLIUM_MAX_TOKENS           单次输出 token 上限
 FOLIUM_TEMPERATURE          采样温度
 FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
+FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
+FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
 ```
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
@@ -220,8 +222,8 @@ Folium 采用三层渐进式上下文压缩策略，使用 LLM API 返回的真�
 
 Token 计算：
 - 使用 LLM API 返回的真实 `prompt_tokens` 和 `completion_tokens`
-- 新加入的消息（用户输入或工具结果）通过字符估算补充
-- 首次调用前回退到字符估算
+- 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前 fallback 使用本地估算器
+- 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）

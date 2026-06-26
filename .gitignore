@@ -25,6 +25,7 @@ AGENTS.md
 
 # scratch / temp files
 .runlogs/
+.runlogs/token_estimator_report.html
 _decode.py
 agent.txt
 agent_questions_summary.html

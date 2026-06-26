@@ -16,24 +16,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
+from .token_estimator import estimate_message_tokens, estimate_text_tokens
 
 if TYPE_CHECKING:
     from .llm import LLM
 
 
 def _approx_tokens(text: str) -> int:
-    """Rough token count. ~3.5 chars/token for mixed en/zh content."""
-    return len(text) // 3
+    """Estimate token count for content not covered by API usage."""
+    return estimate_text_tokens(text)
 
 
 def estimate_tokens(messages: list[dict]) -> int:
-    total = 0
-    for m in messages:
-        if m.get("content"):
-            total += _approx_tokens(m["content"])
-        if m.get("tool_calls"):
-            total += _approx_tokens(str(m["tool_calls"]))
-    return total
+    return estimate_message_tokens(messages)
 
 
 class ContextManager:

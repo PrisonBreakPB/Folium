@@ -414,16 +414,16 @@ class Agent:
         self.llm.last_completion_tokens = 0
 
     def _maybe_compress_observed(self, trigger: str, on_event=None, new_message_tokens: int = 0) -> bool:
-        last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
-        real_tokens = (last + new_message_tokens) if last > 0 else estimate_tokens(self.messages)
-        before_tokens = real_tokens
+        confirmed_tokens = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
+        current_context_tokens = (confirmed_tokens + new_message_tokens) if confirmed_tokens > 0 else estimate_tokens(self.messages)
+        before_tokens = current_context_tokens
         before_messages = len(self.messages)
         with span("context_compression", "context", metadata={
             "trigger": trigger,
             "before_tokens": before_tokens,
             "before_messages": before_messages,
         }):
-            compressed = self.context.maybe_compress(self.messages, self.llm, real_tokens=real_tokens or None)
+            compressed = self.context.maybe_compress(self.messages, self.llm, real_tokens=current_context_tokens or None)
             if compressed:
                 self._emit_event(
                     on_event,

@@ -41,6 +41,7 @@ def test_config_defaults():
     assert c.max_tokens == 4096
     assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
+    assert c.token_estimator == "deepseek"
 
     os.environ.update(saved)
 

@@ -37,6 +37,7 @@ class Config:
     temperature: float = 0.0
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
+    token_estimator: str = "deepseek"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -57,4 +58,5 @@ class Config:
             temperature=float(os.getenv("FOLIUM_TEMPERATURE", "0")),
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
+            token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
         )
