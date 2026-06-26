@@ -25,6 +25,12 @@ DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
 DEFAULT_PROTECTED_USER_TOKENS = 20_000
 SUMMARY_PREFIX = "[Context compressed - incremental summary]"
 HARD_SUMMARY_PREFIX = "[Hard context reset]"
+THINKING_PREFIX = (
+    "另一个语言模型已经开始解决这个问题，并生成了其推理过程的摘要。"
+    "你还可以访问该语言模型使用过的工具状态。"
+    "请基于已完成的工作继续推进，避免重复劳动。"
+    "以下是另一个语言模型生成的摘要，请利用其中的信息辅助你的分析：\n"
+)
 
 
 def _approx_tokens(text: str) -> int:
@@ -46,7 +52,7 @@ class ContextManager:
         self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
-        self._summarize_at = int(self.input_budget_tokens * 0.70)  # 70% -> LLM summarize
+        self._summarize_at = int(self.input_budget_tokens * 0.80)  # 80% -> LLM summarize
         self._collapse_at = int(self.input_budget_tokens * 0.90)   # 90% -> hard collapse
 
     def maybe_compress(self, messages: list[dict], llm: LLM | None = None,
@@ -67,13 +73,13 @@ class ContextManager:
                 current = estimate_tokens(messages)
 
         # Layer 2: LLM-powered summarization of old turns
-        if current > self._summarize_at and len(messages) > 10:
+        if current > self._summarize_at:
             if self._summarize_old(messages, llm, keep_recent=8):
                 compressed = True
                 current = estimate_tokens(messages)
 
         # Layer 3: hard collapse - last resort
-        if current > self._collapse_at and len(messages) > 4:
+        if current > self._collapse_at:
             self._hard_collapse(messages, llm)
             compressed = True
 
@@ -135,13 +141,13 @@ class ContextManager:
         messages.extend(protected_users)
         messages.append({
             "role": "user",
-            "content": f"{HARD_SUMMARY_PREFIX}\n{summary}",
+            "content": f"{THINKING_PREFIX}{HARD_SUMMARY_PREFIX}\n{summary}",
         })
 
     def _summary_message(self, summary: str) -> dict:
         return {
             "role": "user",
-            "content": f"{SUMMARY_PREFIX}\n{summary}",
+            "content": f"{THINKING_PREFIX}{SUMMARY_PREFIX}\n{summary}",
         }
 
     @staticmethod
@@ -149,15 +155,16 @@ class ContextManager:
         if message.get("role") != "user":
             return False
         content = message.get("content") or ""
-        return content.startswith(f"{SUMMARY_PREFIX}\n") or content.startswith(f"{HARD_SUMMARY_PREFIX}\n")
+        return f"{SUMMARY_PREFIX}\n" in content or f"{HARD_SUMMARY_PREFIX}\n" in content
 
     @staticmethod
     def _summary_text(message: dict) -> str:
         content = message.get("content") or ""
         for prefix in (SUMMARY_PREFIX, HARD_SUMMARY_PREFIX):
             marker = f"{prefix}\n"
-            if content.startswith(marker):
-                return content[len(marker):]
+            idx = content.find(marker)
+            if idx >= 0:
+                return content[idx + len(marker):]
         return ""
 
     def _extract_existing_summary(self, messages: list[dict]) -> str:
@@ -211,10 +218,14 @@ class ContextManager:
                         {
                             "role": "system",
                             "content": (
-                                "Update the existing conversation summary with the new messages. "
-                                "Preserve durable facts: user goals and constraints, file paths edited, "
-                                "key decisions, tool results, errors, current task state, and next steps. "
-                                "Do not repeat unchanged details unnecessarily."
+                                "你正在执行上下文检查点压缩。为接续任务的下一个 LLM 创建一份交接摘要。"
+                                "请包含："
+                                "- 当前进展和已做出的关键决策"
+                                "- 重要的上下文、约束条件或用户偏好"
+                                "- 待完成的工作（清晰的下一步）"
+                                "- 继续工作所需的任何关键数据、示例或参考"
+                                "保持简洁、结构化，专注于帮助下一个 LLM 无缝接续工作。"
+                                "始终使用中文输出。"
                             ),
                         },
                         {
@@ -246,11 +257,14 @@ class ContextManager:
                         {
                             "role": "system",
                             "content": (
-                                "Compress this conversation into a brief summary. "
-                                "Preserve: file paths edited, key decisions made, "
-                                "errors encountered, current task state. "
-                                "Drop: verbose command output, code listings, "
-                                "redundant back-and-forth."
+                                "你正在执行上下文检查点压缩。为接续任务的下一个 LLM 创建一份交接摘要。"
+                                "请包含："
+                                "- 当前进展和已做出的关键决策"
+                                "- 重要的上下文、约束条件或用户偏好"
+                                "- 待完成的工作（清晰的下一步）"
+                                "- 继续工作所需的任何关键数据、示例或参考"
+                                "保持简洁、结构化，专注于帮助下一个 LLM 无缝接续工作。"
+                                "始终使用中文输出。"
                             ),
                         },
                         {"role": "user", "content": flat[:15000]},

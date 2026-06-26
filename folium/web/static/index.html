@@ -190,7 +190,7 @@ body {
 
 .usage-panel {
   display: grid;
-  grid-template-columns: minmax(220px, 1.15fr) minmax(280px, 1.5fr) minmax(180px, 0.85fr);
+  grid-template-columns: minmax(240px, 1.2fr) minmax(210px, 0.9fr) minmax(230px, 1fr);
   gap: 12px;
   padding: 12px 22px;
   background: var(--surface);
@@ -267,6 +267,10 @@ body {
   gap: 8px;
 }
 
+.usage-metrics-wide {
+  grid-template-columns: repeat(3, minmax(58px, 1fr));
+}
+
 .usage-metric {
   min-width: 0;
   padding: 8px 9px;
@@ -283,10 +287,10 @@ body {
 .usage-metric-value {
   margin-top: 3px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  overflow: visible;
   white-space: nowrap;
 }
 
@@ -611,14 +615,12 @@ body {
         <div class="usage-meter-reserve" id="contextReserve"></div>
       </div>
       <div class="usage-sub" id="contextText">0 / 0 tokens</div>
-      <div class="usage-sub" id="contextReserveText">输出缓冲：--</div>
     </div>
     <div class="usage-block">
       <div class="usage-title">
         <span>本轮用量</span>
-        <span id="lastModel">--</span>
       </div>
-      <div class="usage-metrics">
+      <div class="usage-metrics usage-metrics-wide">
         <div class="usage-metric">
           <div class="usage-metric-label">输入</div>
           <div class="usage-metric-value" id="lastPromptTokens">--</div>
@@ -631,18 +633,13 @@ body {
           <div class="usage-metric-label">缓存</div>
           <div class="usage-metric-value" id="lastCachedTokens">--</div>
         </div>
-        <div class="usage-metric">
-          <div class="usage-metric-label">费用</div>
-          <div class="usage-metric-value" id="lastCost">--</div>
-        </div>
       </div>
     </div>
     <div class="usage-block">
       <div class="usage-title">
         <span>会话累计</span>
-        <span id="turnCount">0 轮</span>
       </div>
-      <div class="usage-metrics">
+      <div class="usage-metrics usage-metrics-wide">
         <div class="usage-metric">
           <div class="usage-metric-label">总计</div>
           <div class="usage-metric-value" id="cumulativeTokens">--</div>
@@ -674,6 +671,8 @@ const sendBtn = document.getElementById('sendBtn');
 const convListEl = document.getElementById('convList');
 const sessionIdEl = document.getElementById('sessionId');
 let busy = false;
+const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
+const DEFAULT_RESERVED_OUTPUT_TOKENS = 20000;
 let usageState = emptyUsageState();
 
 const STATUS_LABELS = {
@@ -716,6 +715,8 @@ async function loadConversations() {
   const data = await resp.json();
   const current = data.current;
   sessionIdEl.textContent = current || '新建对话';
+  applyContextUpdate(data.context_budget, false);
+  updateUsagePanel();
 
   convListEl.innerHTML = '';
   for (const s of data.sessions) {
@@ -768,6 +769,8 @@ async function switchConv(id) {
 
   messagesEl.innerHTML = '';
   resetUsage();
+  applyContextUpdate(data.context_budget, false);
+  applySessionStats(data.stats);
   let pendingTools = [];
   const toolNames = new Map();
   const flushTools = () => {
@@ -1067,10 +1070,12 @@ function emptyUsageState() {
     cumulativeCompletion: 0,
     cumulativeCached: 0,
     cumulativeCost: null,
+    statsCost: null,
+    statsHitRate: 0,
     estimatedContextTokens: 0,
-    maxContextTokens: 0,
-    reservedOutputTokens: 0,
-    inputBudgetTokens: 0
+    maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+    reservedOutputTokens: DEFAULT_RESERVED_OUTPUT_TOKENS,
+    inputBudgetTokens: DEFAULT_MAX_CONTEXT_TOKENS - DEFAULT_RESERVED_OUTPUT_TOKENS
   };
 }
 
@@ -1165,22 +1170,16 @@ function updateUsagePanel() {
   const reservePercent = maxContext > 0 ? Math.min(100, reservedOutput / maxContext * 100) : 0;
 
   setText('contextPercent', `${percent.toFixed(1)}%`);
-  setText('contextText', inputBudget > 0
-    ? `${formatNumber(context)} / ${formatNumber(inputBudget)} input tokens`
+  setText('contextText', maxContext > 0
+    ? `${formatNumber(context)} / ${formatNumber(maxContext)} tokens`
     : `${formatNumber(context)} tokens`);
-  setText('contextReserveText', reservedOutput > 0
-    ? `输出缓冲：${formatNumber(reservedOutput)} tokens，模型窗口：${formatNumber(maxContext)}`
-    : '输出缓冲：--');
   document.getElementById('contextFill').style.width = `${percent}%`;
   document.getElementById('contextReserve').style.width = `${reservePercent}%`;
 
-  setText('lastModel', last?.model || '--');
   setText('lastPromptTokens', last ? formatNumber(last.prompt_tokens) : '--');
   setText('lastCompletionTokens', last ? formatNumber(last.completion_tokens) : '--');
   setText('lastCachedTokens', last ? formatNumber(last.cached_tokens) : '--');
-  setText('lastCost', last ? formatCost(last.cost) : '--');
 
-  setText('turnCount', `${usageState.turns.length} 轮`);
   setText('cumulativeTokens', formatNumber(total));
   updateSessionStatsFromUsage();
 }
@@ -1189,8 +1188,18 @@ function updateSessionStatsFromUsage() {
   const prompt = usageState.cumulativePrompt;
   const cached = usageState.cumulativeCached;
   const hitRate = prompt > 0 ? cached / prompt : 0;
-  setText('statsCost', formatCost(usageState.cumulativeCost));
-  setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
+  setText('statsCost', formatCost(usageState.statsCost ?? usageState.cumulativeCost));
+  setText('statsHitRate', `${((usageState.statsHitRate || hitRate) * 100).toFixed(1)}%`);
+}
+
+function applySessionStats(stats) {
+  if (!stats) return;
+  usageState.cumulativePrompt = numberOrZero(stats.prompt_tokens);
+  usageState.cumulativeCompletion = numberOrZero(stats.completion_tokens);
+  usageState.cumulativeCached = numberOrZero(stats.cached_tokens);
+  usageState.cumulativeCost = numberOrNull(stats.cost);
+  usageState.statsCost = numberOrNull(stats.cost);
+  usageState.statsHitRate = numberOrZero(stats.cache_hit_rate);
 }
 
 function setText(id, text) {

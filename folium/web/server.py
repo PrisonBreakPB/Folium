@@ -73,6 +73,18 @@ def _auto_save():
         _state["dirty"] = False
 
 
+def _context_budget_payload() -> dict:
+    agent = _state.get("agent")
+    context = getattr(agent, "context", None)
+    if not context:
+        return {}
+    return {
+        "max_context_tokens": getattr(context, "max_tokens", 0),
+        "reserved_output_tokens": getattr(context, "reserved_output_tokens", 0),
+        "input_budget_tokens": getattr(context, "input_budget_tokens", 0),
+    }
+
+
 # ── endpoints ───────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -144,7 +156,7 @@ async def new_conversation():
 @app.get("/conversations")
 async def get_conversations():
     sessions = list_sessions()
-    return {"sessions": sessions, "current": _state["session_id"]}
+    return {"sessions": sessions, "current": _state["session_id"], "context_budget": _context_budget_payload()}
 
 
 @app.post("/switch")
@@ -186,6 +198,7 @@ async def switch_conversation(req: SwitchRequest):
         "session_id": _state["session_id"],
         "messages": repair_mojibake_payload(messages),
         "stats": stats,
+        "context_budget": _context_budget_payload(),
     }
 
 
