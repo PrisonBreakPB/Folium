@@ -224,6 +224,7 @@ Token 计算：
 - 使用 LLM API 返回的真实 `prompt_tokens` 和 `completion_tokens`
 - 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前 fallback 使用本地估算器
 - 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
+- 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）

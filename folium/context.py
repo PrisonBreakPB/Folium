@@ -21,6 +21,8 @@ from .token_estimator import estimate_message_tokens, estimate_text_tokens
 if TYPE_CHECKING:
     from .llm import LLM
 
+DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
+
 
 def _approx_tokens(text: str) -> int:
     """Estimate token count for content not covered by API usage."""
@@ -32,12 +34,15 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 
 class ContextManager:
-    def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS):
+    def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
+                 reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS):
         self.max_tokens = max_tokens
-        # layer thresholds (fraction of max_tokens)
-        self._snip_at = int(max_tokens * 0.60)    # 60% -> snip tool outputs
-        self._summarize_at = int(max_tokens * 0.70)  # 70% -> LLM summarize
-        self._collapse_at = int(max_tokens * 0.90)   # 90% -> hard collapse
+        self.reserved_output_tokens = max(0, reserved_output_tokens)
+        self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
+        # layer thresholds (fraction of input budget after reserving output tokens)
+        self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
+        self._summarize_at = int(self.input_budget_tokens * 0.70)  # 70% -> LLM summarize
+        self._collapse_at = int(self.input_budget_tokens * 0.90)   # 90% -> hard collapse
 
     def maybe_compress(self, messages: list[dict], llm: LLM | None = None,
                        real_tokens: int | None = None) -> bool:

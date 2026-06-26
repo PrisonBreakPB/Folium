@@ -355,6 +355,8 @@ class Agent:
         last = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
         usage["estimated_context_tokens"] = last if last > 0 else estimate_tokens(self.messages)
         usage["max_context_tokens"] = self.context.max_tokens
+        usage["reserved_output_tokens"] = self.context.reserved_output_tokens
+        usage["input_budget_tokens"] = self.context.input_budget_tokens
 
     def _emit_usage(self, on_event, resp: LLMResponse, round_index: int):
         cumulative_prompt = getattr(self.llm, "total_prompt_tokens", 0)
@@ -375,6 +377,8 @@ class Agent:
             cumulative_cost=getattr(self.llm, "estimated_cost", None),
             estimated_context_tokens=resp.prompt_tokens + resp.completion_tokens,
             max_context_tokens=self.context.max_tokens,
+            reserved_output_tokens=self.context.reserved_output_tokens,
+            input_budget_tokens=self.context.input_budget_tokens,
         )
 
     def _emit_context_update(self, on_event):
@@ -384,6 +388,8 @@ class Agent:
             "context_update",
             estimated_context_tokens=last if last > 0 else estimate_tokens(self.messages),
             max_context_tokens=self.context.max_tokens,
+            reserved_output_tokens=self.context.reserved_output_tokens,
+            input_budget_tokens=self.context.input_budget_tokens,
             message_count=len(self.messages),
         )
 

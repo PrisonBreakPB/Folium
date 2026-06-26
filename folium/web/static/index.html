@@ -229,6 +229,7 @@ body {
 }
 
 .usage-meter {
+  position: relative;
   height: 8px;
   border-radius: 999px;
   background: var(--surface-soft);
@@ -241,6 +242,23 @@ body {
   width: 0%;
   background: var(--accent);
   transition: width 0.2s ease;
+}
+
+.usage-meter-reserve {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 0%;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(155, 90, 38, 0.28) 0,
+    rgba(155, 90, 38, 0.28) 4px,
+    rgba(155, 90, 38, 0.12) 4px,
+    rgba(155, 90, 38, 0.12) 8px
+  );
+  border-left: 1px solid rgba(155, 90, 38, 0.55);
+  pointer-events: none;
 }
 
 .usage-metrics {
@@ -588,8 +606,12 @@ body {
         <span>上下文窗口占用</span>
         <span id="contextPercent">0%</span>
       </div>
-      <div class="usage-meter"><div class="usage-meter-fill" id="contextFill"></div></div>
+      <div class="usage-meter">
+        <div class="usage-meter-fill" id="contextFill"></div>
+        <div class="usage-meter-reserve" id="contextReserve"></div>
+      </div>
       <div class="usage-sub" id="contextText">0 / 0 tokens</div>
+      <div class="usage-sub" id="contextReserveText">输出缓冲：--</div>
     </div>
     <div class="usage-block">
       <div class="usage-title">
@@ -1046,7 +1068,9 @@ function emptyUsageState() {
     cumulativeCached: 0,
     cumulativeCost: null,
     estimatedContextTokens: 0,
-    maxContextTokens: 0
+    maxContextTokens: 0,
+    reservedOutputTokens: 0,
+    inputBudgetTokens: 0
   };
 }
 
@@ -1072,7 +1096,9 @@ function normalizeUsage(raw) {
     cumulative_total_tokens: numberOrZero(raw.cumulative_total_tokens),
     cumulative_cost: numberOrNull(raw.cumulative_cost),
     estimated_context_tokens: numberOrZero(raw.estimated_context_tokens),
-    max_context_tokens: numberOrZero(raw.max_context_tokens)
+    max_context_tokens: numberOrZero(raw.max_context_tokens),
+    reserved_output_tokens: numberOrZero(raw.reserved_output_tokens),
+    input_budget_tokens: numberOrZero(raw.input_budget_tokens)
   };
 }
 
@@ -1104,8 +1130,12 @@ function addHistoricalUsage(raw) {
 function applyContextUpdate(raw, refresh = true) {
   const contextTokens = numberOrNull(raw?.estimated_context_tokens);
   const maxTokens = numberOrNull(raw?.max_context_tokens);
+  const reservedTokens = numberOrNull(raw?.reserved_output_tokens);
+  const inputBudgetTokens = numberOrNull(raw?.input_budget_tokens);
   if (contextTokens !== null) usageState.estimatedContextTokens = contextTokens;
   if (maxTokens !== null) usageState.maxContextTokens = maxTokens;
+  if (reservedTokens !== null) usageState.reservedOutputTokens = reservedTokens;
+  if (inputBudgetTokens !== null) usageState.inputBudgetTokens = inputBudgetTokens;
   if (refresh) updateUsagePanel();
 }
 
@@ -1129,13 +1159,20 @@ function updateUsagePanel() {
   const total = usageState.cumulativePrompt + usageState.cumulativeCompletion;
   const maxContext = usageState.maxContextTokens;
   const context = usageState.estimatedContextTokens;
-  const percent = maxContext > 0 ? Math.min(100, context / maxContext * 100) : 0;
+  const inputBudget = usageState.inputBudgetTokens || maxContext;
+  const reservedOutput = usageState.reservedOutputTokens;
+  const percent = inputBudget > 0 ? Math.min(100, context / inputBudget * 100) : 0;
+  const reservePercent = maxContext > 0 ? Math.min(100, reservedOutput / maxContext * 100) : 0;
 
   setText('contextPercent', `${percent.toFixed(1)}%`);
-  setText('contextText', maxContext > 0
-    ? `${formatNumber(context)} / ${formatNumber(maxContext)} tokens`
+  setText('contextText', inputBudget > 0
+    ? `${formatNumber(context)} / ${formatNumber(inputBudget)} input tokens`
     : `${formatNumber(context)} tokens`);
+  setText('contextReserveText', reservedOutput > 0
+    ? `输出缓冲：${formatNumber(reservedOutput)} tokens，模型窗口：${formatNumber(maxContext)}`
+    : '输出缓冲：--');
   document.getElementById('contextFill').style.width = `${percent}%`;
+  document.getElementById('contextReserve').style.width = `${reservePercent}%`;
 
   setText('lastModel', last?.model || '--');
   setText('lastPromptTokens', last ? formatNumber(last.prompt_tokens) : '--');

@@ -5,7 +5,7 @@ import pathlib
 
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
 from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
-from folium.context import ContextManager, estimate_tokens
+from folium.context import ContextManager, DEFAULT_RESERVED_OUTPUT_TOKENS, estimate_tokens
 from folium.session import save_session, load_session, list_sessions
 from folium.tools import get_tool
 
@@ -64,6 +64,16 @@ def test_context_snip():
     ctx._snip_tool_outputs(msgs)
     after = estimate_tokens(msgs)
     assert after < before
+
+
+def test_context_reserves_output_tokens():
+    ctx = ContextManager(max_tokens=100_000)
+
+    assert ctx.reserved_output_tokens == DEFAULT_RESERVED_OUTPUT_TOKENS
+    assert ctx.input_budget_tokens == 80_000
+    assert ctx._snip_at == 48_000
+    assert ctx._summarize_at == 56_000
+    assert ctx._collapse_at == 72_000
 
 
 def test_context_compress():
