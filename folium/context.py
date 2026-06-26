@@ -6,10 +6,10 @@ Claude Code uses a 4-layer strategy:
   3. CONTEXT_COLLAPSE - aggressive compression when nearing hard limit
   4. Autocompact    - periodic background compaction
 
-Folium implements the same idea in 3 layers:
-  Layer 1 (tool_snip)   - replace verbose tool results with truncated versions
-  Layer 2 (summarize)   - incremental LLM summary + protected user messages
-  Layer 3 (hard_collapse) - last resort: rebuild from summary + protected users
+Folium implements a 3-layer progressive strategy:
+  Layer 1 (snip)      - 60%: truncate tool outputs, keep first/last lines
+  Layer 2 (prune)     - 80%: replace snipped tool outputs with placeholders
+  Layer 3 (summarize) - 90%: incremental LLM summary + protected user messages
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
 DEFAULT_PROTECTED_USER_TOKENS = 20_000
 SUMMARY_PREFIX = "[Context compressed - incremental summary]"
-HARD_SUMMARY_PREFIX = "[Hard context reset]"
 THINKING_PREFIX = (
     "另一个语言模型已经开始解决这个问题，并生成了其推理过程的摘要。"
     "你还可以访问该语言模型使用过的工具状态。"
@@ -52,8 +51,8 @@ class ContextManager:
         self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
-        self._summarize_at = int(self.input_budget_tokens * 0.80)  # 80% -> LLM summarize
-        self._collapse_at = int(self.input_budget_tokens * 0.90)   # 90% -> hard collapse
+        self._prune_at = int(self.input_budget_tokens * 0.80)    # 80% -> prune to placeholders
+        self._summarize_at = int(self.input_budget_tokens * 0.90)  # 90% -> LLM summarize
 
     def maybe_compress(self, messages: list[dict], llm: LLM | None = None,
                        real_tokens: int | None = None) -> bool:
@@ -72,16 +71,17 @@ class ContextManager:
                 compressed = True
                 current = estimate_tokens(messages)
 
-        # Layer 2: LLM-powered summarization of old turns
-        if current > self._summarize_at:
-            if self._summarize_old(messages, llm, keep_recent=8):
+        # Layer 2: prune snipped tool outputs to placeholders
+        if current > self._prune_at:
+            if self._prune_tool_outputs(messages):
                 compressed = True
                 current = estimate_tokens(messages)
 
-        # Layer 3: hard collapse - last resort
-        if current > self._collapse_at:
-            self._hard_collapse(messages, llm)
-            compressed = True
+        # Layer 3: LLM-powered summarization of old turns
+        if current > self._summarize_at:
+            if self._summarize_old(messages, llm):
+                compressed = True
+                current = estimate_tokens(messages)
 
         return compressed
 
@@ -112,9 +112,31 @@ class ContextManager:
             changed = True
         return changed
 
-    def _summarize_old(self, messages: list[dict], llm: LLM | None,
-                       keep_recent: int = 0) -> bool:
-        """Layer 2: Incrementally summarize history and protect user messages."""
+    @staticmethod
+    def _prune_tool_outputs(messages: list[dict]) -> bool:
+        """Layer 2: Replace already-snipped tool outputs with compact placeholders.
+
+        Tool outputs that were truncated by Layer 1 still carry several lines of
+        content. This layer replaces them with a single-line placeholder to
+        release more space at zero LLM cost.
+        """
+        PRUNED = "[Content compacted to save context]"
+        changed = False
+        for m in messages:
+            if m.get("role") != "tool":
+                continue
+            content = m.get("content", "")
+            if not content:
+                continue
+            # only prune outputs that were already snipped by Layer 1
+            if "snipped to save context" not in content:
+                continue
+            m["content"] = PRUNED
+            changed = True
+        return changed
+
+    def _summarize_old(self, messages: list[dict], llm: LLM | None) -> bool:
+        """Layer 3: Incrementally summarize history and protect user messages."""
         if not messages:
             return False
 
@@ -130,20 +152,6 @@ class ContextManager:
         messages.append(self._summary_message(summary))
         return True
 
-    def _hard_collapse(self, messages: list[dict], llm: LLM | None):
-        """Layer 3: Emergency compression. Keep protected users + summary."""
-        existing_summary = self._extract_existing_summary(messages)
-        delta = self._delta_messages(messages)
-        summary = self._get_incremental_summary(existing_summary, delta, llm)
-        protected_users = self._collect_protected_user_messages(messages)
-
-        messages.clear()
-        messages.extend(protected_users)
-        messages.append({
-            "role": "user",
-            "content": f"{THINKING_PREFIX}{HARD_SUMMARY_PREFIX}\n{summary}",
-        })
-
     def _summary_message(self, summary: str) -> dict:
         return {
             "role": "user",
@@ -155,16 +163,15 @@ class ContextManager:
         if message.get("role") != "user":
             return False
         content = message.get("content") or ""
-        return f"{SUMMARY_PREFIX}\n" in content or f"{HARD_SUMMARY_PREFIX}\n" in content
+        return f"{SUMMARY_PREFIX}\n" in content
 
     @staticmethod
     def _summary_text(message: dict) -> str:
         content = message.get("content") or ""
-        for prefix in (SUMMARY_PREFIX, HARD_SUMMARY_PREFIX):
-            marker = f"{prefix}\n"
-            idx = content.find(marker)
-            if idx >= 0:
-                return content[idx + len(marker):]
+        marker = f"{SUMMARY_PREFIX}\n"
+        idx = content.find(marker)
+        if idx >= 0:
+            return content[idx + len(marker):]
         return ""
 
     def _extract_existing_summary(self, messages: list[dict]) -> str:
