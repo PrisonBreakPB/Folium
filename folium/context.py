@@ -7,8 +7,8 @@ Claude Code uses a 4-layer strategy:
   4. Autocompact    - periodic background compaction
 
 Folium implements a 3-layer progressive strategy:
-  Layer 1 (snip)      - 60%: truncate tool outputs, keep first/last lines
-  Layer 2 (prune)     - 80%: replace snipped tool outputs with placeholders
+  Layer 1 (snip)      - 60%: trim long tool outputs, keep head/tail chars
+  Layer 2 (prune)     - 80%: replace trimmed tool outputs with placeholders
   Layer 3 (summarize) - 90%: incremental LLM summary + protected user messages
 """
 
@@ -23,13 +23,16 @@ if TYPE_CHECKING:
 
 DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
 DEFAULT_PROTECTED_USER_TOKENS = 20_000
-SUMMARY_PREFIX = "[Context compressed - incremental summary]"
-THINKING_PREFIX = (
-    "另一个语言模型已经开始解决这个问题，并生成了其推理过程的摘要。"
-    "你还可以访问该语言模型使用过的工具状态。"
-    "请基于已完成的工作继续推进，避免重复劳动。"
-    "以下是另一个语言模型生成的摘要，请利用其中的信息辅助你的分析：\n"
+TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4096
+TOOL_OUTPUT_TRIM_KEEP_CHARS = 1536
+TOOL_OUTPUT_TRIM_MARKER = "trimmed to save context"
+SUMMARY_PREFIX = (
+    "另一个语言模型已经开始解决这个问题，并生成了其思考过程的摘要。"
+    "你也可以访问已经使用过的工具状态。"
+    "请基于已经完成的工作继续推进，并避免重复劳动。"
+    "以下是该语言模型生成的摘要，请使用这份摘要中的信息辅助你自己的分析："
 )
+LEGACY_SUMMARY_PREFIX = "[Context compressed - incremental summary]"
 
 
 def _approx_tokens(text: str) -> int:
@@ -39,6 +42,42 @@ def _approx_tokens(text: str) -> int:
 
 def estimate_tokens(messages: list[dict]) -> int:
     return estimate_message_tokens(messages)
+
+
+class LayerReport(dict):
+    def __bool__(self) -> bool:
+        return bool(self.get("changed"))
+
+
+def _tool_report_item(message: dict) -> dict:
+    return {
+        "tool_call_id": message.get("tool_call_id"),
+        "name": message.get("name"),
+    }
+
+
+def _layer_report(name: str, tools: list[dict]) -> LayerReport:
+    return LayerReport({
+        "name": name,
+        "changed": bool(tools),
+        "tools": tools,
+    })
+
+
+def _summarize_report(changed: bool, delta_message_count: int,
+                      protected_user_count: int, used_llm: bool,
+                      fallback_used: bool, before_message_count: int,
+                      after_message_count: int) -> LayerReport:
+    return LayerReport({
+        "name": "summarize",
+        "changed": changed,
+        "delta_message_count": delta_message_count,
+        "protected_user_count": protected_user_count,
+        "before_message_count": before_message_count,
+        "after_message_count": after_message_count,
+        "used_llm": used_llm,
+        "fallback_used": fallback_used,
+    })
 
 
 class ContextManager:
@@ -55,107 +94,118 @@ class ContextManager:
         self._summarize_at = int(self.input_budget_tokens * 0.90)  # 90% -> LLM summarize
 
     def maybe_compress(self, messages: list[dict], llm: LLM | None = None,
-                       real_tokens: int | None = None) -> bool:
-        """Apply compression layers as needed. Returns True if any compression happened.
+                       real_tokens: int | None = None) -> dict:
+        """Apply compression layers as needed and return an observability report.
 
         Args:
             real_tokens: Actual token count from LLM API (prompt_tokens + completion_tokens).
                          Falls back to estimate_tokens() if not provided.
         """
         current = real_tokens if real_tokens is not None else estimate_tokens(messages)
-        compressed = False
+        report = {"compressed": False, "layers": []}
 
-        # Layer 1: snip verbose tool outputs
+        # Layer 1: trim verbose tool outputs
         if current > self._snip_at:
-            if self._snip_tool_outputs(messages):
-                compressed = True
+            layer = self._snip_tool_outputs(messages)
+            if layer["changed"]:
+                report["compressed"] = True
+                report["layers"].append(layer)
                 current = estimate_tokens(messages)
 
-        # Layer 2: prune snipped tool outputs to placeholders
+        # Layer 2: prune trimmed tool outputs to placeholders
         if current > self._prune_at:
-            if self._prune_tool_outputs(messages):
-                compressed = True
+            layer = self._prune_tool_outputs(messages)
+            if layer["changed"]:
+                report["compressed"] = True
+                report["layers"].append(layer)
                 current = estimate_tokens(messages)
 
         # Layer 3: LLM-powered summarization of old turns
         if current > self._summarize_at:
-            if self._summarize_old(messages, llm):
-                compressed = True
+            layer = self._summarize_old(messages, llm)
+            if layer["changed"]:
+                report["compressed"] = True
+                report["layers"].append(layer)
                 current = estimate_tokens(messages)
 
-        return compressed
+        return report
 
     @staticmethod
-    def _snip_tool_outputs(messages: list[dict]) -> bool:
-        """Layer 1: Truncate tool results over 1500 chars to their first/last lines.
+    def _snip_tool_outputs(messages: list[dict]) -> dict:
+        """Layer 1: Trim very long tool results while preserving head and tail.
 
         This mirrors Claude Code's HISTORY_SNIP which replaces old tool outputs
         with a one-line summary to reclaim context space.
         """
-        changed = False
+        tools = []
         for m in messages:
             if m.get("role") != "tool":
                 continue
             content = m.get("content", "")
-            if len(content) <= 1500:
+            if len(content) <= TOOL_OUTPUT_TRIM_THRESHOLD_CHARS:
                 continue
-            lines = content.splitlines()
-            if len(lines) <= 6:
-                continue
-            # keep first 3 + last 3 lines
-            snipped = (
-                "\n".join(lines[:3])
-                + f"\n... ({len(lines)} lines, snipped to save context) ...\n"
-                + "\n".join(lines[-3:])
+            trimmed = (
+                content[:TOOL_OUTPUT_TRIM_KEEP_CHARS]
+                + f"\n... ({len(content)} chars total, {TOOL_OUTPUT_TRIM_MARKER}) ...\n"
+                + content[-TOOL_OUTPUT_TRIM_KEEP_CHARS:]
             )
-            m["content"] = snipped
-            changed = True
-        return changed
+            m["content"] = trimmed
+            tools.append(_tool_report_item(m))
+        return _layer_report("trim", tools)
 
     @staticmethod
-    def _prune_tool_outputs(messages: list[dict]) -> bool:
-        """Layer 2: Replace already-snipped tool outputs with compact placeholders.
+    def _prune_tool_outputs(messages: list[dict]) -> dict:
+        """Layer 2: Replace already-trimmed tool outputs with compact placeholders.
 
         Tool outputs that were truncated by Layer 1 still carry several lines of
         content. This layer replaces them with a single-line placeholder to
         release more space at zero LLM cost.
         """
         PRUNED = "[Content compacted to save context]"
-        changed = False
+        tools = []
         for m in messages:
             if m.get("role") != "tool":
                 continue
             content = m.get("content", "")
             if not content:
                 continue
-            # only prune outputs that were already snipped by Layer 1
-            if "snipped to save context" not in content:
+            # only prune outputs that were already trimmed by Layer 1
+            if TOOL_OUTPUT_TRIM_MARKER not in content:
                 continue
             m["content"] = PRUNED
-            changed = True
-        return changed
+            tools.append(_tool_report_item(m))
+        return _layer_report("prune", tools)
 
-    def _summarize_old(self, messages: list[dict], llm: LLM | None) -> bool:
+    def _summarize_old(self, messages: list[dict], llm: LLM | None) -> dict:
         """Layer 3: Incrementally summarize history and protect user messages."""
+        before_message_count = len(messages)
         if not messages:
-            return False
+            return _summarize_report(False, 0, 0, False, False, 0, 0)
 
         existing_summary = self._extract_existing_summary(messages)
         delta = self._delta_messages(messages)
         if not delta and existing_summary:
-            return False
+            return _summarize_report(False, 0, 0, False, False, before_message_count, before_message_count)
 
-        summary = self._get_incremental_summary(existing_summary, delta, llm)
+        summary, used_llm, fallback_used = self._get_incremental_summary(existing_summary, delta, llm)
         protected_users = self._collect_protected_user_messages(messages)
         messages.clear()
         messages.extend(protected_users)
         messages.append(self._summary_message(summary))
-        return True
+        return _summarize_report(
+            True,
+            len(delta),
+            len(protected_users),
+            used_llm,
+            fallback_used,
+            before_message_count,
+            len(messages),
+        )
 
     def _summary_message(self, summary: str) -> dict:
         return {
             "role": "user",
-            "content": f"{THINKING_PREFIX}{SUMMARY_PREFIX}\n{summary}",
+            "content": f"{SUMMARY_PREFIX}\n{summary}",
         }
 
     @staticmethod
@@ -163,15 +213,16 @@ class ContextManager:
         if message.get("role") != "user":
             return False
         content = message.get("content") or ""
-        return f"{SUMMARY_PREFIX}\n" in content
+        return f"{SUMMARY_PREFIX}\n" in content or f"{LEGACY_SUMMARY_PREFIX}\n" in content
 
     @staticmethod
     def _summary_text(message: dict) -> str:
         content = message.get("content") or ""
-        marker = f"{SUMMARY_PREFIX}\n"
-        idx = content.find(marker)
-        if idx >= 0:
-            return content[idx + len(marker):]
+        for prefix in (SUMMARY_PREFIX, LEGACY_SUMMARY_PREFIX):
+            marker = f"{prefix}\n"
+            idx = content.find(marker)
+            if idx >= 0:
+                return content[idx + len(marker):]
         return ""
 
     def _extract_existing_summary(self, messages: list[dict]) -> str:
@@ -210,13 +261,13 @@ class ContextManager:
         return selected
 
     def _get_incremental_summary(self, existing_summary: str, delta_messages: list[dict],
-                                 llm: LLM | None) -> str:
+                                 llm: LLM | None) -> tuple[str, bool, bool]:
         if not existing_summary:
             return self._get_summary(delta_messages, llm)
 
         delta = self._flatten(delta_messages)
         if not delta:
-            return existing_summary
+            return existing_summary, False, False
 
         if llm:
             try:
@@ -244,16 +295,16 @@ class ContextManager:
                         },
                     ],
                 )
-                return resp.content
+                return resp.content, True, False
             except Exception:
                 pass
 
         extracted = self._extract_key_info(delta_messages)
         if extracted and extracted != "(no extractable context)":
-            return f"{existing_summary}\n\nRecent update: {extracted}"
-        return existing_summary
+            return f"{existing_summary}\n\nRecent update: {extracted}", False, True
+        return existing_summary, False, True
 
-    def _get_summary(self, messages: list[dict], llm: LLM | None) -> str:
+    def _get_summary(self, messages: list[dict], llm: LLM | None) -> tuple[str, bool, bool]:
         """Generate summary via LLM or fallback to extraction."""
         flat = self._flatten(messages)
 
@@ -277,12 +328,12 @@ class ContextManager:
                         {"role": "user", "content": flat[:15000]},
                     ],
                 )
-                return resp.content
+                return resp.content, True, False
             except Exception:
                 pass
 
         # fallback: extract key lines
-        return self._extract_key_info(messages)
+        return self._extract_key_info(messages), False, True
 
     @staticmethod
     def _flatten(messages: list[dict]) -> str:

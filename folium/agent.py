@@ -429,8 +429,8 @@ class Agent:
             "before_tokens": before_tokens,
             "before_messages": before_messages,
         }):
-            compressed = self.context.maybe_compress(self.messages, self.llm, real_tokens=current_context_tokens or None)
-            if compressed:
+            report = self.context.maybe_compress(self.messages, self.llm, real_tokens=current_context_tokens or None)
+            if report["compressed"]:
                 self._emit_event(
                     on_event,
                     "context_compress",
@@ -439,6 +439,7 @@ class Agent:
                     after_tokens=estimate_tokens(self.messages),
                     before_messages=before_messages,
                     after_messages=len(self.messages),
+                    layers=report["layers"],
                 )
                 active_observer().record({
                     "event": "context_compressed",
@@ -452,9 +453,10 @@ class Agent:
                         "after_tokens": estimate_tokens(self.messages),
                         "before_messages": before_messages,
                         "after_messages": len(self.messages),
+                        "layers": report["layers"],
                     },
                 })
-        return compressed
+        return report["compressed"]
 
 
 def _status_from_tool_result(result: str) -> str:

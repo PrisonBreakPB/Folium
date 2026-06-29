@@ -246,9 +246,9 @@ async def command(req: CommandRequest):
 
     if cmd in ("/compact", "compact"):
         before = estimate_tokens(agent.messages)
-        compressed = agent.context.maybe_compress(agent.messages, agent.llm)
+        report = agent.context.maybe_compress(agent.messages, agent.llm)
         after = estimate_tokens(agent.messages)
-        if compressed:
+        if report["compressed"]:
             return {"result": f"Compressed: {before} -> {after} tokens ({len(agent.messages)} messages)"}
         return {"result": f"Nothing to compress ({before} tokens, {len(agent.messages)} messages)"}
 

@@ -192,9 +192,9 @@ def _repl(agent: Agent, config: Config):
         if user_input == "/compact":
             from .context import estimate_tokens
             before = estimate_tokens(agent.messages)
-            compressed = agent.context.maybe_compress(agent.messages, agent.llm)
+            report = agent.context.maybe_compress(agent.messages, agent.llm)
             after = estimate_tokens(agent.messages)
-            if compressed:
+            if report["compressed"]:
                 console.print(f"[green]Compressed: {before} → {after} tokens ({len(agent.messages)} messages)[/green]")
             else:
                 console.print(f"[dim]Nothing to compress ({before} tokens, {len(agent.messages)} messages)[/dim]")

@@ -56,6 +56,19 @@ class FakeLLM:
             return LLMResponse(content="done", prompt_tokens=8, completion_tokens=1)
 
 
+class NoToolLLM:
+    model = "fake-model"
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+
+    @property
+    def estimated_cost(self):
+        return None
+
+    def chat(self, messages, tools=None, on_token=None):
+        return LLMResponse(content="done", prompt_tokens=8, completion_tokens=1)
+
+
 class ObservabilityTests(unittest.TestCase):
     def test_compact_payload_redacts_secret(self):
         payload = compact_payload(
@@ -95,6 +108,49 @@ class ObservabilityTests(unittest.TestCase):
                 ]
                 self.assertTrue(any(e.get("event") == "tool_result" for e in lines))
                 self.assertTrue(any(e.get("event") == "llm_result" for e in lines))
+            finally:
+                _observer_var.reset(token)
+
+    def test_context_compression_trace_includes_layers(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
+            token = _observer_var.set(observer)
+            try:
+                agent = Agent(llm=NoToolLLM(), max_rounds=1)
+                agent.session_id = "session_test"
+                original = agent.context.maybe_compress
+
+                def fake_compress(messages, llm=None, real_tokens=None):
+                    return {
+                        "compressed": True,
+                        "layers": [
+                            {
+                                "name": "trim",
+                                "changed": True,
+                                "tools": [{"tool_call_id": "call_1", "name": "bash"}],
+                            }
+                        ],
+                    }
+
+                agent.context.maybe_compress = fake_compress
+                try:
+                    self.assertEqual(agent.chat("hello"), "done")
+                finally:
+                    agent.context.maybe_compress = original
+
+                traces = list_traces(trace_dir)
+                lines = [
+                    json.loads(line)
+                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
+                ]
+                events = [e for e in lines if e.get("event") == "context_compressed"]
+                self.assertTrue(events)
+                self.assertEqual(events[0]["metadata"]["layers"][0]["name"], "trim")
+                self.assertEqual(events[0]["metadata"]["layers"][0]["tools"][0]["tool_call_id"], "call_1")
             finally:
                 _observer_var.reset(token)
 

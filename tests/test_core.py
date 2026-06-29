@@ -6,7 +6,15 @@ from unittest import mock
 
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
 from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
-from folium.context import ContextManager, DEFAULT_RESERVED_OUTPUT_TOKENS, SUMMARY_PREFIX, estimate_tokens
+from folium.context import (
+    ContextManager,
+    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    SUMMARY_PREFIX,
+    TOOL_OUTPUT_TRIM_KEEP_CHARS,
+    TOOL_OUTPUT_TRIM_MARKER,
+    TOOL_OUTPUT_TRIM_THRESHOLD_CHARS,
+    estimate_tokens,
+)
 from folium.session import save_session, load_session, list_sessions
 from folium.tools import get_tool
 
@@ -58,13 +66,54 @@ def test_estimate_tokens():
 
 def test_context_snip():
     ctx = ContextManager(max_tokens=3000)
+    content = "a" * TOOL_OUTPUT_TRIM_THRESHOLD_CHARS + "b"
     msgs = [
-        {"role": "tool", "tool_call_id": "t1", "content": "x\n" * 1000},
+        {"role": "tool", "tool_call_id": "t1", "content": content},
     ]
-    before = estimate_tokens(msgs)
-    ctx._snip_tool_outputs(msgs)
-    after = estimate_tokens(msgs)
-    assert after < before
+
+    report = ctx._snip_tool_outputs(msgs)
+
+    trimmed = msgs[0]["content"]
+    assert report["changed"] is True
+    assert report["tools"] == [{"tool_call_id": "t1", "name": None}]
+    assert TOOL_OUTPUT_TRIM_MARKER in trimmed
+    assert trimmed.startswith("a" * TOOL_OUTPUT_TRIM_KEEP_CHARS)
+    assert trimmed.endswith("a" * (TOOL_OUTPUT_TRIM_KEEP_CHARS - 1) + "b")
+    assert len(trimmed) < len(content)
+
+
+def test_context_snip_keeps_tool_outputs_at_threshold():
+    content = "x" * TOOL_OUTPUT_TRIM_THRESHOLD_CHARS
+    msgs = [{"role": "tool", "tool_call_id": "t1", "content": content}]
+
+    report = ContextManager._snip_tool_outputs(msgs)
+
+    assert report["changed"] is False
+    assert msgs[0]["content"] == content
+
+
+def test_context_prune_only_handles_trimmed_outputs():
+    old_snipped = "head\n... (10 lines, snipped to save context) ...\ntail"
+    msgs = [{"role": "tool", "tool_call_id": "t1", "content": old_snipped}]
+
+    report = ContextManager._prune_tool_outputs(msgs)
+
+    assert report["changed"] is False
+    assert msgs[0]["content"] == old_snipped
+
+
+def test_context_prune_reports_tool_identity():
+    msgs = [{
+        "role": "tool",
+        "tool_call_id": "t1",
+        "name": "bash",
+        "content": f"head\n... (5000 chars total, {TOOL_OUTPUT_TRIM_MARKER}) ...\ntail",
+    }]
+
+    report = ContextManager._prune_tool_outputs(msgs)
+
+    assert report["changed"] is True
+    assert report["tools"] == [{"tool_call_id": "t1", "name": "bash"}]
 
 
 def test_context_reserves_output_tokens():
@@ -73,8 +122,8 @@ def test_context_reserves_output_tokens():
     assert ctx.reserved_output_tokens == DEFAULT_RESERVED_OUTPUT_TOKENS
     assert ctx.input_budget_tokens == 80_000
     assert ctx._snip_at == 48_000
-    assert ctx._summarize_at == 56_000
-    assert ctx._collapse_at == 72_000
+    assert ctx._prune_at == 64_000
+    assert ctx._summarize_at == 72_000
 
 
 def test_context_compress():
@@ -84,8 +133,10 @@ def test_context_compress():
         msgs.append({"role": "user", "content": f"msg {i} " + "a" * 200})
         msgs.append({"role": "tool", "tool_call_id": f"t{i}", "content": "b" * 2000})
     before = estimate_tokens(msgs)
-    ctx.maybe_compress(msgs, None)
+    report = ctx.maybe_compress(msgs, None)
     after = estimate_tokens(msgs)
+    assert report["compressed"] is True
+    assert report["layers"]
     assert after < before
     assert len(msgs) < 40  # should be compressed
 
@@ -102,6 +153,11 @@ class FakeLLM:
         return type("Resp", (), {"content": content})()
 
 
+class FailingLLM:
+    def chat(self, messages, tools=None, on_token=None):
+        raise RuntimeError("boom")
+
+
 def test_context_compress_uses_incremental_summary_without_recent_tail():
     ctx = ContextManager(max_tokens=1000)
     llm = FakeLLM()
@@ -112,8 +168,13 @@ def test_context_compress_uses_incremental_summary_without_recent_tail():
         {"role": "user", "content": "latest request"},
     ]
 
-    assert ctx._summarize_old(msgs, llm)
+    report = ctx._summarize_old(msgs, llm)
 
+    assert report["changed"] is True
+    assert report["delta_message_count"] == 4
+    assert report["protected_user_count"] == 2
+    assert report["used_llm"] is True
+    assert report["fallback_used"] is False
     assert [m["role"] for m in msgs] == ["user", "user", "user"]
     assert msgs[0]["content"] == "first request"
     assert msgs[1]["content"] == "latest request"
@@ -132,14 +193,37 @@ def test_context_compress_updates_existing_summary_with_delta_only():
         {"role": "user", "content": "new user request"},
     ]
 
-    assert ctx._summarize_old(msgs, llm)
+    report = ctx._summarize_old(msgs, llm)
 
+    assert report["changed"] is True
+    assert report["delta_message_count"] == 2
+    assert report["protected_user_count"] == 2
+    assert report["before_message_count"] == 4
+    assert report["after_message_count"] == 3
+    assert report["used_llm"] is True
+    assert report["fallback_used"] is False
     update_prompt = llm.calls[-1][-1]["content"]
     assert "Existing summary:\nold summary" in update_prompt
     assert "new assistant fact" in update_prompt
     assert "new user request" in update_prompt
     assert "old protected" not in update_prompt
     assert msgs[-1]["content"].startswith(f"{SUMMARY_PREFIX}\nupdated summary")
+
+
+def test_context_summarize_report_marks_fallback():
+    ctx = ContextManager(max_tokens=1000)
+    msgs = [
+        {"role": "user", "content": "please inspect folium/context.py"},
+        {"role": "tool", "tool_call_id": "t1", "name": "read_file", "content": "Error: missing file"},
+    ]
+
+    report = ctx._summarize_old(msgs, FailingLLM())
+
+    assert report["changed"] is True
+    assert report["delta_message_count"] == 2
+    assert report["protected_user_count"] == 1
+    assert report["used_llm"] is False
+    assert report["fallback_used"] is True
 
 
 def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
