@@ -95,7 +95,7 @@ class Agent:
             session_id=self.session_id,
             turn_index=self.turn_index,
         ):
-            self._emit_event(on_event, "agent_status", message="开始处理请求")
+            self._emit_event(on_event, "agent_status", message="Processing request")
             result = self._chat_impl(user_input, on_token=on_token, on_tool=on_tool, on_event=on_event)
             active_observer().record({
                 "event": "agent_result",
@@ -124,7 +124,7 @@ class Agent:
         bad_tool_calls = 0
 
         for round_index in range(1, self.max_rounds + 1):
-            self._emit_event(on_event, "agent_status", message=f"模型推理第 {round_index} 轮")
+            self._emit_event(on_event, "agent_status", message=f"Model inference round {round_index}")
             with span("agent_round", "agent", metadata={
                 "round_index": round_index,
                 "message_count": len(self.messages),
@@ -143,7 +143,7 @@ class Agent:
                     self.messages.append(assistant_message)
                     self._attach_usage_context(assistant_message)
                     self._emit_context_update(on_event)
-                    self._emit_event(on_event, "agent_status", message="生成最终回复")
+                    self._emit_event(on_event, "agent_status", message="Generating final response")
                     return resp.content
 
                 # tool calls -> execute (parallel when multiple, like Claude Code's
@@ -188,8 +188,8 @@ class Agent:
                         bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
 
                 if bad_tool_calls >= self.max_bad_tool_calls:
-                    self._emit_event(on_event, "agent_status", message="连续工具参数错误，已停止任务", status="error")
-                    return f"连续 {bad_tool_calls} 次工具调用失败，已停止当前任务。"
+                    self._emit_event(on_event, "agent_status", message="Consecutive tool parameter errors, task stopped", status="error")
+                    return f"Consecutive {bad_tool_calls} tool call failures, current task stopped."
 
                 # compress if tool outputs are big
                 self._maybe_compress_observed("after_tool_results", on_event=on_event, new_message_tokens=tool_tokens)
