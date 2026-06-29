@@ -32,7 +32,6 @@ SUMMARY_PREFIX = (
     "请基于已经完成的工作继续推进，并避免重复劳动。"
     "以下是该语言模型生成的摘要，请使用这份摘要中的信息辅助你自己的分析："
 )
-LEGACY_SUMMARY_PREFIX = "[Context compressed - incremental summary]"
 
 
 def _approx_tokens(text: str) -> int:
@@ -213,16 +212,15 @@ class ContextManager:
         if message.get("role") != "user":
             return False
         content = message.get("content") or ""
-        return f"{SUMMARY_PREFIX}\n" in content or f"{LEGACY_SUMMARY_PREFIX}\n" in content
+        return f"{SUMMARY_PREFIX}\n" in content
 
     @staticmethod
     def _summary_text(message: dict) -> str:
         content = message.get("content") or ""
-        for prefix in (SUMMARY_PREFIX, LEGACY_SUMMARY_PREFIX):
-            marker = f"{prefix}\n"
-            idx = content.find(marker)
-            if idx >= 0:
-                return content[idx + len(marker):]
+        marker = f"{SUMMARY_PREFIX}\n"
+        idx = content.find(marker)
+        if idx >= 0:
+            return content[idx + len(marker):]
         return ""
 
     def _extract_existing_summary(self, messages: list[dict]) -> str:
