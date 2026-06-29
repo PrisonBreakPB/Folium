@@ -26,6 +26,22 @@ DEFAULT_PROTECTED_USER_TOKENS = 20_000
 TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4096
 TOOL_OUTPUT_TRIM_KEEP_CHARS = 1536
 TOOL_OUTPUT_TRIM_MARKER = "trimmed to save context"
+
+# Exempt tools: never compress these outputs
+TOOL_COMPRESS_EXEMPT: set[str] = set()
+
+# Tool compression tiers:
+#   primary   - trim at 60% threshold (default)
+#   secondary - trim only when context usage > 80%
+TOOL_COMPRESSION_TIER: dict[str, str] = {
+    "bash": "primary",
+    "grep": "primary",
+    "glob": "primary",
+    "read_file": "secondary",
+    "agent": "secondary",
+    "_default": "primary",
+}
+
 SUMMARY_PREFIX = (
     "Another language model has started working on this problem and generated a summary of its reasoning. "
     "You also have access to the tool states that were used. "
@@ -101,11 +117,12 @@ class ContextManager:
                          Falls back to estimate_tokens() if not provided.
         """
         current = real_tokens if real_tokens is not None else estimate_tokens(messages)
+        context_usage_ratio = current / self.input_budget_tokens if self.input_budget_tokens > 0 else 0.0
         report = {"compressed": False, "layers": []}
 
         # Layer 1: trim verbose tool outputs
         if current > self._snip_at:
-            layer = self._snip_tool_outputs(messages)
+            layer = self._snip_tool_outputs(messages, context_usage_ratio)
             if layer["changed"]:
                 report["compressed"] = True
                 report["layers"].append(layer)
@@ -130,16 +147,32 @@ class ContextManager:
         return report
 
     @staticmethod
-    def _snip_tool_outputs(messages: list[dict]) -> dict:
+    def _snip_tool_outputs(messages: list[dict], context_usage_ratio: float = 0.0) -> dict:
         """Layer 1: Trim very long tool results while preserving head and tail.
 
         This mirrors Claude Code's HISTORY_SNIP which replaces old tool outputs
         with a one-line summary to reclaim context space.
+
+        Args:
+            context_usage_ratio: Current context usage as fraction of input budget.
+                                 Secondary tools only trim when this exceeds 0.8.
         """
         tools = []
         for m in messages:
             if m.get("role") != "tool":
                 continue
+
+            tool_name = m.get("name", "_default")
+
+            # exempt tools are never compressed
+            if tool_name in TOOL_COMPRESS_EXEMPT:
+                continue
+
+            # secondary tools only trim when context is tight
+            tier = TOOL_COMPRESSION_TIER.get(tool_name, "primary")
+            if tier == "secondary" and context_usage_ratio < 0.8:
+                continue
+
             content = m.get("content", "")
             if len(content) <= TOOL_OUTPUT_TRIM_THRESHOLD_CHARS:
                 continue

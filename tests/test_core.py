@@ -10,6 +10,8 @@ from folium.context import (
     ContextManager,
     DEFAULT_RESERVED_OUTPUT_TOKENS,
     SUMMARY_PREFIX,
+    TOOL_COMPRESS_EXEMPT,
+    TOOL_COMPRESSION_TIER,
     TOOL_OUTPUT_TRIM_KEEP_CHARS,
     TOOL_OUTPUT_TRIM_MARKER,
     TOOL_OUTPUT_TRIM_THRESHOLD_CHARS,
@@ -114,6 +116,42 @@ def test_context_prune_reports_tool_identity():
 
     assert report["changed"] is True
     assert report["tools"] == [{"tool_call_id": "t1", "name": "bash"}]
+
+
+def test_context_snip_exempt_tool():
+    """Exempt tools are never compressed."""
+    TOOL_COMPRESS_EXEMPT.add("test_exempt")
+    try:
+        msgs = [{"role": "tool", "name": "test_exempt", "tool_call_id": "t1", "content": "x" * 5000}]
+        report = ContextManager._snip_tool_outputs(msgs)
+        assert report["changed"] is False
+        assert msgs[0]["content"] == "x" * 5000
+    finally:
+        TOOL_COMPRESS_EXEMPT.discard("test_exempt")
+
+
+def test_context_snip_secondary_tool_skipped_at_low_usage():
+    """Secondary tools are not trimmed when context usage is low."""
+    msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.5)
+    assert report["changed"] is False
+    assert msgs[0]["content"] == "x" * 5000
+
+
+def test_context_snip_secondary_tool_trimmed_at_high_usage():
+    """Secondary tools are trimmed when context usage exceeds 80%."""
+    msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.85)
+    assert report["changed"] is True
+    assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
+
+
+def test_context_snip_primary_tool_always_trimmed():
+    """Primary tools are trimmed regardless of context usage."""
+    msgs = [{"role": "tool", "name": "bash", "tool_call_id": "t1", "content": "x" * 5000}]
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.3)
+    assert report["changed"] is True
+    assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
 
 
 def test_context_reserves_output_tokens():
