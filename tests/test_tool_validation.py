@@ -62,6 +62,7 @@ class ToolValidationTests(unittest.TestCase):
             "grep": {"pattern": "Folium"},
             "agent": {"task": "summarize this project"},
             "todo": {"items": [{"id": "1", "text": "Plan task", "status": "pending"}]},
+            "web_search": {"query": "agent context compression"},
         }
 
         for tool in ALL_TOOLS:

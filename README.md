@@ -13,7 +13,7 @@ Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改�
 - CLI 入口：支持交互式对话、单次 prompt、会话恢复和内置命令
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
 - Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
-- 工具系统：支持读文件、写文件、搜索、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
+- 工具系统：支持读文件、写文件、本地搜索、Web 搜索、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
 - 会话持久化：对话内容保存到项目内 `conversations/`
 - 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
@@ -75,6 +75,7 @@ FOLIUM_TEMPERATURE          采样温度
 FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
 FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
+BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
 ```
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
@@ -137,7 +138,10 @@ grep            按正则搜索文件内容
 bash            执行 shell 命令，包含危险命令拦截、超时终止进程和输出截断
 agent           启动子 Agent 处理独立子任务
 todo            更新结构化任务列表，跟踪 pending / in_progress / completed
+web_search      使用 Brave Search API 返回轻量 Web 搜索结果
 ```
+
+`web_search` 是轻量搜索工具，只返回候选网页的 title、URL 和 snippet，不抓取全文、不做 RAG。需要设置 `BRAVE_SEARCH_API_KEY`；缺少 key 时工具会返回明确错误。第一版将搜索和阅读分开，后续可再补 `web_fetch` 读取单个 URL。
 
 `todo` 工具用于长程、多步骤任务：
 

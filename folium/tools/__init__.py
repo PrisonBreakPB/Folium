@@ -8,6 +8,7 @@ from .glob_tool import GlobTool
 from .grep import GrepTool
 from .agent import AgentTool
 from .todo import TodoTool
+from .web import WebSearchTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -18,6 +19,7 @@ ALL_TOOLS = [
     GrepTool(),
     AgentTool(),
     TodoTool(),
+    WebSearchTool(),
 ]
 
 
@@ -32,6 +34,7 @@ def create_tools():
         GrepTool(),
         AgentTool(),
         TodoTool(),
+        WebSearchTool(),
     ]
 
 

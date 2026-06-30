@@ -4,13 +4,15 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.todo import TodoTool
+from folium.tools.web import WebSearchTool
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 8
+    assert len(ALL_TOOLS) == 9
 
 
 def test_all_tools_have_valid_schema():
@@ -227,3 +229,47 @@ def test_todo_tool_rejects_multiple_in_progress():
 
     assert "Error:" in r
     assert "Only one task" in r
+
+
+# --- web_search ---
+
+def test_web_search_requires_api_key(monkeypatch):
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    web_search = WebSearchTool()
+
+    r = web_search.execute(query="agent context compression")
+
+    assert "BRAVE_SEARCH_API_KEY" in r
+
+
+def test_web_search_formats_brave_results(monkeypatch):
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-key")
+    body = b"""{
+      "web": {
+        "results": [
+          {"title": "First Result", "url": "https://example.com/a", "description": "Alpha beta"},
+          {"title": "Second Result", "url": "https://example.com/b", "description": "Gamma delta"}
+        ]
+      }
+    }"""
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, limit):
+            return body
+
+    with patch("folium.tools.web.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+        r = WebSearchTool().execute(query="agent search", max_results=2)
+
+    request = urlopen.call_args.args[0]
+    assert request.headers["X-subscription-token"] == "test-key"
+    assert "Search results for: agent search" in r
+    assert "1. First Result" in r
+    assert "URL: https://example.com/a" in r
+    assert "Snippet: Alpha beta" in r
+    assert "2. Second Result" in r
