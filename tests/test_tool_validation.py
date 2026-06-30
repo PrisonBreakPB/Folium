@@ -63,6 +63,8 @@ class ToolValidationTests(unittest.TestCase):
             "agent": {"task": "summarize this project"},
             "todo": {"items": [{"id": "1", "text": "Plan task", "status": "pending"}]},
             "web_search": {"query": "agent context compression"},
+            "web_fetch": {"url": "https://example.com"},
+            "pdf_fetch": {"url": "https://example.com/paper.pdf"},
         }
 
         for tool in ALL_TOOLS:

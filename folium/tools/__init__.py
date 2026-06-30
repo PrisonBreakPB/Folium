@@ -8,7 +8,8 @@ from .glob_tool import GlobTool
 from .grep import GrepTool
 from .agent import AgentTool
 from .todo import TodoTool
-from .web import WebSearchTool
+from .web import WebFetchTool, WebSearchTool
+from .pdf import PdfFetchTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -20,6 +21,8 @@ ALL_TOOLS = [
     AgentTool(),
     TodoTool(),
     WebSearchTool(),
+    WebFetchTool(),
+    PdfFetchTool(),
 ]
 
 
@@ -35,6 +38,8 @@ def create_tools():
         AgentTool(),
         TodoTool(),
         WebSearchTool(),
+        WebFetchTool(),
+        PdfFetchTool(),
     ]
 
 

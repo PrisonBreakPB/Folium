@@ -1,5 +1,6 @@
 """Tests for the tool system."""
 
+import json
 import os
 import sys
 import tempfile
@@ -8,11 +9,12 @@ from unittest.mock import patch
 
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.todo import TodoTool
-from folium.tools.web import WebSearchTool
+from folium.tools.pdf import PdfFetchTool
+from folium.tools.web import WebFetchTool, WebSearchTool
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 9
+    assert len(ALL_TOOLS) == 11
 
 
 def test_all_tools_have_valid_schema():
@@ -234,23 +236,22 @@ def test_todo_tool_rejects_multiple_in_progress():
 # --- web_search ---
 
 def test_web_search_requires_api_key(monkeypatch):
-    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     web_search = WebSearchTool()
 
     r = web_search.execute(query="agent context compression")
 
-    assert "BRAVE_SEARCH_API_KEY" in r
+    assert "TAVILY_API_KEY" in r
 
 
-def test_web_search_formats_brave_results(monkeypatch):
-    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "test-key")
+def test_web_search_formats_tavily_results(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
     body = b"""{
-      "web": {
-        "results": [
-          {"title": "First Result", "url": "https://example.com/a", "description": "Alpha beta"},
-          {"title": "Second Result", "url": "https://example.com/b", "description": "Gamma delta"}
-        ]
-      }
+      "answer": "Test answer summary",
+      "results": [
+        {"title": "First Result", "url": "https://example.com/a", "content": "Alpha beta"},
+        {"title": "Second Result", "url": "https://example.com/b", "content": "Gamma delta"}
+      ]
     }"""
 
     class FakeResponse:
@@ -267,9 +268,183 @@ def test_web_search_formats_brave_results(monkeypatch):
         r = WebSearchTool().execute(query="agent search", max_results=2)
 
     request = urlopen.call_args.args[0]
-    assert request.headers["X-subscription-token"] == "test-key"
+    assert request.data is not None
+    body_json = json.loads(request.data)
+    assert body_json["api_key"] == "test-key"
     assert "Search results for: agent search" in r
+    assert "Answer: Test answer summary" in r
     assert "1. First Result" in r
     assert "URL: https://example.com/a" in r
     assert "Snippet: Alpha beta" in r
     assert "2. Second Result" in r
+
+
+def test_web_fetch_rejects_non_http_url():
+    r = WebFetchTool().execute(url="file:///etc/passwd")
+
+    assert "only http:// and https:// URLs are allowed" in r
+
+
+def test_web_fetch_rejects_private_address(monkeypatch):
+    monkeypatch.setattr("folium.tools.web.socket.getaddrinfo", lambda *args, **kwargs: [
+        (None, None, None, None, ("127.0.0.1", 0))
+    ])
+
+    r = WebFetchTool().execute(url="https://example.com")
+
+    assert "private or local address" in r
+
+
+def test_web_fetch_cleans_html(monkeypatch):
+    monkeypatch.setattr("folium.tools.web.socket.getaddrinfo", lambda *args, **kwargs: [
+        (None, None, None, None, ("93.184.216.34", 0))
+    ])
+    body = b"""
+      <html>
+        <head><title>Example Page</title><style>body{}</style></head>
+        <body>
+          <nav>Navigation</nav>
+          <h1>Main Heading</h1>
+          <script>alert('x')</script>
+          <p>First paragraph.</p>
+          <p>Second paragraph.</p>
+        </body>
+      </html>
+    """
+
+    class FakeHeaders:
+        def get(self, name, default=""):
+            return "text/html; charset=utf-8" if name == "Content-Type" else default
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def geturl(self):
+            return "https://example.com/page"
+
+        def read(self, limit):
+            return body
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            return FakeResponse()
+
+    monkeypatch.setattr("folium.tools.web.urllib.request.build_opener", lambda *args, **kwargs: FakeOpener())
+
+    r = WebFetchTool().execute(url="https://example.com/page", max_chars=5000)
+
+    assert "Fetched: https://example.com/page" in r
+    assert "Title: Example Page" in r
+    assert "Main Heading" in r
+    assert "First paragraph." in r
+    assert "Second paragraph." in r
+    assert "Navigation" not in r
+    assert "alert" not in r
+
+
+# --- pdf_fetch ---
+
+def test_pdf_fetch_rejects_non_http_url():
+    r = PdfFetchTool().execute(url="file:///etc/passwd")
+
+    assert "only http:// and https:// URLs are allowed" in r
+
+
+def test_pdf_fetch_rejects_private_address(monkeypatch):
+    monkeypatch.setattr("folium.tools.web.socket.getaddrinfo", lambda *args, **kwargs: [
+        (None, None, None, None, ("127.0.0.1", 0))
+    ])
+
+    r = PdfFetchTool().execute(url="https://example.com/paper.pdf")
+
+    assert "private or local address" in r
+
+
+def test_pdf_fetch_parses_pdf(monkeypatch):
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Hello PDF World")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    class FakeHeaders:
+        def get(self, name, default=""):
+            return "application/pdf" if name == "Content-Type" else default
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def geturl(self):
+            return "https://example.com/paper.pdf"
+
+        def read(self, limit):
+            return pdf_bytes
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            return FakeResponse()
+
+    monkeypatch.setattr("folium.tools.web.socket.getaddrinfo", lambda *args, **kwargs: [
+        (None, None, None, None, ("93.184.216.34", 0))
+    ])
+    monkeypatch.setattr("folium.tools.pdf.urllib.request.build_opener", lambda *args, **kwargs: FakeOpener())
+
+    r = PdfFetchTool().execute(url="https://example.com/paper.pdf")
+
+    assert "--- Page 1 ---" in r
+    assert "Hello PDF World" in r
+
+
+def test_pdf_fetch_handles_empty_pdf(monkeypatch):
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page()
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    class FakeHeaders:
+        def get(self, name, default=""):
+            return "application/pdf" if name == "Content-Type" else default
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def geturl(self):
+            return "https://example.com/paper.pdf"
+
+        def read(self, limit):
+            return pdf_bytes
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            return FakeResponse()
+
+    monkeypatch.setattr("folium.tools.web.socket.getaddrinfo", lambda *args, **kwargs: [
+        (None, None, None, None, ("93.184.216.34", 0))
+    ])
+    monkeypatch.setattr("folium.tools.pdf.urllib.request.build_opener", lambda *args, **kwargs: FakeOpener())
+
+    r = PdfFetchTool().execute(url="https://example.com/paper.pdf")
+
+    assert "no readable text" in r
