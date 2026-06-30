@@ -9,6 +9,7 @@ The sub-agent runs to completion and returns a text summary.
 """
 
 from .base import Tool
+from .todo import TodoTool
 
 
 class AgentTool(Tool):
@@ -43,7 +44,7 @@ class AgentTool(Tool):
         parent = self._parent_agent
         sub = Agent(
             llm=parent.llm,
-            tools=[t for t in parent.tools if t.name != "agent"],  # no recursive agents
+            tools=[_sub_agent_tool(t) for t in parent.tools if t.name != "agent"],
             max_context_tokens=parent.context.max_tokens,
             max_rounds=20,
             tool_timeout=parent.tool_timeout,
@@ -57,3 +58,9 @@ class AgentTool(Tool):
             return f"[Sub-agent completed]\n{result}"
         except Exception as e:
             return f"Sub-agent error: {e}"
+
+
+def _sub_agent_tool(tool: Tool) -> Tool:
+    if isinstance(tool, TodoTool):
+        return TodoTool()
+    return tool

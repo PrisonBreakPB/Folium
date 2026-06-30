@@ -9,11 +9,11 @@ Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改�
 
 ## 当前能力
 
-- Web 对话界面：支持新建对话、切换历史对话、流式响应和工具调用展示
+- Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
 - CLI 入口：支持交互式对话、单次 prompt、会话恢复和内置命令
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
-- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理
-- 工具系统：支持读文件、写文件、搜索、编辑、执行 shell 命令和子 Agent，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
+- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
+- 工具系统：支持读文件、写文件、搜索、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
 - 会话持久化：对话内容保存到项目内 `conversations/`
 - 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
@@ -136,7 +136,17 @@ glob            按 glob 模式查找文件
 grep            按正则搜索文件内容
 bash            执行 shell 命令，包含危险命令拦截、超时终止进程和输出截断
 agent           启动子 Agent 处理独立子任务
+todo            更新结构化任务列表，跟踪 pending / in_progress / completed
 ```
+
+`todo` 工具用于长程、多步骤任务：
+
+- Agent 会在系统提示词中要求多步骤任务使用 `todo`
+- `todo` 每次接收完整列表替换当前状态，最多 20 项
+- 状态只允许 `pending`、`in_progress`、`completed`
+- 同一时间最多只能有一个 `in_progress`
+- 如果连续 3 个工具调用轮次没有成功更新 todo，Agent 会向 messages 注入 `<reminder>Update your todos.</reminder>`
+- Web 后端提供 `/todos`，并在 todo 更新时通过 SSE 发送 `todo_update`
 
 工具接口保持简单：
 
@@ -170,7 +180,7 @@ class HttpTool(Tool):
 如果连续 5 次工具参数校验失败，Agent 会停止当前任务并返回：
 
 ```text
-连续 5 次工具调用失败，已停止当前任务。
+Consecutive 5 tool call failures, current task stopped.
 ```
 
 新增工具时需要：
@@ -250,6 +260,7 @@ conversations/traces/
 - `llm`：模型调用、消息数量、工具数量、token、首 token 时间、输出摘要
 - `llm_error`：模型调用失败时的 provider、状态码、错误类型、错误码和 request id
 - `tool`：工具名称、参数、结果摘要、耗时、错误状态
+- `todo_update` / `todo_reminder`：todo 状态更新和自动提醒注入
 - `context_compression`：上下文压缩前后的 token 和消息数量
 - `agent_result`：最终回复摘要、消息数量和上下文 token 估算
 

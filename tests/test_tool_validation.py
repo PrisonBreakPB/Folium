@@ -4,7 +4,9 @@ import time
 from folium.agent import Agent
 from folium.llm import LLMResponse, ToolCall
 from folium.tools import ALL_TOOLS, get_tool
+from folium.tools.agent import _sub_agent_tool
 from folium.tools.base import Tool, ToolValidationError
+from folium.tools.todo import TodoTool
 
 
 class BlockingTool(Tool):
@@ -36,6 +38,19 @@ class TimeoutEchoTool(Tool):
         return f"timeout={timeout}"
 
 
+class EchoTool(Tool):
+    name = "echo_tool"
+    description = "Return a short result."
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+    def execute(self):
+        return "ok"
+
+
 class ToolValidationTests(unittest.TestCase):
     def test_all_tools_accept_minimal_valid_arguments(self):
         samples = {
@@ -46,6 +61,7 @@ class ToolValidationTests(unittest.TestCase):
             "glob": {"pattern": "*.py"},
             "grep": {"pattern": "Folium"},
             "agent": {"task": "summarize this project"},
+            "todo": {"items": [{"id": "1", "text": "Plan task", "status": "pending"}]},
         }
 
         for tool in ALL_TOOLS:
@@ -128,11 +144,97 @@ class ToolValidationTests(unittest.TestCase):
 
         result = agent.chat("write a tex file")
 
-        self.assertEqual(result, "连续 5 次工具调用失败，已停止当前任务。")
+        self.assertEqual(result, "Consecutive 5 tool call failures, current task stopped.")
         self.assertEqual(agent.llm.calls, 5)
         self.assertEqual(len([m for m in agent.messages if m["role"] == "tool"]), 5)
         self.assertEqual(agent.messages[-1]["name"], "write_file")
         self.assertIn("missing required field 'file_path'", agent.messages[-1]["content"])
+
+    def test_agent_injects_todo_reminder_after_three_rounds_without_todo(self):
+        class NoTodoLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                if self.calls <= 4:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[ToolCall(id=f"call_{self.calls}", name="echo_tool", arguments={})],
+                    )
+                return LLMResponse(content="done")
+
+        agent = Agent(llm=NoTodoLLM(), tools=[EchoTool(), TodoTool()], max_rounds=5)
+        agent.chat("do a long task")
+
+        reminders = [m for m in agent.messages if m.get("content") == "<reminder>Update your todos.</reminder>"]
+        self.assertEqual(len(reminders), 1)
+
+    def test_agent_emits_todo_update_event(self):
+        class TodoLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="todo_1",
+                                name="todo",
+                                arguments={
+                                    "items": [
+                                        {"id": "1", "text": "Inspect code", "status": "in_progress"}
+                                    ]
+                                },
+                            )
+                        ],
+                    )
+                return LLMResponse(content="done")
+
+        agent = Agent(llm=TodoLLM(), max_rounds=3)
+        events = []
+        agent.chat("inspect", on_event=events.append)
+
+        todo_events = [e for e in events if e["type"] == "todo_update"]
+        self.assertEqual(len(todo_events), 1)
+        self.assertEqual(todo_events[0]["items"][0]["status"], "in_progress")
+
+    def test_sub_agent_gets_independent_todo_manager(self):
+        agent = Agent(llm=None)
+        agent.todo_manager.update([
+            {"id": "1", "text": "Parent task", "status": "in_progress"}
+        ])
+
+        sub_todo = _sub_agent_tool(agent.todo_tool)
+
+        self.assertIsInstance(sub_todo, TodoTool)
+        self.assertIsNot(sub_todo.manager, agent.todo_manager)
+        self.assertEqual(sub_todo.manager.snapshot(), [])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from .edit import EditFileTool
 from .glob_tool import GlobTool
 from .grep import GrepTool
 from .agent import AgentTool
+from .todo import TodoTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -16,7 +17,22 @@ ALL_TOOLS = [
     GlobTool(),
     GrepTool(),
     AgentTool(),
+    TodoTool(),
 ]
+
+
+def create_tools():
+    """Create a fresh default tool set for one Agent instance."""
+    return [
+        BashTool(),
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        GlobTool(),
+        GrepTool(),
+        AgentTool(),
+        TodoTool(),
+    ]
 
 
 def get_tool(name: str):

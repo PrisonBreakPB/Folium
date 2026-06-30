@@ -294,6 +294,76 @@ body {
   white-space: nowrap;
 }
 
+.todo-panel {
+  display: none;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 22px;
+  background: #fbfcfa;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.todo-panel.visible {
+  display: grid;
+}
+
+.todo-title {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.todo-items {
+  min-width: 0;
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+}
+
+.todo-item {
+  min-width: 0;
+  max-width: 260px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.todo-item.completed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.todo-item.in_progress {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.todo-marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.todo-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todo-progress {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -578,6 +648,10 @@ body {
     grid-template-columns: 1fr;
     padding: 10px 14px;
   }
+  .todo-panel {
+    grid-template-columns: 1fr;
+    padding: 9px 14px;
+  }
   .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cmd-bar button { padding: 6px 8px; }
 }
@@ -656,6 +730,12 @@ body {
     </div>
   </section>
 
+  <section class="todo-panel" id="todoPanel" aria-label="Todo status">
+    <div class="todo-title">Tasks</div>
+    <div class="todo-items" id="todoItems"></div>
+    <div class="todo-progress" id="todoProgress"></div>
+  </section>
+
   <div class="messages" id="messages"></div>
 
   <div class="input-area">
@@ -670,6 +750,9 @@ const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const convListEl = document.getElementById('convList');
 const sessionIdEl = document.getElementById('sessionId');
+const todoPanelEl = document.getElementById('todoPanel');
+const todoItemsEl = document.getElementById('todoItems');
+const todoProgressEl = document.getElementById('todoProgress');
 let busy = false;
 const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
 const DEFAULT_RESERVED_OUTPUT_TOKENS = 20000;
@@ -707,6 +790,7 @@ async function init() {
     document.getElementById('modelInfo').textContent = '模型信息加载失败';
   }
   loadConversations();
+  refreshTodos();
   updateUsagePanel();
 }
 
@@ -750,6 +834,7 @@ async function newConversation() {
   if (busy) return;
   await fetch('/new', {method: 'POST'});
   messagesEl.innerHTML = '';
+  renderTodos([]);
   resetUsage();
   loadConversations();
 }
@@ -801,6 +886,7 @@ async function switchConv(id) {
   }
   flushTools();
   updateUsagePanel();
+  refreshTodos();
   loadConversations();
 }
 
@@ -820,8 +906,53 @@ async function deleteConv(id, event) {
   const data = await resp.json();
   if (data.deleted_current) {
     messagesEl.innerHTML = '';
+    renderTodos([]);
   }
   loadConversations();
+}
+
+async function refreshTodos() {
+  try {
+    const resp = await fetch('/todos');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderTodos(data.items || []);
+  } catch (e) {
+    renderTodos([]);
+  }
+}
+
+function renderTodos(items) {
+  const todos = Array.isArray(items) ? items : [];
+  todoItemsEl.innerHTML = '';
+  if (!todos.length) {
+    todoPanelEl.classList.remove('visible');
+    todoProgressEl.textContent = '';
+    return;
+  }
+
+  for (const item of todos) {
+    const status = String(item.status || 'pending');
+    const chip = document.createElement('div');
+    chip.className = `todo-item ${status}`;
+
+    const marker = document.createElement('span');
+    marker.className = 'todo-marker';
+    marker.textContent = status === 'completed' ? '✓' : status === 'in_progress' ? '>' : '·';
+
+    const text = document.createElement('span');
+    text.className = 'todo-text';
+    text.textContent = normalizeText(item.text || '');
+    text.title = normalizeText(item.text || '');
+
+    chip.appendChild(marker);
+    chip.appendChild(text);
+    todoItemsEl.appendChild(chip);
+  }
+
+  const completed = todos.filter(item => item.status === 'completed').length;
+  todoProgressEl.textContent = `${completed}/${todos.length}`;
+  todoPanelEl.classList.add('visible');
 }
 
 inputEl.addEventListener('keydown', e => {
@@ -1280,6 +1411,10 @@ async function sendMessage() {
             applyContextUpdate(event);
           } else if (event.type === 'usage_update') {
             applyUsageUpdate(event);
+          } else if (event.type === 'todo_update') {
+            renderTodos(event.items || []);
+          } else if (event.type === 'todo_reminder') {
+            appendStatus(process, 'Todo reminder sent');
           } else if (event.type === 'tool_start') {
             appendToolEntry(process, {
               type: 'tool_start',

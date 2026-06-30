@@ -6,10 +6,11 @@ import tempfile
 from pathlib import Path
 
 from folium.tools import ALL_TOOLS, get_tool
+from folium.tools.todo import TodoTool
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 7
+    assert len(ALL_TOOLS) == 8
 
 
 def test_all_tools_have_valid_schema():
@@ -201,3 +202,28 @@ def test_agent_tool_schema():
     s = agent_t.schema()
     assert s["function"]["name"] == "agent"
     assert "task" in s["function"]["parameters"]["properties"]
+
+
+# --- todo ---
+
+def test_todo_tool_updates_task_list():
+    todo = TodoTool()
+    r = todo.execute(items=[
+        {"id": "1", "text": "Read files", "status": "completed"},
+        {"id": "2", "text": "Run tests", "status": "in_progress"},
+    ])
+
+    assert "[x] #1: Read files" in r
+    assert "[>] #2: Run tests" in r
+    assert "(1/2 completed)" in r
+
+
+def test_todo_tool_rejects_multiple_in_progress():
+    todo = TodoTool()
+    r = todo.execute(items=[
+        {"id": "1", "text": "One", "status": "in_progress"},
+        {"id": "2", "text": "Two", "status": "in_progress"},
+    ])
+
+    assert "Error:" in r
+    assert "Only one task" in r

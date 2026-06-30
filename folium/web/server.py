@@ -86,6 +86,14 @@ def _context_budget_payload() -> dict:
     }
 
 
+def _todo_payload() -> dict:
+    agent = _state.get("agent")
+    manager = getattr(agent, "todo_manager", None)
+    if not manager:
+        return {"items": [], "rendered": "No todos."}
+    return {"items": manager.snapshot(), "rendered": manager.render()}
+
+
 def _error_event(exc: BaseException) -> dict:
     if isinstance(exc, LLMProviderError):
         info = exc.info.to_dict()
@@ -171,6 +179,11 @@ async def get_conversations():
     return {"sessions": sessions, "current": _state["session_id"], "context_budget": _context_budget_payload()}
 
 
+@app.get("/todos")
+async def get_todos():
+    return _todo_payload()
+
+
 @app.post("/switch")
 async def switch_conversation(req: SwitchRequest):
     if _chat_lock.locked():
@@ -184,6 +197,7 @@ async def switch_conversation(req: SwitchRequest):
 
     messages, model = loaded
     _state["agent"].messages = messages
+    _state["agent"].reset_todos()
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
     _state["dirty"] = False

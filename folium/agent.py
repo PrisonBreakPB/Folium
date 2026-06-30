@@ -15,9 +15,10 @@ import threading
 import time
 from dataclasses import dataclass
 from .llm import LLM, LLMResponse, estimate_cost
-from .tools import ALL_TOOLS
+from .tools import create_tools
 from .tools.base import Tool, ToolValidationError
 from .tools.agent import AgentTool
+from .tools.todo import TODO_REMINDER, TodoTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
@@ -47,7 +48,7 @@ class Agent:
         tool_timeout: int = 120,
     ):
         self.llm = llm
-        self.tools = tools if tools is not None else ALL_TOOLS
+        self.tools = tools if tools is not None else create_tools()
         self.messages: list[dict] = []
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
@@ -58,6 +59,9 @@ class Agent:
         self._system = system_prompt(self.tools, self.skills)
         self.session_id: str | None = None
         self.turn_index = 0
+        self.todo_tool = next((t for t in self.tools if isinstance(t, TodoTool)), None)
+        self.todo_manager = self.todo_tool.manager if self.todo_tool else None
+        self.rounds_since_todo = 0
 
         # wire up sub-agent capability
         for t in self.tools:
@@ -124,6 +128,7 @@ class Agent:
         bad_tool_calls = 0
 
         for round_index in range(1, self.max_rounds + 1):
+            self._inject_todo_reminder(on_event)
             self._emit_event(on_event, "agent_status", message=f"Model inference round {round_index}")
             with span("agent_round", "agent", metadata={
                 "round_index": round_index,
@@ -151,6 +156,7 @@ class Agent:
                 self.messages.append(assistant_message)
                 self._attach_usage_context(assistant_message)
                 tool_tokens = 0
+                used_todo = False
 
                 if len(resp.tool_calls) == 1:
                     tc = resp.tool_calls[0]
@@ -167,6 +173,7 @@ class Agent:
                         "name": tc.name,
                         "content": result.content,
                     })
+                    used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                     tool_tokens += _approx_tokens(result.content)
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
@@ -183,9 +190,12 @@ class Agent:
                             "name": tc.name,
                             "content": result.content,
                         })
+                        used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                         tool_tokens += _approx_tokens(result.content)
                         self._emit_context_update(on_event)
                         bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
+
+                self._update_todo_nag_state(used_todo, on_event)
 
                 if bad_tool_calls >= self.max_bad_tool_calls:
                     self._emit_event(on_event, "agent_status", message="Consecutive tool parameter errors, task stopped", status="error")
@@ -418,6 +428,12 @@ class Agent:
         self.llm.total_cached_tokens = 0
         self.llm.last_prompt_tokens = 0
         self.llm.last_completion_tokens = 0
+        self.reset_todos()
+
+    def reset_todos(self):
+        self.rounds_since_todo = 0
+        if self.todo_manager:
+            self.todo_manager.reset()
 
     def _maybe_compress_observed(self, trigger: str, on_event=None, new_message_tokens: int = 0) -> bool:
         confirmed_tokens = getattr(self.llm, "last_prompt_tokens", 0) + getattr(self.llm, "last_completion_tokens", 0)
@@ -457,6 +473,25 @@ class Agent:
                     },
                 })
         return report["compressed"]
+
+    def _update_todo_nag_state(self, used_todo: bool, on_event=None):
+        if not self.todo_manager:
+            return
+        self.rounds_since_todo = 0 if used_todo else self.rounds_since_todo + 1
+        if used_todo:
+            self._emit_event(
+                on_event,
+                "todo_update",
+                items=self.todo_manager.snapshot(),
+                rendered=self.todo_manager.render(),
+            )
+
+    def _inject_todo_reminder(self, on_event=None):
+        if not self.todo_manager or self.rounds_since_todo < 3:
+            return
+        self.messages.append({"role": "user", "content": TODO_REMINDER})
+        self.rounds_since_todo = 0
+        self._emit_event(on_event, "todo_reminder", message=TODO_REMINDER)
 
 
 def _status_from_tool_result(result: str) -> str:
