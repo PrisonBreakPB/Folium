@@ -73,7 +73,7 @@ def test_context_snip():
         {"role": "tool", "tool_call_id": "t1", "content": content},
     ]
 
-    report = ctx._snip_tool_outputs(msgs)
+    report = ctx._snip_tool_outputs(msgs, recent_tool_rounds_to_keep=0)
 
     trimmed = msgs[0]["content"]
     assert report["changed"] is True
@@ -88,7 +88,7 @@ def test_context_snip_keeps_tool_outputs_at_threshold():
     content = "x" * TOOL_OUTPUT_TRIM_THRESHOLD_CHARS
     msgs = [{"role": "tool", "tool_call_id": "t1", "content": content}]
 
-    report = ContextManager._snip_tool_outputs(msgs)
+    report = ContextManager._snip_tool_outputs(msgs, recent_tool_rounds_to_keep=0)
 
     assert report["changed"] is False
     assert msgs[0]["content"] == content
@@ -137,7 +137,7 @@ def test_context_snip_exempt_tool():
     TOOL_COMPRESS_EXEMPT.add("test_exempt")
     try:
         msgs = [{"role": "tool", "name": "test_exempt", "tool_call_id": "t1", "content": "x" * 5000}]
-        report = ContextManager._snip_tool_outputs(msgs)
+        report = ContextManager._snip_tool_outputs(msgs, recent_tool_rounds_to_keep=0)
         assert report["changed"] is False
         assert msgs[0]["content"] == "x" * 5000
     finally:
@@ -147,7 +147,7 @@ def test_context_snip_exempt_tool():
 def test_context_snip_secondary_tool_skipped_at_low_usage():
     """Secondary tools are not trimmed when context usage is low."""
     msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
-    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.5)
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.5, recent_tool_rounds_to_keep=0)
     assert report["changed"] is False
     assert msgs[0]["content"] == "x" * 5000
 
@@ -155,7 +155,7 @@ def test_context_snip_secondary_tool_skipped_at_low_usage():
 def test_context_snip_secondary_tool_skipped_below_secondary_threshold():
     """Secondary tools are not trimmed before the 70% threshold."""
     msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
-    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.65)
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.65, recent_tool_rounds_to_keep=0)
     assert report["changed"] is False
     assert msgs[0]["content"] == "x" * 5000
 
@@ -163,7 +163,7 @@ def test_context_snip_secondary_tool_skipped_below_secondary_threshold():
 def test_context_snip_secondary_tool_trimmed_at_secondary_threshold():
     """Secondary tools are trimmed when context usage reaches 70%."""
     msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
-    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.7)
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.7, recent_tool_rounds_to_keep=0)
     assert report["changed"] is True
     assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
 
@@ -171,9 +171,33 @@ def test_context_snip_secondary_tool_trimmed_at_secondary_threshold():
 def test_context_snip_primary_tool_always_trimmed():
     """Primary tools are trimmed regardless of context usage."""
     msgs = [{"role": "tool", "name": "bash", "tool_call_id": "t1", "content": "x" * 5000}]
-    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.3)
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.3, recent_tool_rounds_to_keep=0)
     assert report["changed"] is True
     assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
+
+
+def test_context_snip_protects_recent_tool_rounds():
+    content = "x" * 5000
+    msgs = [
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "old", "function": {"name": "bash"}}]},
+        {"role": "tool", "name": "bash", "tool_call_id": "old", "content": content},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "recent1", "function": {"name": "bash"}}]},
+        {"role": "tool", "name": "bash", "tool_call_id": "recent1", "content": content},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "recent2", "function": {"name": "bash"}}]},
+        {"role": "tool", "name": "bash", "tool_call_id": "recent2", "content": content},
+    ]
+
+    report = ContextManager._snip_tool_outputs(
+        msgs,
+        context_usage_ratio=0.9,
+        recent_tool_rounds_to_keep=2,
+    )
+
+    assert report["changed"] is True
+    assert report["tools"] == [{"tool_call_id": "old", "name": "bash"}]
+    assert TOOL_OUTPUT_TRIM_MARKER in msgs[1]["content"]
+    assert msgs[3]["content"] == content
+    assert msgs[5]["content"] == content
 
 
 def test_context_reserves_output_tokens():

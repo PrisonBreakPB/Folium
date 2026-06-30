@@ -26,6 +26,7 @@ DEFAULT_PROTECTED_USER_TOKENS = 20_000
 TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4096
 TOOL_OUTPUT_TRIM_KEEP_CHARS = 1536
 TOOL_OUTPUT_TRIM_MARKER = "trimmed to save context"
+RECENT_TOOL_ROUNDS_TO_KEEP = 2
 
 # Exempt tools: never compress these outputs
 TOOL_COMPRESS_EXEMPT: set[str] = set()
@@ -124,7 +125,12 @@ class ContextManager:
         # Layer 1: trim verbose tool outputs
         if current > self._snip_at:
             secondary_usage_ratio = self._secondary_snip_at / self.input_budget_tokens
-            layer = self._snip_tool_outputs(messages, context_usage_ratio, secondary_usage_ratio)
+            layer = self._snip_tool_outputs(
+                messages,
+                context_usage_ratio,
+                secondary_usage_ratio,
+                RECENT_TOOL_ROUNDS_TO_KEEP,
+            )
             if layer["changed"]:
                 report["compressed"] = True
                 report["layers"].append(layer)
@@ -150,7 +156,8 @@ class ContextManager:
 
     @staticmethod
     def _snip_tool_outputs(messages: list[dict], context_usage_ratio: float = 0.0,
-                           secondary_usage_ratio: float = 0.7) -> dict:
+                           secondary_usage_ratio: float = 0.7,
+                           recent_tool_rounds_to_keep: int = RECENT_TOOL_ROUNDS_TO_KEEP) -> dict:
         """Layer 1: Trim very long tool results while preserving head and tail.
 
         This mirrors Claude Code's HISTORY_SNIP which replaces old tool outputs
@@ -161,8 +168,11 @@ class ContextManager:
                                  Secondary tools only trim when this reaches secondary_usage_ratio.
         """
         tools = []
+        protected_tool_call_ids = _recent_tool_call_ids(messages, recent_tool_rounds_to_keep)
         for m in messages:
             if m.get("role") != "tool":
+                continue
+            if m.get("tool_call_id") in protected_tool_call_ids:
                 continue
 
             tool_name = m.get("name", "_default")
@@ -407,3 +417,28 @@ class ContextManager:
         if errors:
             parts.append(f"Errors seen: {'; '.join(errors[:5])}")
         return "\n".join(parts) or "(no extractable context)"
+
+
+def _recent_tool_call_ids(messages: list[dict], rounds_to_keep: int) -> set[str]:
+    if rounds_to_keep <= 0:
+        return set()
+
+    protected: set[str] = set()
+    rounds_seen = 0
+    in_tool_block = False
+
+    for message in reversed(messages):
+        if message.get("role") == "tool":
+            tool_call_id = message.get("tool_call_id")
+            if tool_call_id:
+                protected.add(tool_call_id)
+            in_tool_block = True
+            continue
+
+        if in_tool_block:
+            rounds_seen += 1
+            if rounds_seen >= rounds_to_keep:
+                break
+            in_tool_block = False
+
+    return protected

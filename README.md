@@ -227,6 +227,7 @@ Token 计算：
 - 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
 - 压缩后不再保留 recent tail；系统会从真实用户消息中倒序保护最近原文，默认预算 20000 tokens。若最近一条用户消息本身超过预算，也会整条保留。该预算使用同一个本地 token 估算器：优先 tokenizer，失败再回退 `len(text) // 3`
 - `bash`、`grep`、`glob` 等 primary 工具在 60% 后可裁剪；`read_file`、`agent` 等 secondary 工具在 70% 后可裁剪，但 80% 的占位符压缩会跳过 secondary 工具
+- Layer 1 会跳过最近 2 个工具调用轮次的 tool 输出，避免刚读到的文件、实验结果或子 Agent 结论立刻被裁剪
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）
