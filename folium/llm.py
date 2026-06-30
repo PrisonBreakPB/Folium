@@ -12,6 +12,7 @@ single unified interface. Set FOLIUM_PROVIDER=litellm.
 import json
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from .observability import span
@@ -51,6 +52,48 @@ class LLMResponse:
                 for tc in self.tool_calls
             ]
         return msg
+
+
+@dataclass
+class LLMErrorInfo:
+    message: str
+    provider: str = "openai"
+    status_code: int | None = None
+    error_type: str | None = None
+    error_code: str | None = None
+    request_id: str | None = None
+    retryable: bool = False
+    raw_body: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "message": self.message,
+            "provider": self.provider,
+            "status_code": self.status_code,
+            "error_type": self.error_type,
+            "error_code": self.error_code,
+            "request_id": self.request_id,
+            "retryable": self.retryable,
+            "raw_body": self.raw_body,
+        }
+
+
+class LLMProviderError(RuntimeError):
+    def __init__(self, info: LLMErrorInfo):
+        self.info = info
+        super().__init__(self._format_message(info))
+
+    @staticmethod
+    def _format_message(info: LLMErrorInfo) -> str:
+        parts = []
+        if info.status_code is not None:
+            parts.append(f"status={info.status_code}")
+        if info.error_type:
+            parts.append(f"type={info.error_type}")
+        if info.error_code:
+            parts.append(f"code={info.error_code}")
+        parts.append(f"message={info.message}")
+        return f"LLM provider error ({info.provider}): " + " ".join(parts)
 
 
 # pricing per million tokens: (input, output)
@@ -177,8 +220,12 @@ class LLM:
         # stream_options is an OpenAI extension; not all providers support it
         try:
             params["stream_options"] = {"include_usage": True}
-            stream = self._call_with_retry(params)
-        except Exception:
+            stream = self._call_with_retry(params, record_errors=False)
+        except LLMProviderError as e:
+            if not _looks_like_unsupported_stream_options(e.info):
+                _record_llm_error(e.info, attempt=1)
+                raise
+            _record_llm_fallback(e.info, fallback="retry_without_stream_options")
             params.pop("stream_options", None)
             stream = self._call_with_retry(params)
 
@@ -190,7 +237,7 @@ class LLM:
         first_token_at = None
         stream_started_at = time.time()
 
-        for chunk in stream:
+        for chunk in _iter_stream(stream, provider="openai"):
             # usage info comes in the final chunk
             if chunk.usage:
                 prompt_tok = chunk.usage.prompt_tokens
@@ -294,22 +341,29 @@ class LLM:
         })
         return response
 
-    def _call_with_retry(self, params: dict, max_retries: int = 3):
+    def _call_with_retry(self, params: dict, max_retries: int = 3, record_errors: bool = True):
         """Retry on transient errors with exponential backoff."""
         for attempt in range(max_retries):
             try:
                 return self.client.chat.completions.create(**params)
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
+                info = _openai_error_info(e, provider="openai", retryable=True)
                 if attempt == max_retries - 1:
-                    raise
+                    if record_errors:
+                        _record_llm_error(info, attempt + 1)
+                    raise LLMProviderError(info) from e
                 wait = 2 ** attempt
                 time.sleep(wait)
             except APIError as e:
                 # 5xx = server error, retry; 4xx = client error, don't
-                if e.status_code and e.status_code >= 500 and attempt < max_retries - 1:
+                retryable = bool(e.status_code and e.status_code >= 500)
+                info = _openai_error_info(e, provider="openai", retryable=retryable)
+                if retryable and attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
-                    raise
+                    if record_errors:
+                        _record_llm_error(info, attempt + 1)
+                    raise LLMProviderError(info) from e
 
 
 class LiteLLM(LLM):
@@ -394,7 +448,7 @@ class LiteLLM(LLM):
         first_token_at = None
         stream_started_at = time.time()
 
-        for chunk in stream:
+        for chunk in _iter_stream(stream, provider="litellm"):
             usage = getattr(chunk, "usage", None)
             if usage:
                 prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
@@ -511,4 +565,130 @@ class LiteLLM(LLM):
                 if (is_transient or is_server) and attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
-                    raise
+                    info = _generic_error_info(
+                        e,
+                        provider="litellm",
+                        retryable=is_transient or is_server,
+                    )
+                    _record_llm_error(info, attempt + 1)
+                    raise LLMProviderError(info) from e
+
+
+def _openai_error_info(e: Exception, provider: str, retryable: bool) -> LLMErrorInfo:
+    status_code = getattr(e, "status_code", None)
+    request_id = getattr(e, "request_id", None)
+    body = getattr(e, "body", None)
+    error_obj = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error_obj, dict):
+        message = str(error_obj.get("message") or e)
+        error_type = error_obj.get("type")
+        error_code = error_obj.get("code")
+    else:
+        message = str(e)
+        error_type = getattr(e, "type", None)
+        error_code = getattr(e, "code", None)
+    return LLMErrorInfo(
+        message=message,
+        provider=provider,
+        status_code=status_code,
+        error_type=str(error_type) if error_type else None,
+        error_code=str(error_code) if error_code else None,
+        request_id=str(request_id) if request_id else None,
+        retryable=retryable,
+        raw_body=_safe_json(body),
+    )
+
+
+def _generic_error_info(e: Exception, provider: str, retryable: bool) -> LLMErrorInfo:
+    status_code = getattr(e, "status_code", None) or getattr(e, "http_status", None)
+    return LLMErrorInfo(
+        message=str(e),
+        provider=provider,
+        status_code=status_code,
+        error_type=e.__class__.__name__,
+        error_code=str(getattr(e, "code", "")) or None,
+        request_id=str(getattr(e, "request_id", "")) or None,
+        retryable=retryable,
+        raw_body=_safe_json(getattr(e, "body", None) or getattr(e, "response", None)),
+    )
+
+
+def _stream_error_info(e: Exception, provider: str) -> LLMErrorInfo:
+    if provider == "openai" and isinstance(e, APIError):
+        return _openai_error_info(e, provider=provider, retryable=False)
+    return _generic_error_info(e, provider=provider, retryable=False)
+
+
+def _iter_stream(stream, provider: str):
+    try:
+        for chunk in stream:
+            yield chunk
+    except LLMProviderError:
+        raise
+    except Exception as e:
+        info = _stream_error_info(e, provider=provider)
+        _record_llm_error(info, attempt=1)
+        raise LLMProviderError(info) from e
+
+
+def _record_llm_error(info: LLMErrorInfo, attempt: int) -> None:
+    active_observer().record({
+        "event": "llm_error",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": "chat.completions" if info.provider == "openai" else "litellm.completion",
+        "type": "llm",
+        "status": "error",
+        "metadata": {
+            **info.to_dict(),
+            "attempt": attempt,
+        },
+    })
+
+
+def _record_llm_fallback(info: LLMErrorInfo, fallback: str) -> None:
+    active_observer().record({
+        "event": "llm_fallback",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": "chat.completions",
+        "type": "llm",
+        "status": "ok",
+        "metadata": {
+            **info.to_dict(),
+            "fallback": fallback,
+        },
+    })
+
+
+def _safe_json(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return str(value)
+
+
+def _looks_like_unsupported_stream_options(info: LLMErrorInfo) -> bool:
+    text = " ".join(
+        part.lower()
+        for part in [
+            info.message,
+            info.error_type or "",
+            info.error_code or "",
+            info.raw_body or "",
+        ]
+    )
+    return "stream_options" in text and any(
+        marker in text
+        for marker in [
+            "unsupported",
+            "not support",
+            "unrecognized",
+            "unknown",
+            "extra",
+            "invalid parameter",
+            "invalid_request",
+        ]
+    )

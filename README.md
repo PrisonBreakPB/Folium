@@ -247,6 +247,7 @@ conversations/traces/
 - `user_task`：一次用户输入触发的完整 Agent 执行
 - `agent_round`：每轮 Agent 循环
 - `llm`：模型调用、消息数量、工具数量、token、首 token 时间、输出摘要
+- `llm_error`：模型调用失败时的 provider、状态码、错误类型、错误码和 request id
 - `tool`：工具名称、参数、结果摘要、耗时、错误状态
 - `context_compression`：上下文压缩前后的 token 和消息数量
 - `agent_result`：最终回复摘要、消息数量和上下文 token 估算

@@ -3,8 +3,8 @@
 __version__ = "0.3.0"
 
 from folium.agent import Agent
-from folium.llm import LLM
+from folium.llm import LLM, LLMProviderError
 from folium.config import Config
 from folium.tools import ALL_TOOLS
 
-__all__ = ["Agent", "LLM", "Config", "ALL_TOOLS", "__version__"]
+__all__ = ["Agent", "LLM", "LLMProviderError", "Config", "ALL_TOOLS", "__version__"]

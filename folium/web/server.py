@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..agent import Agent
 from ..config import Config
+from ..llm import LLMProviderError
 from ..session import save_session, load_session, list_sessions, delete_session, new_session_id, calculate_session_stats
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
@@ -85,6 +86,17 @@ def _context_budget_payload() -> dict:
     }
 
 
+def _error_event(exc: BaseException) -> dict:
+    if isinstance(exc, LLMProviderError):
+        info = exc.info.to_dict()
+        return {
+            "type": "error",
+            "content": info["message"],
+            **info,
+        }
+    return {"type": "error", "content": str(exc)}
+
+
 # ── endpoints ───────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -117,7 +129,7 @@ async def chat(req: ChatRequest):
 
         def _on_complete(t):
             if t.exception():
-                queue.put_nowait({"type": "error", "content": str(t.exception())})
+                queue.put_nowait(_error_event(t.exception()))
             else:
                 _state["dirty"] = True
                 queue.put_nowait({"type": "done", "content": ""})
