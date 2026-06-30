@@ -15,7 +15,7 @@ Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改�
 - Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理
 - 工具系统：支持读文件、写文件、搜索、编辑、执行 shell 命令和子 Agent，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
 - 会话持久化：对话内容保存到项目内 `conversations/`
-- 上下文压缩：基于真实 token 的三层渐进式压缩（截断工具输出、LLM 摘要、硬压缩）
+- 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
 - 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
 
@@ -208,24 +208,25 @@ description: Use when the user asks for this specialized workflow.
 
 ## 上下文压缩
 
-Folium 采用三级渐进式上下文压缩策略，使用 LLM API 返回的真实 token 进行阈值判断：
+Folium 采用三级渐进式上下文压缩策略，自动触发时优先使用 LLM API 返回的 usage，并对新增内容使用本地估算：
 
 | 层级 | 触发阈值 | 操作 | 成本 |
 |------|---------|------|------|
-| Layer 1 | 60% | 截断 tool 输出（保留首尾各 3 行） | 零 LLM 调用 |
-| Layer 2 | 80% | 将已截断的 tool 输出替换为占位符 | 零 LLM 调用 |
-| Layer 3 | 90% | 增量更新历史摘要，并按预算保护最近用户原文 | 调 LLM |
+| Layer 1 | 60% / 70% | 截断长 tool 输出（primary 工具 60%，secondary 工具 70%，保留首尾各 1536 字符） | 零 LLM 调用 |
+| Layer 2 | 80% | 将已截断的 primary/default tool 输出替换为占位符 | 零 LLM 调用 |
+| Layer 3 | 90% | 增量更新历史摘要，并按预算保护最近用户原文 | 调 LLM，失败时本地兜底 |
 
 触发时机：
 - 用户消息加入后（`after_user_message`）
 - 工具结果加入后（`after_tool_results`）
 
 Token 计算：
-- 使用 LLM API 返回的真实 `prompt_tokens` 和 `completion_tokens`
-- 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前 fallback 使用本地估算器
+- 自动触发时优先使用最近一次 LLM API 返回的真实 `prompt_tokens` 和 `completion_tokens`
+- 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前以及手动 `/compact` 使用本地估算器
 - 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
 - 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
 - 压缩后不再保留 recent tail；系统会从真实用户消息中倒序保护最近原文，默认预算 20000 tokens。若最近一条用户消息本身超过预算，也会整条保留。该预算使用同一个本地 token 估算器：优先 tokenizer，失败再回退 `len(text) // 3`
+- `bash`、`grep`、`glob` 等 primary 工具在 60% 后可裁剪；`read_file`、`agent` 等 secondary 工具在 70% 后可裁剪，但 80% 的占位符压缩会跳过 secondary 工具
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）

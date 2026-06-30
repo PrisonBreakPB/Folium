@@ -118,6 +118,20 @@ def test_context_prune_reports_tool_identity():
     assert report["tools"] == [{"tool_call_id": "t1", "name": "bash"}]
 
 
+def test_context_prune_skips_secondary_tools():
+    msgs = [{
+        "role": "tool",
+        "tool_call_id": "t1",
+        "name": "read_file",
+        "content": f"head\n... (5000 chars total, {TOOL_OUTPUT_TRIM_MARKER}) ...\ntail",
+    }]
+
+    report = ContextManager._prune_tool_outputs(msgs)
+
+    assert report["changed"] is False
+    assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
+
+
 def test_context_snip_exempt_tool():
     """Exempt tools are never compressed."""
     TOOL_COMPRESS_EXEMPT.add("test_exempt")
@@ -138,10 +152,18 @@ def test_context_snip_secondary_tool_skipped_at_low_usage():
     assert msgs[0]["content"] == "x" * 5000
 
 
-def test_context_snip_secondary_tool_trimmed_at_high_usage():
-    """Secondary tools are trimmed when context usage exceeds 80%."""
+def test_context_snip_secondary_tool_skipped_below_secondary_threshold():
+    """Secondary tools are not trimmed before the 70% threshold."""
     msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
-    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.85)
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.65)
+    assert report["changed"] is False
+    assert msgs[0]["content"] == "x" * 5000
+
+
+def test_context_snip_secondary_tool_trimmed_at_secondary_threshold():
+    """Secondary tools are trimmed when context usage reaches 70%."""
+    msgs = [{"role": "tool", "name": "read_file", "tool_call_id": "t1", "content": "x" * 5000}]
+    report = ContextManager._snip_tool_outputs(msgs, context_usage_ratio=0.7)
     assert report["changed"] is True
     assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
 
@@ -160,6 +182,7 @@ def test_context_reserves_output_tokens():
     assert ctx.reserved_output_tokens == DEFAULT_RESERVED_OUTPUT_TOKENS
     assert ctx.input_budget_tokens == 80_000
     assert ctx._snip_at == 48_000
+    assert ctx._secondary_snip_at == 56_000
     assert ctx._prune_at == 64_000
     assert ctx._summarize_at == 72_000
 

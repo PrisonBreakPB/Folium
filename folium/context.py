@@ -7,8 +7,8 @@ Claude Code uses a 4-layer strategy:
   4. Autocompact    - periodic background compaction
 
 Folium implements a 3-layer progressive strategy:
-  Layer 1 (snip)      - 60%: trim long tool outputs, keep head/tail chars
-  Layer 2 (prune)     - 80%: replace trimmed tool outputs with placeholders
+  Layer 1 (snip)      - 60%/70%: trim primary/secondary tool outputs, keep head/tail chars
+  Layer 2 (prune)     - 80%: replace trimmed primary/default tool outputs with placeholders
   Layer 3 (summarize) - 90%: incremental LLM summary + protected user messages
 """
 
@@ -32,7 +32,7 @@ TOOL_COMPRESS_EXEMPT: set[str] = set()
 
 # Tool compression tiers:
 #   primary   - trim at 60% threshold (default)
-#   secondary - trim only when context usage > 80%
+#   secondary - trim when context usage reaches 70%
 TOOL_COMPRESSION_TIER: dict[str, str] = {
     "bash": "primary",
     "grep": "primary",
@@ -105,6 +105,7 @@ class ContextManager:
         self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
+        self._secondary_snip_at = int(self.input_budget_tokens * 0.70)  # 70% -> snip secondary tools
         self._prune_at = int(self.input_budget_tokens * 0.80)    # 80% -> prune to placeholders
         self._summarize_at = int(self.input_budget_tokens * 0.90)  # 90% -> LLM summarize
 
@@ -122,13 +123,14 @@ class ContextManager:
 
         # Layer 1: trim verbose tool outputs
         if current > self._snip_at:
-            layer = self._snip_tool_outputs(messages, context_usage_ratio)
+            secondary_usage_ratio = self._secondary_snip_at / self.input_budget_tokens
+            layer = self._snip_tool_outputs(messages, context_usage_ratio, secondary_usage_ratio)
             if layer["changed"]:
                 report["compressed"] = True
                 report["layers"].append(layer)
                 current = estimate_tokens(messages)
 
-        # Layer 2: prune trimmed tool outputs to placeholders
+        # Layer 2: prune trimmed primary/default tool outputs to placeholders
         if current > self._prune_at:
             layer = self._prune_tool_outputs(messages)
             if layer["changed"]:
@@ -147,7 +149,8 @@ class ContextManager:
         return report
 
     @staticmethod
-    def _snip_tool_outputs(messages: list[dict], context_usage_ratio: float = 0.0) -> dict:
+    def _snip_tool_outputs(messages: list[dict], context_usage_ratio: float = 0.0,
+                           secondary_usage_ratio: float = 0.7) -> dict:
         """Layer 1: Trim very long tool results while preserving head and tail.
 
         This mirrors Claude Code's HISTORY_SNIP which replaces old tool outputs
@@ -155,7 +158,7 @@ class ContextManager:
 
         Args:
             context_usage_ratio: Current context usage as fraction of input budget.
-                                 Secondary tools only trim when this exceeds 0.8.
+                                 Secondary tools only trim when this reaches secondary_usage_ratio.
         """
         tools = []
         for m in messages:
@@ -170,7 +173,7 @@ class ContextManager:
 
             # secondary tools only trim when context is tight
             tier = TOOL_COMPRESSION_TIER.get(tool_name, "primary")
-            if tier == "secondary" and context_usage_ratio < 0.8:
+            if tier == "secondary" and context_usage_ratio < secondary_usage_ratio:
                 continue
 
             content = m.get("content", "")
@@ -187,16 +190,20 @@ class ContextManager:
 
     @staticmethod
     def _prune_tool_outputs(messages: list[dict]) -> dict:
-        """Layer 2: Replace already-trimmed tool outputs with compact placeholders.
+        """Layer 2: Replace already-trimmed primary/default tool outputs with compact placeholders.
 
         Tool outputs that were truncated by Layer 1 still carry several lines of
-        content. This layer replaces them with a single-line placeholder to
-        release more space at zero LLM cost.
+        content. This layer replaces lower-priority tool outputs with a
+        single-line placeholder to release more space at zero LLM cost.
         """
         PRUNED = "[Content compacted to save context]"
         tools = []
         for m in messages:
             if m.get("role") != "tool":
+                continue
+            tool_name = m.get("name", "_default")
+            tier = TOOL_COMPRESSION_TIER.get(tool_name, "primary")
+            if tier == "secondary":
                 continue
             content = m.get("content", "")
             if not content:
