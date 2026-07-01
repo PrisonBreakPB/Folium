@@ -153,7 +153,7 @@ class ToolValidationTests(unittest.TestCase):
         self.assertEqual(agent.messages[-1]["name"], "write_file")
         self.assertIn("missing required field 'file_path'", agent.messages[-1]["content"])
 
-    def test_agent_injects_todo_reminder_after_three_rounds_without_todo(self):
+    def test_agent_does_not_inject_todo_reminder_before_todos_exist(self):
         class NoTodoLLM:
             model = "fake-model"
 
@@ -182,7 +182,63 @@ class ToolValidationTests(unittest.TestCase):
         agent.chat("do a long task")
 
         reminders = [m for m in agent.messages if m.get("content") == "<reminder>Update your todos.</reminder>"]
+        self.assertEqual(reminders, [])
+        transcript_reminders = [
+            m for m in agent.transcript
+            if m.get("content") == "<reminder>Update your todos.</reminder>"
+        ]
+        self.assertEqual(transcript_reminders, [])
+
+    def test_agent_injects_todo_reminder_after_existing_todos_go_stale(self):
+        class StaleTodoLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(
+                                id="todo_1",
+                                name="todo",
+                                arguments={
+                                    "items": [
+                                        {"id": "1", "text": "Inspect code", "status": "in_progress"}
+                                    ]
+                                },
+                            )
+                        ],
+                    )
+                if self.calls <= 5:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[ToolCall(id=f"call_{self.calls}", name="echo_tool", arguments={})],
+                    )
+                return LLMResponse(content="done")
+
+        agent = Agent(llm=StaleTodoLLM(), tools=[EchoTool(), TodoTool()], max_rounds=6)
+        agent.chat("do a long task")
+
+        reminders = [m for m in agent.messages if m.get("content") == "<reminder>Update your todos.</reminder>"]
         self.assertEqual(len(reminders), 1)
+        transcript_reminders = [
+            m for m in agent.transcript
+            if m.get("content") == "<reminder>Update your todos.</reminder>"
+        ]
+        self.assertEqual(transcript_reminders, [])
 
     def test_agent_emits_todo_update_event(self):
         class TodoLLM:

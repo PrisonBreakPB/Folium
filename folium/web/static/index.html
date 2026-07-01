@@ -1247,6 +1247,8 @@ function applyUsageUpdate(raw) {
   usageState.cumulativeCompletion = usage.cumulative_completion_tokens || usageState.cumulativeCompletion + usage.completion_tokens;
   usageState.cumulativeCached = usageState.cumulativeCached + usage.cached_tokens;
   usageState.cumulativeCost = usage.cumulative_cost ?? addCost(usageState.cumulativeCost, usage.cost);
+  usageState.statsCost = null;
+  usageState.statsHitRate = 0;
   applyContextUpdate(raw, false);
   updateUsagePanel();
 }
@@ -1319,8 +1321,8 @@ function updateSessionStatsFromUsage() {
   const prompt = usageState.cumulativePrompt;
   const cached = usageState.cumulativeCached;
   const hitRate = prompt > 0 ? cached / prompt : 0;
-  setText('statsCost', formatCost(usageState.statsCost ?? usageState.cumulativeCost));
-  setText('statsHitRate', `${((usageState.statsHitRate || hitRate) * 100).toFixed(1)}%`);
+  setText('statsCost', formatCost(usageState.cumulativeCost));
+  setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
 }
 
 function applySessionStats(stats) {

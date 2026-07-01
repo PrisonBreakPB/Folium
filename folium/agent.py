@@ -496,9 +496,13 @@ class Agent:
             )
 
     def _inject_todo_reminder(self, on_event=None):
-        if not self.todo_manager or self.rounds_since_todo < 3:
+        if (
+            not self.todo_manager
+            or not self.todo_manager.snapshot()
+            or self.rounds_since_todo < 3
+        ):
             return
-        self._append_message({"role": "user", "content": TODO_REMINDER})
+        self.messages.append({"role": "user", "content": TODO_REMINDER})
         self.rounds_since_todo = 0
         self._emit_event(on_event, "todo_reminder", message=TODO_REMINDER)
 
