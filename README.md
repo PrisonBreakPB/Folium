@@ -271,6 +271,8 @@ conversations/traces/
 - `tool`：工具名称、参数、结果摘要、耗时、错误状态
 - `todo_update` / `todo_reminder`：todo 状态更新和自动提醒注入
 - `context_compression`：上下文压缩前后的 token 和消息数量
+- `llm_request_snapshot` / `llm_response_snapshot`：每次模型调用实际输入和模型响应快照
+- `context_snapshot`：上下文压缩前后的 `messages` 快照
 - `agent_result`：最终回复摘要、消息数量和上下文 token 估算
 
 可观测性配置：
@@ -281,11 +283,14 @@ FOLIUM_TRACE_MODE=all
 FOLIUM_TRACE_FULL_USER_INPUT=1
 FOLIUM_TRACE_FULL_LLM_INPUT=0
 FOLIUM_TRACE_FULL_LLM_OUTPUT=0
+FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS=0
 FOLIUM_TRACE_FULL_TOOL_ARGS=1
 FOLIUM_TRACE_FULL_TOOL_OUTPUT=0
 FOLIUM_TRACE_REDACT_SECRETS=1
 FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 ```
+
+默认 trace 只保存快照 preview、长度和 hash；打开 `FOLIUM_TRACE_FULL_LLM_INPUT`、`FOLIUM_TRACE_FULL_LLM_OUTPUT` 或 `FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS` 后，会把对应完整内容写入本地 trace 文件，适合调试但会显著增加文件体积。
 
 查看 trace：
 

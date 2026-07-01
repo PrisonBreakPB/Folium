@@ -108,6 +108,41 @@ class ObservabilityTests(unittest.TestCase):
                 ]
                 self.assertTrue(any(e.get("event") == "tool_result" for e in lines))
                 self.assertTrue(any(e.get("event") == "llm_result" for e in lines))
+                self.assertTrue(any(e.get("event") == "llm_request_snapshot" for e in lines))
+                self.assertTrue(any(e.get("event") == "llm_response_snapshot" for e in lines))
+                request = next(e for e in lines if e.get("event") == "llm_request_snapshot")
+                self.assertIn("preview", request["metadata"]["messages"])
+                self.assertNotIn("value", request["metadata"]["messages"])
+            finally:
+                _observer_var.reset(token)
+
+    def test_full_llm_snapshot_can_include_values(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            observer = Observer(ObservabilityConfig(
+                trace_dir=trace_dir,
+                full_llm_input=True,
+                full_llm_output=True,
+            ))
+            token = _observer_var.set(observer)
+            try:
+                agent = Agent(llm=NoToolLLM(), max_rounds=1)
+                self.assertEqual(agent.chat("hello"), "done")
+
+                traces = list_traces(trace_dir)
+                lines = [
+                    json.loads(line)
+                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
+                ]
+                request = next(e for e in lines if e.get("event") == "llm_request_snapshot")
+                response = next(e for e in lines if e.get("event") == "llm_response_snapshot")
+                self.assertIn("value", request["metadata"]["messages"])
+                self.assertIn("hello", request["metadata"]["messages"]["value"])
+                self.assertIn("value", response["metadata"]["assistant_message"])
+                self.assertIn("done", response["metadata"]["assistant_message"]["value"])
             finally:
                 _observer_var.reset(token)
 
@@ -151,6 +186,48 @@ class ObservabilityTests(unittest.TestCase):
                 self.assertTrue(events)
                 self.assertEqual(events[0]["metadata"]["layers"][0]["name"], "trim")
                 self.assertEqual(events[0]["metadata"]["layers"][0]["tools"][0]["tool_call_id"], "call_1")
+                snapshots = [e for e in lines if e.get("event") == "context_snapshot"]
+                self.assertTrue(snapshots)
+                self.assertIn("before", snapshots[0]["metadata"])
+                self.assertIn("after", snapshots[0]["metadata"])
+            finally:
+                _observer_var.reset(token)
+
+    def test_full_context_snapshot_can_include_before_after_values(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp)
+            observer = Observer(ObservabilityConfig(
+                trace_dir=trace_dir,
+                full_context_snapshots=True,
+            ))
+            token = _observer_var.set(observer)
+            try:
+                agent = Agent(llm=NoToolLLM(), max_rounds=1)
+                original = agent.context.maybe_compress
+
+                def fake_compress(messages, llm=None, real_tokens=None):
+                    messages[:] = [{"role": "user", "content": "compressed"}]
+                    return {"compressed": True, "layers": [{"name": "summarize", "changed": True}]}
+
+                agent.context.maybe_compress = fake_compress
+                try:
+                    self.assertEqual(agent.chat("hello"), "done")
+                finally:
+                    agent.context.maybe_compress = original
+
+                traces = list_traces(trace_dir)
+                lines = [
+                    json.loads(line)
+                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
+                ]
+                snapshot = next(e for e in lines if e.get("event") == "context_snapshot")
+                self.assertIn("value", snapshot["metadata"]["before"])
+                self.assertIn("hello", snapshot["metadata"]["before"]["value"])
+                self.assertIn("value", snapshot["metadata"]["after"])
+                self.assertIn("compressed", snapshot["metadata"]["after"]["value"])
             finally:
                 _observer_var.reset(token)
 

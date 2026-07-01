@@ -137,12 +137,16 @@ class Agent:
                 "message_count": len(self.messages),
                 "estimated_context_tokens": estimate_tokens(self.messages),
             }):
+                full_messages = self._full_messages()
+                tool_schemas = self._tool_schemas()
+                self._record_llm_request_snapshot(full_messages, tool_schemas, round_index)
                 resp = self.llm.chat(
-                    messages=self._full_messages(),
-                    tools=self._tool_schemas(),
+                    messages=full_messages,
+                    tools=tool_schemas,
                     on_token=on_token,
                 )
                 assistant_message = self._assistant_message(resp)
+                self._record_llm_response_snapshot(assistant_message, resp, round_index)
                 self._emit_usage(on_event, resp, round_index)
 
                 # no tool calls -> LLM is done, return text
@@ -443,6 +447,7 @@ class Agent:
         current_context_tokens = (confirmed_tokens + new_message_tokens) if confirmed_tokens > 0 else estimate_tokens(self.messages)
         before_tokens = current_context_tokens
         before_messages = len(self.messages)
+        before_snapshot = _copy_message_list(self.messages)
         with span("context_compression", "context", metadata={
             "trigger": trigger,
             "before_tokens": before_tokens,
@@ -450,6 +455,7 @@ class Agent:
         }):
             report = self.context.maybe_compress(self.messages, self.llm, real_tokens=current_context_tokens or None)
             if report["compressed"]:
+                self._record_context_snapshot(trigger, before_snapshot, report)
                 self._emit_event(
                     on_event,
                     "context_compress",
@@ -500,6 +506,84 @@ class Agent:
         self.messages.append(message)
         self.transcript.append(_copy_message(message))
 
+    def _record_llm_request_snapshot(self, messages: list[dict], tools: list[dict], round_index: int):
+        observer = active_observer()
+        cfg = observer.config
+        observer.record({
+            "event": "llm_request_snapshot",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "llm_request_snapshot",
+            "type": "llm",
+            "metadata": {
+                "round_index": round_index,
+                "messages": compact_payload(
+                    messages,
+                    include_full=cfg.full_llm_input,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+                "tools": compact_payload(
+                    tools,
+                    include_full=cfg.full_llm_input,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+            },
+        })
+
+    def _record_llm_response_snapshot(self, assistant_message: dict, resp: LLMResponse, round_index: int):
+        observer = active_observer()
+        cfg = observer.config
+        observer.record({
+            "event": "llm_response_snapshot",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "llm_response_snapshot",
+            "type": "llm",
+            "metadata": {
+                "round_index": round_index,
+                "assistant_message": compact_payload(
+                    assistant_message,
+                    include_full=cfg.full_llm_output,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+                "tool_call_count": len(resp.tool_calls),
+                "prompt_tokens": resp.prompt_tokens,
+                "completion_tokens": resp.completion_tokens,
+                "cached_tokens": resp.cached_tokens,
+            },
+        })
+
+    def _record_context_snapshot(self, trigger: str, before_messages: list[dict], report: dict):
+        observer = active_observer()
+        cfg = observer.config
+        include_full = cfg.full_context_snapshots
+        observer.record({
+            "event": "context_snapshot",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "context_snapshot",
+            "type": "context",
+            "metadata": {
+                "trigger": trigger,
+                "layers": report["layers"],
+                "before": compact_payload(
+                    before_messages,
+                    include_full=include_full,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+                "after": compact_payload(
+                    self.messages,
+                    include_full=include_full,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+            },
+        })
+
 
 def _status_from_tool_result(result: str) -> str:
     if result.startswith("Error: timed out") or "timed out after" in result:
@@ -537,3 +621,7 @@ def _model_message(message: dict) -> dict:
 
 def _copy_message(message: dict) -> dict:
     return copy.deepcopy(message)
+
+
+def _copy_message_list(messages: list[dict]) -> list[dict]:
+    return copy.deepcopy(messages)

@@ -22,6 +22,7 @@ class ObservabilityConfig:
     full_user_input: bool = True
     full_llm_input: bool = False
     full_llm_output: bool = False
+    full_context_snapshots: bool = False
     full_tool_args: bool = True
     full_tool_output: bool = False
     redact_secrets: bool = True
@@ -36,6 +37,7 @@ class ObservabilityConfig:
             full_user_input=_env_bool("FOLIUM_TRACE_FULL_USER_INPUT", True),
             full_llm_input=_env_bool("FOLIUM_TRACE_FULL_LLM_INPUT", False),
             full_llm_output=_env_bool("FOLIUM_TRACE_FULL_LLM_OUTPUT", False),
+            full_context_snapshots=_env_bool("FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS", False),
             full_tool_args=_env_bool("FOLIUM_TRACE_FULL_TOOL_ARGS", True),
             full_tool_output=_env_bool("FOLIUM_TRACE_FULL_TOOL_OUTPUT", False),
             redact_secrets=_env_bool("FOLIUM_TRACE_REDACT_SECRETS", True),

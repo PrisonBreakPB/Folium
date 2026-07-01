@@ -64,6 +64,9 @@ def _file_summary(path: Path, include_spans: bool = False) -> dict:
         "llm_calls": 0,
         "tool_calls": 0,
         "errors": 0,
+        "llm_request_snapshots": 0,
+        "llm_response_snapshots": 0,
+        "context_snapshots": 0,
         "session_id": None,
         "turn_index": None,
         "started_at": None,
@@ -102,6 +105,12 @@ def _file_summary(path: Path, include_spans: bool = False) -> dict:
                         "metadata": start.get("metadata", {}),
                         "error": event.get("error"),
                     })
+            elif event.get("event") == "llm_request_snapshot":
+                summary["llm_request_snapshots"] += 1
+            elif event.get("event") == "llm_response_snapshot":
+                summary["llm_response_snapshots"] += 1
+            elif event.get("event") == "context_snapshot":
+                summary["context_snapshots"] += 1
     if include_spans:
         summary["spans"] = spans
     return summary
