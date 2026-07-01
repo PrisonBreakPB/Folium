@@ -239,6 +239,60 @@ class ToolValidationTests(unittest.TestCase):
         self.assertIsNot(sub_todo.manager, agent.todo_manager)
         self.assertEqual(sub_todo.manager.snapshot(), [])
 
+    def test_agent_transcript_keeps_full_tool_output_after_context_trim(self):
+        long_output = "x" * 9000
+
+        class LongTool(Tool):
+            name = "long_tool"
+            description = "Return a long output."
+            parameters = {"type": "object", "properties": {}, "required": []}
+
+            def execute(self):
+                return long_output
+
+        class LongToolLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 1300000
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                if self.calls <= 3:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[ToolCall(id=f"call_{self.calls}", name="long_tool", arguments={})],
+                    )
+                return LLMResponse(content="done")
+
+        agent = Agent(
+            llm=LongToolLLM(),
+            tools=[LongTool()],
+            max_context_tokens=2_000_000,
+            max_rounds=4,
+        )
+        agent.chat("run long tool")
+
+        context_tool = next(
+            m for m in agent.messages
+            if m.get("role") == "tool" and m.get("tool_call_id") == "call_1"
+        )
+        transcript_tool = next(
+            m for m in agent.transcript
+            if m.get("role") == "tool" and m.get("tool_call_id") == "call_1"
+        )
+        self.assertIn("trimmed to save context", context_tool["content"])
+        self.assertEqual(transcript_tool["content"], long_output)
+
 
 if __name__ == "__main__":
     unittest.main()

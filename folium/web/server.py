@@ -68,7 +68,12 @@ def _auto_save():
     agent = _state["agent"]
     config = _state["config"]
     if agent and agent.messages and _state["dirty"]:
-        sid = save_session(agent.messages, config.model, _state["session_id"])
+        sid = save_session(
+            agent.messages,
+            config.model,
+            _state["session_id"],
+            transcript=getattr(agent, "transcript", agent.messages),
+        )
         _state["session_id"] = sid
         agent.session_id = sid
         _state["dirty"] = False
@@ -195,8 +200,9 @@ async def switch_conversation(req: SwitchRequest):
     if not loaded:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
-    messages, model = loaded
+    messages, model, transcript = loaded
     _state["agent"].messages = messages
+    _state["agent"].transcript = transcript
     _state["agent"].reset_todos()
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
@@ -222,7 +228,7 @@ async def switch_conversation(req: SwitchRequest):
     return {
         "result": f"Switched to {req.session_id}",
         "session_id": _state["session_id"],
-        "messages": repair_mojibake_payload(messages),
+        "messages": repair_mojibake_payload(transcript),
         "stats": stats,
         "context_budget": _context_budget_payload(),
     }

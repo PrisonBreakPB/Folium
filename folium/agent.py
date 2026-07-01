@@ -11,6 +11,7 @@ which means it's done working and ready to report back.
 
 import concurrent.futures
 import contextvars
+import copy
 import threading
 import time
 from dataclasses import dataclass
@@ -50,6 +51,7 @@ class Agent:
         self.llm = llm
         self.tools = tools if tools is not None else create_tools()
         self.messages: list[dict] = []
+        self.transcript: list[dict] = []
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
         self.max_bad_tool_calls = max_bad_tool_calls
@@ -122,7 +124,7 @@ class Agent:
             return result
 
     def _chat_impl(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
-        self.messages.append({"role": "user", "content": user_input})
+        self._append_message({"role": "user", "content": user_input})
         self._maybe_compress_observed("after_user_message", new_message_tokens=_approx_tokens(user_input))
         self._emit_context_update(on_event)
         bad_tool_calls = 0
@@ -145,16 +147,16 @@ class Agent:
 
                 # no tool calls -> LLM is done, return text
                 if not resp.tool_calls:
-                    self.messages.append(assistant_message)
                     self._attach_usage_context(assistant_message)
+                    self._append_message(assistant_message)
                     self._emit_context_update(on_event)
                     self._emit_event(on_event, "agent_status", message="Generating final response")
                     return resp.content
 
                 # tool calls -> execute (parallel when multiple, like Claude Code's
                 # StreamingToolExecutor which runs independent tools concurrently)
-                self.messages.append(assistant_message)
                 self._attach_usage_context(assistant_message)
+                self._append_message(assistant_message)
                 tool_tokens = 0
                 used_todo = False
 
@@ -167,7 +169,7 @@ class Agent:
                     if on_tool:
                         on_tool(tc.name, tc.arguments, result.status)
                     self._emit_tool_result(on_event, tc, result)
-                    self.messages.append({
+                    self._append_message({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": tc.name,
@@ -184,7 +186,7 @@ class Agent:
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
                     for tc, result in zip(resp.tool_calls, results):
                         self._emit_tool_result(on_event, tc, result)
-                        self.messages.append({
+                        self._append_message({
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "name": tc.name,
@@ -423,6 +425,7 @@ class Agent:
     def reset(self):
         """Clear conversation history and reset LLM cumulative counters."""
         self.messages.clear()
+        self.transcript.clear()
         self.llm.total_prompt_tokens = 0
         self.llm.total_completion_tokens = 0
         self.llm.total_cached_tokens = 0
@@ -489,9 +492,13 @@ class Agent:
     def _inject_todo_reminder(self, on_event=None):
         if not self.todo_manager or self.rounds_since_todo < 3:
             return
-        self.messages.append({"role": "user", "content": TODO_REMINDER})
+        self._append_message({"role": "user", "content": TODO_REMINDER})
         self.rounds_since_todo = 0
         self._emit_event(on_event, "todo_reminder", message=TODO_REMINDER)
+
+    def _append_message(self, message: dict):
+        self.messages.append(message)
+        self.transcript.append(_copy_message(message))
 
 
 def _status_from_tool_result(result: str) -> str:
@@ -526,3 +533,7 @@ def _preview_text(text: str, max_chars: int = 1200) -> str:
 def _model_message(message: dict) -> dict:
     allowed = {"role", "content", "tool_calls", "tool_call_id", "name"}
     return {k: v for k, v in message.items() if k in allowed}
+
+
+def _copy_message(message: dict) -> dict:
+    return copy.deepcopy(message)

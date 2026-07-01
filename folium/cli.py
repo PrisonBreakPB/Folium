@@ -77,7 +77,7 @@ def main():
     if args.resume:
         loaded = load_session(args.resume)
         if loaded:
-            agent.messages, loaded_model = loaded
+            agent.messages, loaded_model, agent.transcript = loaded
             agent.session_id = args.resume
             # restore the model from the saved session unless overridden by CLI
             if not args.model:
@@ -200,7 +200,7 @@ def _repl(agent: Agent, config: Config):
                 console.print(f"[dim]Nothing to compress ({before} tokens, {len(agent.messages)} messages)[/dim]")
             continue
         if user_input == "/save":
-            sid = save_session(agent.messages, config.model)
+            sid = save_session(agent.messages, config.model, transcript=agent.transcript)
             agent.session_id = sid
             console.print(f"[green]Session saved: {sid}[/green]")
             console.print(f"Resume with: folium -r {sid}")

@@ -11,6 +11,7 @@ from folium.web import server
 class DummyAgent:
     def __init__(self):
         self.messages = [{"role": "user", "content": "hello"}]
+        self.transcript = [{"role": "user", "content": "hello"}]
         self.session_id = None
         self.llm = DummyLLM()
         self.todo_manager = DummyTodoManager()
@@ -25,6 +26,7 @@ class DummyAgent:
 
     def reset(self):
         self.messages.clear()
+        self.transcript.clear()
         self.reset_todos()
 
     def reset_todos(self):
@@ -77,7 +79,9 @@ class WebServerSessionTests(unittest.TestCase):
                 server._auto_save()
 
                 path = Path(tmp) / "session_test.json"
-                first = json.loads(path.read_text(encoding="utf-8"))["updated_at"]
+                first_data = json.loads(path.read_text(encoding="utf-8"))
+                first = first_data["updated_at"]
+                self.assertEqual(first_data["transcript"], [{"role": "user", "content": "hello"}])
                 time.sleep(1.1)
 
                 server._auto_save()
@@ -146,9 +150,10 @@ class WebServerSessionTests(unittest.TestCase):
             try:
                 session_module.SESSIONS_DIR = Path(tmp)
                 session_module.save_session(
-                    [{"role": "user", "content": "saved"}],
+                    [{"role": "user", "content": "compressed"}],
                     "test-model",
                     "session_a",
+                    transcript=[{"role": "user", "content": "saved"}],
                 )
                 agent = DummyAgent()
                 agent.todo_manager.items = [
@@ -164,6 +169,9 @@ class WebServerSessionTests(unittest.TestCase):
                 resp = client.post("/switch", json={"session_id": "session_a"})
 
                 self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()["messages"], [{"role": "user", "content": "saved"}])
+                self.assertEqual(agent.messages, [{"role": "user", "content": "compressed"}])
+                self.assertEqual(agent.transcript, [{"role": "user", "content": "saved"}])
                 self.assertEqual(agent.todo_manager.snapshot(), [])
                 self.assertEqual(agent.rounds_since_todo, 0)
             finally:

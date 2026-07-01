@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+import copy
 from pathlib import Path
 from .encoding import repair_mojibake_text
 
@@ -42,7 +43,12 @@ def _session_path(session_id: str) -> Path:
     return path
 
 
-def save_session(messages: list[dict], model: str, session_id: str | None = None) -> str:
+def save_session(
+    messages: list[dict],
+    model: str,
+    session_id: str | None = None,
+    transcript: list[dict] | None = None,
+) -> str:
     """Save conversation to disk. Returns the session ID."""
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -58,6 +64,7 @@ def save_session(messages: list[dict], model: str, session_id: str | None = None
         "created_at": created_at,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "messages": messages,
+        "transcript": transcript if transcript is not None else messages,
     }
 
     path = _session_path(session_id)
@@ -76,12 +83,14 @@ def _load_raw(session_id: str) -> dict | None:
         return None
 
 
-def load_session(session_id: str) -> tuple[list[dict], str] | None:
-    """Load a saved session. Returns (messages, model) or None."""
+def load_session(session_id: str) -> tuple[list[dict], str, list[dict]] | None:
+    """Load a saved session. Returns (messages, model, transcript) or None."""
     data = _load_raw(session_id)
     if not data:
         return None
-    return data["messages"], data["model"]
+    messages = data["messages"]
+    transcript = data.get("transcript")
+    return messages, data["model"], transcript if transcript is not None else copy.deepcopy(messages)
 
 
 def delete_session(session_id: str) -> bool:
@@ -136,11 +145,12 @@ def list_sessions() -> list[dict]:
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             # skip empty/corrupt files
-            if not data.get("messages"):
+            transcript = data.get("transcript") or data.get("messages")
+            if not transcript:
                 continue
             # grab first user message as preview
             preview = ""
-            for m in data.get("messages", []):
+            for m in transcript:
                 if m.get("role") == "user" and m.get("content"):
                     preview = repair_mojibake_text(m["content"])[:80]
                     break
