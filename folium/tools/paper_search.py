@@ -54,12 +54,12 @@ class PaperSearchTool(Tool):
             "publication_type": {
                 "type": "string",
                 "enum": ["journal", "conference", "repository", "book-series", "platform"],
-                "description": "Filter by source type: journal for期刊, conference for会议",
+                "description": "Filter by source type (default: journal, only期刊论文)",
             },
             "language": {
                 "type": "string",
                 "enum": ["en", "zh", "de", "fr", "ja"],
-                "description": "Filter by language: en=English, zh=Chinese, etc.",
+                "description": "Filter by language (default: en, English only)",
             },
         },
         "required": ["query"],
