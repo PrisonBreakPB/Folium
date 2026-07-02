@@ -1,4 +1,4 @@
-"""OpenAlex academic paper search tool."""
+"""Academic paper search tool (powered by OpenAlex)."""
 
 import json
 import os
@@ -13,7 +13,7 @@ DEFAULT_RESULTS = 5
 MAX_RESULTS = 20
 
 
-class OpenAlexSearchTool(Tool):
+class PaperSearchTool(Tool):
     name = "paper_search"
     description = (
         "Search academic papers via OpenAlex. Returns title, authors, year, "

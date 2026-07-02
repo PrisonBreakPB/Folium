@@ -2,13 +2,13 @@ import json
 import unittest
 from unittest.mock import patch, MagicMock
 
-from folium.tools.openalex import OpenAlexSearchTool, _format_authors
+from folium.tools.paper_search import PaperSearchTool, _format_authors
 from folium.tools.base import ToolValidationError
 
 
-class OpenAlexSchemaTests(unittest.TestCase):
+class PaperSearchSchemaTests(unittest.TestCase):
     def setUp(self):
-        self.tool = OpenAlexSearchTool()
+        self.tool = PaperSearchTool()
 
     def test_name_and_description(self):
         self.assertEqual(self.tool.name, "paper_search")
@@ -95,11 +95,11 @@ MOCK_RESPONSE = {
 }
 
 
-class OpenAlexExecuteTests(unittest.TestCase):
+class PaperSearchExecuteTests(unittest.TestCase):
     def setUp(self):
-        self.tool = OpenAlexSearchTool()
+        self.tool = PaperSearchTool()
 
-    @patch("folium.tools.openalex.urllib.request.urlopen")
+    @patch("folium.tools.paper_search.urllib.request.urlopen")
     def test_returns_formatted_results(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(MOCK_RESPONSE).encode("utf-8")
@@ -116,7 +116,7 @@ class OpenAlexExecuteTests(unittest.TestCase):
         self.assertIn("arxiv.org/pdf", result)
         self.assertIn("BERT", result)
 
-    @patch("folium.tools.openalex.urllib.request.urlopen")
+    @patch("folium.tools.paper_search.urllib.request.urlopen")
     def test_empty_results(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps({"results": []}).encode("utf-8")
@@ -131,7 +131,7 @@ class OpenAlexExecuteTests(unittest.TestCase):
         result = self.tool.execute(query="   ")
         self.assertIn("Error", result)
 
-    @patch("folium.tools.openalex.urllib.request.urlopen")
+    @patch("folium.tools.paper_search.urllib.request.urlopen")
     def test_sort_citations(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(MOCK_RESPONSE).encode("utf-8")

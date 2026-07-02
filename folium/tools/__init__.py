@@ -10,7 +10,7 @@ from .agent import AgentTool
 from .todo import TodoTool
 from .web import WebFetchTool, WebSearchTool
 from .pdf import PdfFetchTool
-from .openalex import OpenAlexSearchTool
+from .paper_search import PaperSearchTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -24,7 +24,7 @@ ALL_TOOLS = [
     WebSearchTool(),
     WebFetchTool(),
     PdfFetchTool(),
-    OpenAlexSearchTool(),
+    PaperSearchTool(),
 ]
 
 
@@ -42,7 +42,7 @@ def create_tools():
         WebSearchTool(),
         WebFetchTool(),
         PdfFetchTool(),
-        OpenAlexSearchTool(),
+        PaperSearchTool(),
     ]
 
 
