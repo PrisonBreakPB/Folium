@@ -16,30 +16,33 @@ MAX_ABSTRACT_CHARS = 1200
 
 # Control theory core journals (OpenAlex source IDs)
 _CONTROL_JOURNALS = {
-    "S51360982",    # Automatica
-    "S184954342",   # IEEE Transactions on Automatic Control
-    "S56603566",    # Systems & Control Letters
-    "S76152103",    # IEEE Transactions on Systems Man and Cybernetics
-    "S4210191041",  # IEEE Transactions on Cybernetics
-    "S34881539",    # IEEE Transactions on Automation Science and Engineering
-    "S4210175523",  # IEEE Transactions on Neural Networks and Learning Systems
-    "S134177497",   # IEEE Transactions on Fuzzy Systems
-    "S58031724",    # IEEE Transactions on Industrial Electronics
-    "S133363738",   # IEEE Transactions on Control Systems Technology
-    "S193624734",   # IEEE Transactions on Aerospace and Electronic Systems
-    "S10936095",    # IEEE Transactions on Vehicular Technology
-    "S2502544478",  # IEEE Transactions on Control of Network Systems
-    "S184777250",   # IEEE Transactions on Industrial Informatics
-    "S144771191",   # IEEE Transactions on Intelligent Transportation Systems
-    "S93916849",    # IEEE Transactions on Circuits & Systems II Express Briefs
-    "S2484352698",  # IEEE Transactions on Network Science and Engineering
-    "S116977442",   # IEEE Transactions on Circuits and Systems I Regular Papers
-    "S4210199657",  # IEEE Transactions on Intelligent Vehicles
-    "S4210201610",  # IEEE Transactions on Systems Man and Cybernetics - Part A
-    "S138681734",   # Nonlinear Dynamics
-    "S183498172",   # Journal of the Franklin Institute
-    "S45693802",    # Neurocomputing
-    "S155844508",   # ISA Transactions
+    "automatica": "S51360982",
+    "ieee_tac": "S184954342",
+    "systems_control_letters": "S56603566",
+    "ieee_tsmc": "S76152103",
+    "ieee_cybernetics": "S4210191041",
+    "ieee_tase": "S34881539",
+    "ieee_tnnls": "S4210175523",
+    "ieee_fuzzy": "S134177497",
+    "ieee_tie": "S58031724",
+    "ieee_tcst": "S133363738",
+    "ieee_aes": "S193624734",
+    "ieee_tvt": "S10936095",
+    "ieee_tcns": "S2502544478",
+    "ieee_tii": "S184777250",
+    "ieee_tits": "S144771191",
+    "ieee_cas2": "S93916849",
+    "ieee_tnse": "S2484352698",
+    "ieee_cas1": "S116977442",
+    "ieee_tiv": "S4210199657",
+    "ieee_tsmca": "S4210201610",
+    "nonlinear_dynamics": "S138681734",
+    "franklin_institute": "S183498172",
+    "neurocomputing": "S45693802",
+    "isa_transactions": "S155844508",
+    "ieee_csm": "S4210208367",
+    "siam_sicon": "S897311980",
+    "annual_reviews_control": "S54761077",
 }
 
 
@@ -79,6 +82,11 @@ class PaperSearchTool(Tool):
                 "enum": ["journal", "conference", "repository", "book-series", "platform"],
                 "description": "Filter by source type (default: journal, only期刊论文)",
             },
+            "journal": {
+                "type": "string",
+                "enum": ["core", *_CONTROL_JOURNALS.keys()],
+                "description": "Limit to one journal by slug, or core (default) for all configured core control journals",
+            },
             "language": {
                 "type": "string",
                 "enum": ["en", "zh", "de", "fr", "ja"],
@@ -90,7 +98,7 @@ class PaperSearchTool(Tool):
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
                 year_from: int = None, year_to: int = None, publication_type: str = None,
-                language: str = None) -> str:
+                language: str = None, journal: str = "core") -> str:
         query = query.strip()
         if not query:
             return "Error: query is required"
@@ -120,9 +128,8 @@ class PaperSearchTool(Tool):
         # Build filter parameter
         filters = []
 
-        # Default: only search control theory core journals
-        if _CONTROL_JOURNALS:
-            journal_ids = "|".join(_CONTROL_JOURNALS)
+        journal_ids = _journal_source_filter(journal)
+        if journal_ids:
             filters.append(f"primary_location.source.id:{journal_ids}")
 
         if year_from and year_to:
@@ -230,6 +237,12 @@ def _format_type(pub_type: str) -> str:
         "preprint": "Preprint",
     }
     return type_map.get(pub_type, pub_type or "Unknown")
+
+
+def _journal_source_filter(journal: str | None) -> str:
+    if not journal or journal == "core":
+        return "|".join(_CONTROL_JOURNALS.values())
+    return _CONTROL_JOURNALS.get(journal, "|".join(_CONTROL_JOURNALS.values()))
 
 
 def _format_abstract(abstract_index) -> str:
