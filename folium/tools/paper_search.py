@@ -12,6 +12,13 @@ OPENALEX_API = "https://api.openalex.org/works"
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 20
 
+# Control theory core journals (OpenAlex source IDs)
+_CONTROL_JOURNALS = {
+    "S51360982",    # Automatica
+    "S184954342",   # IEEE Transactions on Automatic Control
+    "S56603566",    # Systems & Control Letters
+}
+
 
 class PaperSearchTool(Tool):
     name = "paper_search"
@@ -76,6 +83,12 @@ class PaperSearchTool(Tool):
 
         # Build filter parameter
         filters = []
+
+        # Default: only search control theory core journals
+        if _CONTROL_JOURNALS:
+            journal_ids = "|".join(_CONTROL_JOURNALS)
+            filters.append(f"primary_location.source.id:{journal_ids}")
+
         if year_from and year_to:
             filters.append(f"publication_year:{year_from}-{year_to}")
         elif year_from:
