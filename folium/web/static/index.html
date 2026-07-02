@@ -408,6 +408,51 @@ body {
   border-radius: 8px;
 }
 
+.msg h2, .msg h3, .msg h4 {
+  margin: 12px 0 6px;
+  font-weight: 650;
+  color: var(--text);
+}
+.msg h2 { font-size: 16px; }
+.msg h3 { font-size: 15px; }
+.msg h4 { font-size: 14px; }
+
+.msg strong {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.msg code {
+  background: var(--code-bg);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+}
+
+.msg pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.msg pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.msg ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.msg li {
+  margin: 3px 0;
+}
+
 .msg.process {
   align-self: flex-start;
   width: min(920px, 88%);
@@ -633,6 +678,13 @@ body {
 .input-wrapper {
   flex: 1;
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-wrapper textarea {
+  flex: 1;
+  width: 100%;
 }
 
 .skill-autocomplete {
@@ -1121,10 +1173,43 @@ function updateAutocompleteSelection(items) {
 function appendMsg(role, text) {
   const div = document.createElement('div');
   div.className = `msg ${role}`;
-  div.textContent = normalizeText(text);
+  if (role === 'assistant' || role === 'system') {
+    div.innerHTML = renderMarkdown(normalizeText(text));
+  } else {
+    div.textContent = normalizeText(text);
+  }
   messagesEl.appendChild(div);
   scrollToBottom();
   return div;
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = text
+    // Escape HTML
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Code blocks
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Bold
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    // Headers
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
+    // Unordered lists
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    // Ordered lists
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    // Line breaks
+    .replace(/\n/g, '<br>');
+  return html;
 }
 
 function ensureProcess(container) {
