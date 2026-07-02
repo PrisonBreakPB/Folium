@@ -6,6 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 
 from .base import Tool
 
@@ -19,8 +20,8 @@ class ArxivSearchTool(Tool):
     name = "arxiv_search"
     description = (
         "Search arXiv preprints (physics, math, CS, etc.). Returns title, "
-        "authors, abstract, and PDF link. Use for preprints, latest research, "
-        "or when paper_search has no results."
+        "authors, abstract, and PDF link. Default: last 1 year only. "
+        "Use for latest preprints or when paper_search has no results."
     )
     parameters = {
         "type": "object",
@@ -42,12 +43,17 @@ class ArxivSearchTool(Tool):
         "required": ["query"],
     }
 
-    def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance") -> str:
+    def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
+                year_from: int = None, year_to: int = None) -> str:
         query = query.strip()
         if not query:
             return "Error: query is required"
 
         count = max(1, min(int(max_results or DEFAULT_RESULTS), MAX_RESULTS))
+
+        # Default: only papers from last year
+        if year_from is None:
+            year_from = (datetime.now() - timedelta(days=365)).year
 
         sort_map = {
             "relevance": "relevance",
@@ -55,10 +61,13 @@ class ArxivSearchTool(Tool):
         }
         sort_param = sort_map.get(sort, "relevance")
 
+        # Request more results to account for client-side filtering
+        request_count = min(count * 3, 100)
+
         params = urllib.parse.urlencode({
             "search_query": f"all:{query}",
             "start": 0,
-            "max_results": count,
+            "max_results": request_count,
             "sortBy": sort_param,
             "sortOrder": "descending",
         })
@@ -89,8 +98,26 @@ class ArxivSearchTool(Tool):
         if not entries:
             return f"No arXiv papers found for: {query}"
 
+        # Client-side year filtering
+        filtered = []
+        for entry in entries:
+            published = _text(entry, "atom:published", "")
+            if published:
+                try:
+                    year = int(published[:4])
+                    if year_from and year < year_from:
+                        continue
+                    if year_to and year > year_to:
+                        continue
+                except ValueError:
+                    pass
+            filtered.append(entry)
+
+        if not filtered:
+            return f"No arXiv papers found for: {query} (after year filter)"
+
         lines = [f"arXiv papers for: {query}", ""]
-        for i, entry in enumerate(entries[:count], 1):
+        for i, entry in enumerate(filtered[:count], 1):
             title = _text(entry, "atom:title", "").replace("\n", " ").strip()
             summary = _text(entry, "atom:summary", "").replace("\n", " ").strip()
             published = _text(entry, "atom:published", "")[:10]
