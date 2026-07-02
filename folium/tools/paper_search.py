@@ -40,7 +40,8 @@ class PaperSearchTool(Tool):
             },
             "sort": {
                 "type": "string",
-                "description": "Sort order: relevance (default), citations, or date",
+                "enum": ["relevance", "citations", "date"],
+                "description": "Sort order: relevance (default), citations (高引用), date (最新)",
             },
             "year_from": {
                 "type": "integer",
