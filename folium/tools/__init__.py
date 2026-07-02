@@ -11,6 +11,7 @@ from .todo import TodoTool
 from .web import WebFetchTool, WebSearchTool
 from .pdf import PdfFetchTool
 from .paper_search import PaperSearchTool
+from .arxiv_search import ArxivSearchTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -25,6 +26,7 @@ ALL_TOOLS = [
     WebFetchTool(),
     PdfFetchTool(),
     PaperSearchTool(),
+    ArxivSearchTool(),
 ]
 
 
@@ -43,6 +45,7 @@ def create_tools():
         WebFetchTool(),
         PdfFetchTool(),
         PaperSearchTool(),
+        ArxivSearchTool(),
     ]
 
 
