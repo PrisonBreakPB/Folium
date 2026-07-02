@@ -39,6 +39,7 @@ _CONTROL_JOURNALS = {
     "S138681734",   # Nonlinear Dynamics
     "S183498172",   # Journal of the Franklin Institute
     "S45693802",    # Neurocomputing
+    "S155844508",   # ISA Transactions
 }
 
 
