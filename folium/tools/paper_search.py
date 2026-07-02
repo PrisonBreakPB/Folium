@@ -66,11 +66,17 @@ class PaperSearchTool(Tool):
     }
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
-                year_from: int = None, year_to: int = None, publication_type: str = "journal",
-                language: str = "en") -> str:
+                year_from: int = None, year_to: int = None, publication_type: str = None,
+                language: str = None) -> str:
         query = query.strip()
         if not query:
             return "Error: query is required"
+
+        # Apply defaults when not provided
+        if publication_type is None:
+            publication_type = "journal"
+        if language is None:
+            language = "en"
 
         count = max(1, min(int(max_results or DEFAULT_RESULTS), MAX_RESULTS))
 
