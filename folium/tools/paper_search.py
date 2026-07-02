@@ -55,12 +55,18 @@ class PaperSearchTool(Tool):
                 "enum": ["journal", "conference", "repository", "book-series", "platform"],
                 "description": "Filter by source type: journal for期刊, conference for会议",
             },
+            "language": {
+                "type": "string",
+                "enum": ["en", "zh", "de", "fr", "ja"],
+                "description": "Filter by language: en=English, zh=Chinese, etc.",
+            },
         },
         "required": ["query"],
     }
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
-                year_from: int = None, year_to: int = None, publication_type: str = "journal") -> str:
+                year_from: int = None, year_to: int = None, publication_type: str = "journal",
+                language: str = "en") -> str:
         query = query.strip()
         if not query:
             return "Error: query is required"
@@ -100,6 +106,9 @@ class PaperSearchTool(Tool):
             # OpenAlex uses primary_location.source.type for journal/conference filtering
             # Common values: journal, repository, conference, book-series, platform
             filters.append(f"primary_location.source.type:{publication_type}")
+
+        if language:
+            filters.append(f"language:{language}")
 
         if filters:
             params["filter"] = ",".join(filters)
