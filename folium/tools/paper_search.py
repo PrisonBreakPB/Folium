@@ -16,13 +16,9 @@ MAX_RESULTS = 20
 class PaperSearchTool(Tool):
     name = "paper_search"
     description = (
-        "Search academic papers and scholarly literature via OpenAlex. "
-        "Returns title, authors, year, citation count, venue, DOI, and PDF link. "
-        "Use this for research topics, literature reviews, finding papers, or "
-        "academic questions. Do NOT use for general web searches. "
-        "IMPORTANT: Only supports English queries. Translate Chinese topics to English first. "
-        "Use year_from/year_to to filter by publication year (e.g., year_from=2023, year_to=2025). "
-        "Use publication_type='journal-article' to get only journal papers."
+        "Search academic papers via OpenAlex. Returns title, authors, year, "
+        "citations, venue, DOI, and PDF link. Use for literature search, "
+        "finding papers, or research questions. Do NOT use for general web searches."
     )
     parameters = {
         "type": "object",

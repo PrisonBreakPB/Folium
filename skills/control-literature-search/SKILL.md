@@ -18,6 +18,30 @@ Use this skill to turn a broad control-theory research question into a traceable
 7. Produce a candidate paper table with confirmed fields and missing fields.
 8. Mark which candidates need metadata completion by arXiv, Crossref, or DOI lookup.
 
+## paper_search Usage
+
+The `paper_search` tool only supports English queries. Translate Chinese topics to English before searching.
+
+Available parameters:
+- `query` (required): Search keywords
+- `max_results`: Number of results (default 5, max 20)
+- `sort`: Sort order — `relevance` (default), `citations`, `date`
+- `year_from`: Filter papers from this year (inclusive)
+- `year_to`: Filter papers up to this year (inclusive)
+- `publication_type`: Filter by source type — `journal`, `conference`, `repository`
+
+Examples:
+```python
+# Basic search
+paper_search(query="event-triggered control multi-agent")
+
+# Filter by year and type
+paper_search(query="DoS attack consensus", year_from=2023, year_to=2025, publication_type="journal")
+
+# Sort by citations
+paper_search(query="Lyapunov stability networked", sort="citations", max_results=10)
+```
+
 ## Keyword Expansion
 
 Expand the user's wording before searching. Keep the expansion focused on the actual topic.
