@@ -189,6 +189,15 @@ async def get_todos():
     return _todo_payload()
 
 
+@app.get("/skills")
+async def get_skills():
+    agent = _state.get("agent")
+    if not agent:
+        return {"skills": []}
+    skills = getattr(agent, "skills", [])
+    return {"skills": [{"name": s.name, "description": s.description} for s in skills]}
+
+
 @app.post("/switch")
 async def switch_conversation(req: SwitchRequest):
     if _chat_lock.locked():

@@ -21,9 +21,9 @@ HTML_SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "header", "footer
 class WebSearchTool(Tool):
     name = "web_search"
     description = (
-        "Search the web for recent or external information. Returns structured "
-        "results with title, URL, content snippet, and an AI-generated answer "
-        "summary when available."
+        "Search the general web for news, blogs, documentation, tutorials, or "
+        "non-academic content. Returns title, URL, and content snippet. "
+        "Do NOT use this for academic paper searches — use paper_search instead."
     )
     parameters = {
         "type": "object",

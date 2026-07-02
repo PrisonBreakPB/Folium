@@ -12,6 +12,7 @@ which means it's done working and ready to report back.
 import concurrent.futures
 import contextvars
 import copy
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -78,6 +79,28 @@ class Agent:
     def _tool_schemas(self) -> list[dict]:
         return [t.schema() for t in self.tools]
 
+    def _try_activate_skill(self, user_input: str) -> str:
+        """Check for /skill-name prefix and inject full SKILL.md content if found."""
+        match = re.match(r"^/([\w][\w-]*)\s*(.*)", user_input, re.DOTALL)
+        if not match:
+            return user_input
+
+        skill_name, remaining = match.groups()
+        skill = next((s for s in self.skills if s.name == skill_name), None)
+        if not skill:
+            return user_input
+
+        try:
+            content = skill.skill_file.read_text(encoding="utf-8")
+        except OSError:
+            return user_input
+
+        return (
+            f"[Activated skill: {skill_name}]\n"
+            f"{content}\n\n"
+            f"[User request]\n{remaining}"
+        )
+
     def chat(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
         """Process one user message. May involve multiple LLM/tool rounds."""
         self.turn_index += 1
@@ -124,6 +147,7 @@ class Agent:
             return result
 
     def _chat_impl(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
+        user_input = self._try_activate_skill(user_input)
         self._append_message({"role": "user", "content": user_input})
         self._maybe_compress_observed("after_user_message", new_message_tokens=_approx_tokens(user_input))
         self._emit_context_update(on_event)

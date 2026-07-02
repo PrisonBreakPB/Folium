@@ -630,6 +630,57 @@ body {
 .input-area button:hover { background: var(--accent-hover); }
 .input-area button:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.input-wrapper {
+  flex: 1;
+  position: relative;
+}
+
+.skill-autocomplete {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+  z-index: 100;
+}
+
+.skill-autocomplete.visible { display: block; }
+
+.skill-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  transition: background 0.12s ease;
+}
+
+.skill-item:hover,
+.skill-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.skill-item-name {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.skill-item-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 780px) {
   body { flex-direction: column; }
   .sidebar {
@@ -739,7 +790,10 @@ body {
   <div class="messages" id="messages"></div>
 
   <div class="input-area">
-    <textarea id="input" placeholder="输入你的科研任务、代码问题或实验想法..." rows="1"></textarea>
+    <div class="input-wrapper">
+      <div class="skill-autocomplete" id="skillAutocomplete"></div>
+      <textarea id="input" placeholder="输入你的科研任务、代码问题或实验想法..." rows="1"></textarea>
+    </div>
     <button id="sendBtn" onclick="sendMessage()">发送</button>
   </div>
 </main>
@@ -757,6 +811,8 @@ let busy = false;
 const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
 const DEFAULT_RESERVED_OUTPUT_TOKENS = 20000;
 let usageState = emptyUsageState();
+let availableSkills = [];
+let skillAutocompleteIndex = -1;
 
 const STATUS_LABELS = {
   ok: '完成',
@@ -789,9 +845,20 @@ async function init() {
   } catch (e) {
     document.getElementById('modelInfo').textContent = '模型信息加载失败';
   }
+  loadSkills();
   loadConversations();
   refreshTodos();
   updateUsagePanel();
+}
+
+async function loadSkills() {
+  try {
+    const resp = await fetch('/skills');
+    const data = await resp.json();
+    availableSkills = data.skills || [];
+  } catch (e) {
+    availableSkills = [];
+  }
 }
 
 async function loadConversations() {
@@ -956,6 +1023,31 @@ function renderTodos(items) {
 }
 
 inputEl.addEventListener('keydown', e => {
+  const ac = document.getElementById('skillAutocomplete');
+  if (ac.classList.contains('visible')) {
+    const items = ac.querySelectorAll('.skill-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      skillAutocompleteIndex = Math.min(skillAutocompleteIndex + 1, items.length - 1);
+      updateAutocompleteSelection(items);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      skillAutocompleteIndex = Math.max(skillAutocompleteIndex - 1, 0);
+      updateAutocompleteSelection(items);
+      return;
+    }
+    if (e.key === 'Enter' && skillAutocompleteIndex >= 0) {
+      e.preventDefault();
+      selectSkill(items[skillAutocompleteIndex].dataset.name);
+      return;
+    }
+    if (e.key === 'Escape') {
+      hideAutocomplete();
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
@@ -965,7 +1057,66 @@ inputEl.addEventListener('keydown', e => {
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 128) + 'px';
+  handleSkillAutocomplete();
 });
+
+function handleSkillAutocomplete() {
+  const text = inputEl.value;
+  const match = text.match(/^\/([\w-]*)/);
+  if (match) {
+    const query = match[1].toLowerCase();
+    const matches = availableSkills.filter(s => s.name.toLowerCase().includes(query));
+    if (matches.length > 0) {
+      showAutocomplete(matches);
+    } else {
+      hideAutocomplete();
+    }
+  } else {
+    hideAutocomplete();
+  }
+}
+
+function showAutocomplete(skills) {
+  const ac = document.getElementById('skillAutocomplete');
+  ac.innerHTML = skills.map((s, i) => `
+    <div class="skill-item${i === 0 ? ' active' : ''}" data-name="${s.name}">
+      <div class="skill-item-name">/${s.name}</div>
+      <div class="skill-item-desc">${s.description}</div>
+    </div>
+  `).join('');
+  ac.classList.add('visible');
+  skillAutocompleteIndex = 0;
+
+  ac.querySelectorAll('.skill-item').forEach(item => {
+    item.addEventListener('click', () => selectSkill(item.dataset.name));
+    item.addEventListener('mouseenter', () => {
+      ac.querySelectorAll('.skill-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      skillAutocompleteIndex = [...ac.querySelectorAll('.skill-item')].indexOf(item);
+    });
+  });
+}
+
+function hideAutocomplete() {
+  const ac = document.getElementById('skillAutocomplete');
+  ac.classList.remove('visible');
+  skillAutocompleteIndex = -1;
+}
+
+function selectSkill(name) {
+  const text = inputEl.value;
+  const rest = text.replace(/^\/[\w-]*\s*/, '');
+  inputEl.value = `/${name} ${rest}`;
+  hideAutocomplete();
+  inputEl.focus();
+}
+
+function updateAutocompleteSelection(items) {
+  items.forEach((item, i) => {
+    item.classList.toggle('active', i === skillAutocompleteIndex);
+  });
+  items[skillAutocompleteIndex]?.scrollIntoView({ block: 'nearest' });
+}
 
 function appendMsg(role, text) {
   const div = document.createElement('div');
