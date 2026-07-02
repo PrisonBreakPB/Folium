@@ -1212,8 +1212,8 @@ function renderMarkdown(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    // Tables (more robust regex)
-    .replace(/^(\|.+\|)\s*\n(\|[\s\-:|]+\|)\s*\n((?:\|.+\|\s*\n?)+)/gm, function(match, header, sep, body) {
+    // Tables (match header, separator, and body)
+    .replace(/^(\|.+\|)\s*\n(\|[-\s|:]+\|)\s*\n((?:\|.+\|\s*\n?)+)/gm, function(match, header, sep, body) {
       const headers = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
       const rows = body.trim().split('\n').filter(r => r.trim()).map(row => {
         const cells = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');
