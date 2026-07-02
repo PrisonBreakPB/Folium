@@ -49,7 +49,8 @@ class PaperSearchTool(Tool):
             },
             "publication_type": {
                 "type": "string",
-                "description": "Filter by source type: journal, conference, repository, book-series, platform",
+                "enum": ["journal", "conference", "repository", "book-series", "platform"],
+                "description": "Filter by source type: journal for期刊, conference for会议",
             },
         },
         "required": ["query"],
