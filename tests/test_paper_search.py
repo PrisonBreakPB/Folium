@@ -29,6 +29,11 @@ class PaperSearchSchemaTests(unittest.TestCase):
         result = self.tool.validate_arguments(args)
         self.assertEqual(result, args)
 
+    def test_filter_arguments(self):
+        args = {"query": "test", "year_from": 2023, "year_to": 2025, "publication_type": "journal"}
+        result = self.tool.validate_arguments(args)
+        self.assertEqual(result, args)
+
     def test_unknown_field_rejected(self):
         with self.assertRaises(ToolValidationError):
             self.tool.validate_arguments({"query": "test", "unknown": "value"})

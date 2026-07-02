@@ -20,7 +20,9 @@ class PaperSearchTool(Tool):
         "Returns title, authors, year, citation count, venue, DOI, and PDF link. "
         "Use this for research topics, literature reviews, finding papers, or "
         "academic questions. Do NOT use for general web searches. "
-        "IMPORTANT: Only supports English queries. Translate Chinese topics to English first."
+        "IMPORTANT: Only supports English queries. Translate Chinese topics to English first. "
+        "Use year_from/year_to to filter by publication year (e.g., year_from=2023, year_to=2025). "
+        "Use publication_type='journal-article' to get only journal papers."
     )
     parameters = {
         "type": "object",
@@ -37,11 +39,24 @@ class PaperSearchTool(Tool):
                 "type": "string",
                 "description": "Sort order: relevance (default), citations, or date",
             },
+            "year_from": {
+                "type": "integer",
+                "description": "Filter papers published from this year (inclusive), e.g., 2023",
+            },
+            "year_to": {
+                "type": "integer",
+                "description": "Filter papers published up to this year (inclusive), e.g., 2025",
+            },
+            "publication_type": {
+                "type": "string",
+                "description": "Filter by source type: journal, conference, repository, book-series, platform",
+            },
         },
         "required": ["query"],
     }
 
-    def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance") -> str:
+    def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
+                year_from: int = None, year_to: int = None, publication_type: str = None) -> str:
         query = query.strip()
         if not query:
             return "Error: query is required"
@@ -59,8 +74,25 @@ class PaperSearchTool(Tool):
             "search": query,
             "sort": sort_param,
             "per-page": count,
-            "select": "title,authorships,publication_year,cited_by_count,doi,open_access,primary_location",
+            "select": "title,authorships,publication_year,cited_by_count,doi,open_access,primary_location,type",
         }
+
+        # Build filter parameter
+        filters = []
+        if year_from and year_to:
+            filters.append(f"publication_year:{year_from}-{year_to}")
+        elif year_from:
+            filters.append(f"publication_year:{year_from}-")
+        elif year_to:
+            filters.append(f"publication_year:-{year_to}")
+
+        if publication_type:
+            # OpenAlex uses primary_location.source.type for journal/conference filtering
+            # Common values: journal, repository, conference, book-series, platform
+            filters.append(f"primary_location.source.type:{publication_type}")
+
+        if filters:
+            params["filter"] = ",".join(filters)
 
         api_key = os.getenv("OPENALEX_API_KEY", "").strip()
         if api_key:
@@ -100,6 +132,7 @@ class PaperSearchTool(Tool):
             year = work.get("publication_year") or "Unknown"
             cited = work.get("cited_by_count", 0)
             doi = work.get("doi") or ""
+            pub_type = _format_type(work.get("type") or "")
 
             authors = _format_authors(work.get("authorships") or [])
 
@@ -112,7 +145,7 @@ class PaperSearchTool(Tool):
 
             lines.append(f"{i}. {title}")
             lines.append(f"   Authors: {authors}")
-            lines.append(f"   Year: {year} | Citations: {cited}")
+            lines.append(f"   Year: {year} | Citations: {cited} | Type: {pub_type}")
             if venue:
                 lines.append(f"   Venue: {venue}")
             if doi:
@@ -133,3 +166,15 @@ def _format_authors(authorships: list) -> str:
     if len(authorships) > 5:
         names.append(f"et al. ({len(authorships)} total)")
     return ", ".join(names)
+
+
+def _format_type(pub_type: str) -> str:
+    type_map = {
+        "journal-article": "Journal",
+        "proceedings-article": "Conference",
+        "book-chapter": "Book Chapter",
+        "book": "Book",
+        "dataset": "Dataset",
+        "preprint": "Preprint",
+    }
+    return type_map.get(pub_type, pub_type or "Unknown")
