@@ -65,6 +65,7 @@ class ToolValidationTests(unittest.TestCase):
             "web_search": {"query": "agent context compression"},
             "web_fetch": {"url": "https://example.com"},
             "pdf_fetch": {"url": "https://example.com/paper.pdf"},
+            "paper_search": {"query": "machine learning"},
         }
 
         for tool in ALL_TOOLS:
