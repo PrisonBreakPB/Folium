@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,12 +12,30 @@ from .base import Tool
 OPENALEX_API = "https://api.openalex.org/works"
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 20
+MAX_ABSTRACT_CHARS = 1200
 
 # Control theory core journals (OpenAlex source IDs)
 _CONTROL_JOURNALS = {
     "S51360982",    # Automatica
     "S184954342",   # IEEE Transactions on Automatic Control
     "S56603566",    # Systems & Control Letters
+    "S76152103",    # IEEE Transactions on Systems Man and Cybernetics
+    "S4210191041",  # IEEE Transactions on Cybernetics
+    "S34881539",    # IEEE Transactions on Automation Science and Engineering
+    "S4210175523",  # IEEE Transactions on Neural Networks and Learning Systems
+    "S134177497",   # IEEE Transactions on Fuzzy Systems
+    "S58031724",    # IEEE Transactions on Industrial Electronics
+    "S133363738",   # IEEE Transactions on Control Systems Technology
+    "S193624734",   # IEEE Transactions on Aerospace and Electronic Systems
+    "S10936095",    # IEEE Transactions on Vehicular Technology
+    "S2502544478",  # IEEE Transactions on Control of Network Systems
+    "S184777250",   # IEEE Transactions on Industrial Informatics
+    "S144771191",   # IEEE Transactions on Intelligent Transportation Systems
+    "S93916849",    # IEEE Transactions on Circuits & Systems II Express Briefs
+    "S2484352698",  # IEEE Transactions on Network Science and Engineering
+    "S116977442",   # IEEE Transactions on Circuits and Systems I Regular Papers
+    "S4210199657",  # IEEE Transactions on Intelligent Vehicles
+    "S4210201610",  # IEEE Transactions on Systems Man and Cybernetics - Part A
 }
 
 
@@ -24,7 +43,7 @@ class PaperSearchTool(Tool):
     name = "paper_search"
     description = (
         "Search academic papers via OpenAlex. Returns title, authors, year, "
-        "citations, venue, DOI, and PDF link. Use for literature search, "
+        "citations, venue, DOI, PDF link, and abstract when available. Use for literature search, "
         "finding papers, or research questions. Do NOT use for general web searches."
     )
     parameters = {
@@ -91,7 +110,7 @@ class PaperSearchTool(Tool):
             "search": query,
             "sort": sort_param,
             "per-page": count,
-            "select": "title,authorships,publication_year,cited_by_count,doi,open_access,primary_location,type",
+            "select": "title,authorships,publication_year,cited_by_count,doi,open_access,primary_location,type,abstract_inverted_index",
         }
 
         # Build filter parameter
@@ -161,6 +180,7 @@ class PaperSearchTool(Tool):
             pub_type = _format_type(work.get("type") or "")
 
             authors = _format_authors(work.get("authorships") or [])
+            abstract = _format_abstract(work.get("abstract_inverted_index"))
 
             oa = work.get("open_access") or {}
             oa_url = oa.get("oa_url") or ""
@@ -178,6 +198,8 @@ class PaperSearchTool(Tool):
                 lines.append(f"   DOI: {doi}")
             if oa_url:
                 lines.append(f"   PDF: {oa_url}")
+            if abstract:
+                lines.append(f"   Abstract: {abstract}")
             lines.append("")
 
         return "\n".join(lines)
@@ -204,3 +226,35 @@ def _format_type(pub_type: str) -> str:
         "preprint": "Preprint",
     }
     return type_map.get(pub_type, pub_type or "Unknown")
+
+
+def _format_abstract(abstract_index) -> str:
+    if not isinstance(abstract_index, dict) or not abstract_index:
+        return ""
+
+    positions = [
+        pos
+        for values in abstract_index.values()
+        if isinstance(values, list)
+        for pos in values
+        if isinstance(pos, int) and pos >= 0
+    ]
+    if not positions:
+        return ""
+
+    words = [""] * (max(positions) + 1)
+    for word, values in abstract_index.items():
+        if not isinstance(values, list):
+            continue
+        for pos in values:
+            if isinstance(pos, int) and 0 <= pos < len(words):
+                words[pos] = str(word)
+
+    abstract = _strip_html(" ".join(word for word in words if word).strip())
+    if len(abstract) <= MAX_ABSTRACT_CHARS:
+        return abstract
+    return abstract[:MAX_ABSTRACT_CHARS].rstrip() + "..."
+
+
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
