@@ -147,8 +147,12 @@ class Agent:
             return result
 
     def _chat_impl(self, user_input: str, on_token=None, on_tool=None, on_event=None) -> str:
+        original_input = user_input
         user_input = self._try_activate_skill(user_input)
-        self._append_message({"role": "user", "content": user_input})
+
+        # Save original input to transcript, but injected skill content to messages
+        self.messages.append({"role": "user", "content": user_input})
+        self.transcript.append({"role": "user", "content": original_input})
         self._maybe_compress_observed("after_user_message", new_message_tokens=_approx_tokens(user_input))
         self._emit_context_update(on_event)
         bad_tool_calls = 0
