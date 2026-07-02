@@ -1212,10 +1212,10 @@ function renderMarkdown(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    // Tables
-    .replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, function(match, header, sep, body) {
+    // Tables (more robust regex)
+    .replace(/^(\|.+\|)\s*\n(\|[\s\-:|]+\|)\s*\n((?:\|.+\|\s*\n?)+)/gm, function(match, header, sep, body) {
       const headers = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
-      const rows = body.trim().split('\n').map(row => {
+      const rows = body.trim().split('\n').filter(r => r.trim()).map(row => {
         const cells = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');
         return `<tr>${cells}</tr>`;
       }).join('');
