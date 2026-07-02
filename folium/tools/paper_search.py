@@ -36,6 +36,9 @@ _CONTROL_JOURNALS = {
     "S116977442",   # IEEE Transactions on Circuits and Systems I Regular Papers
     "S4210199657",  # IEEE Transactions on Intelligent Vehicles
     "S4210201610",  # IEEE Transactions on Systems Man and Cybernetics - Part A
+    "S138681734",   # Nonlinear Dynamics
+    "S183498172",   # Journal of the Franklin Institute
+    "S45693802",    # Neurocomputing
 }
 
 
