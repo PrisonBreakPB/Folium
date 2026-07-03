@@ -99,11 +99,11 @@ Use null or an empty string for unavailable scalar fields. Do not include markdo
 class AgentTool(Tool):
     name = "agent"
     description = (
-        "Spawn a sub-agent to handle a complex sub-task independently. "
-        "Use sub-agents only when the task benefits from isolated context, "
-        "specialized behavior, or parallel execution. Do not use this for simple "
-        "literature searches that the main agent can complete with paper_search/arxiv_search. "
-        "Supported agent_type values: general, literature-searcher."
+        "Delegate a self-contained, multi-step task to a separate sub-agent "
+        "that works independently and reports back. Use this when the task "
+        "needs its own context, focused investigation, or specialized handling. "
+        "Do not use it for simple questions, single tool calls, quick lookups, "
+        "or work the main agent can complete directly without losing focus."
     )
     parameters = {
         "type": "object",

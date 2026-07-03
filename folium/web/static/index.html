@@ -1642,6 +1642,8 @@ async function sendMessage() {
 
   appendMsg('user', text);
   let assistantDiv = null;
+  let assistantRawText = '';
+  let assistantRenderTimer = null;
   const process = {div: null, body: null};
 
   function ensureAssistant() {
@@ -1649,6 +1651,25 @@ async function sendMessage() {
       assistantDiv = appendMsg('assistant', '');
     }
     return assistantDiv;
+  }
+
+  function renderAssistantNow() {
+    if (assistantRenderTimer) {
+      clearTimeout(assistantRenderTimer);
+      assistantRenderTimer = null;
+    }
+    ensureAssistant().innerHTML = renderMarkdown(normalizeText(assistantRawText));
+    scrollToBottom();
+  }
+
+  function scheduleAssistantRender() {
+    if (assistantRenderTimer) return;
+    assistantRenderTimer = setTimeout(renderAssistantNow, 50);
+  }
+
+  function appendAssistantMarkdown(text) {
+    assistantRawText += text || '';
+    scheduleAssistantRender();
   }
 
   try {
@@ -1660,7 +1681,8 @@ async function sendMessage() {
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      ensureAssistant().textContent = normalizeText(err.error || '请求失败');
+      assistantRawText = err.error || 'Request failed';
+      renderAssistantNow();
       return;
     }
 
@@ -1683,8 +1705,7 @@ async function sendMessage() {
           const event = JSON.parse(line.slice(6));
 
           if (event.type === 'token') {
-            ensureAssistant().textContent += normalizeText(event.content);
-            scrollToBottom();
+            appendAssistantMarkdown(event.content);
           } else if (event.type === 'agent_status') {
             appendStatus(process, event.message || '处理中', event.status);
           } else if (event.type === 'context_compress') {
@@ -1716,16 +1737,21 @@ async function sendMessage() {
               arguments_preview: brief
             });
           } else if (event.type === 'error') {
-            ensureAssistant().textContent += `\n[错误] ${normalizeText(event.content)}`;
+            appendAssistantMarkdown(`\n[Error] ${event.content || ''}`);
           }
         }
       }
     }
 
+    renderAssistantNow();
     loadConversations();
   } catch (e) {
-    ensureAssistant().textContent += `\n[错误] 连接错误：${e.message}`;
+    appendAssistantMarkdown(`\n[Error] Connection error: ${e.message}`);
+    renderAssistantNow();
   } finally {
+    if (assistantRenderTimer) {
+      clearTimeout(assistantRenderTimer);
+    }
     busy = false;
     sendBtn.disabled = false;
   }
