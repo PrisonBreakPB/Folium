@@ -379,7 +379,7 @@ body {
   font-size: 15px;
   line-height: 1.72;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .msg.user {
@@ -391,6 +391,7 @@ body {
 
 .msg.assistant {
   align-self: flex-start;
+  max-width: min(1120px, 92%);
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -453,22 +454,34 @@ body {
   margin: 3px 0;
 }
 
+.msg .table-wrap {
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
 .msg table {
   border-collapse: collapse;
-  margin: 8px 0;
-  width: 100%;
+  margin: 0;
+  min-width: 100%;
+  width: max-content;
   font-size: 13px;
+  white-space: normal;
 }
 
 .msg th, .msg td {
   border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
+  overflow-wrap: normal;
+  word-break: normal;
+  vertical-align: middle;
 }
 
 .msg th {
   background: var(--surface-soft);
   font-weight: 650;
+  white-space: nowrap;
 }
 
 .msg tr:hover {
@@ -1219,7 +1232,7 @@ function renderMarkdown(text) {
         const cells = row.split('|').filter(c => c.trim()).map(c => `<td>${c.trim()}</td>`).join('');
         return `<tr>${cells}</tr>`;
       }).join('');
-      return `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+      return `<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
     })
     // Code blocks
     .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')

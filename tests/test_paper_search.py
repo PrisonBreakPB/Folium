@@ -30,7 +30,13 @@ class PaperSearchSchemaTests(unittest.TestCase):
         self.assertEqual(result, args)
 
     def test_filter_arguments(self):
-        args = {"query": "test", "year_from": 2023, "year_to": 2025, "publication_type": "journal"}
+        args = {
+            "query": "test",
+            "year_from": 2023,
+            "year_to": 2025,
+            "publication_type": "journal",
+            "journal": "automatica",
+        }
         result = self.tool.validate_arguments(args)
         self.assertEqual(result, args)
 
@@ -81,6 +87,13 @@ MOCK_RESPONSE = {
             "cited_by_count": 120000,
             "doi": "https://doi.org/10.48550/arXiv.1706.03762",
             "open_access": {"oa_url": "https://arxiv.org/pdf/1706.03762.pdf"},
+            "abstract_inverted_index": {
+                "Attention": [0],
+                "is": [1],
+                "all": [2],
+                "you": [3],
+                "need": [4],
+            },
             "primary_location": {
                 "source": {"display_name": "NeurIPS"}
             },
@@ -119,6 +132,7 @@ class PaperSearchExecuteTests(unittest.TestCase):
         self.assertIn("120000", result)
         self.assertIn("NeurIPS", result)
         self.assertIn("arxiv.org/pdf", result)
+        self.assertIn("Abstract: Attention is all you need", result)
         self.assertIn("BERT", result)
 
     @patch("folium.tools.paper_search.urllib.request.urlopen")
@@ -148,6 +162,31 @@ class PaperSearchExecuteTests(unittest.TestCase):
         call_args = mock_urlopen.call_args
         url = call_args[0][0].full_url
         self.assertIn("cited_by_count%3Adesc", url)
+
+    @patch("folium.tools.paper_search.urllib.request.urlopen")
+    def test_requests_abstract_field(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"results": []}).encode("utf-8")
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        self.tool.execute(query="test")
+        url = mock_urlopen.call_args[0][0].full_url
+        self.assertIn("abstract_inverted_index", url)
+
+    @patch("folium.tools.paper_search.urllib.request.urlopen")
+    def test_journal_filter_can_target_single_journal(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"results": []}).encode("utf-8")
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        self.tool.execute(query="test", journal="automatica")
+        url = mock_urlopen.call_args[0][0].full_url
+        self.assertIn("primary_location.source.id%3AS51360982", url)
+        self.assertNotIn("%7C", url)
 
 
 if __name__ == "__main__":

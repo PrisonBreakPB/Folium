@@ -14,7 +14,7 @@ from folium.tools.web import WebFetchTool, WebSearchTool
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 11
+    assert len(ALL_TOOLS) == 13
 
 
 def test_all_tools_have_valid_schema():
@@ -205,7 +205,12 @@ def test_agent_tool_schema():
     agent_t = get_tool("agent")
     s = agent_t.schema()
     assert s["function"]["name"] == "agent"
-    assert "task" in s["function"]["parameters"]["properties"]
+    properties = s["function"]["parameters"]["properties"]
+    assert "task" in properties
+    assert "agent_type" in properties
+    assert "output_format" in properties
+    assert "context" in properties
+    assert "timeout" in properties
 
 
 # --- todo ---

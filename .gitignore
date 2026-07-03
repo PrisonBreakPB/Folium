@@ -25,6 +25,7 @@ AGENTS.md
 RESEARCH_AGENT_ROADMAP.md
 
 # scratch / temp files
+.run/
 .runlogs/
 .runlogs/token_estimator_report.html
 _temp_extract*.txt

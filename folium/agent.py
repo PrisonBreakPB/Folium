@@ -16,6 +16,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from .skills.types import Skill
 from .llm import LLM, LLMResponse, estimate_cost
 from .tools import create_tools
 from .tools.base import Tool, ToolValidationError
@@ -48,6 +49,8 @@ class Agent:
         max_rounds: int = 50,
         max_bad_tool_calls: int = 5,
         tool_timeout: int = 120,
+        skills: list[Skill] | None = None,
+        system_addendum: str | None = None,
     ):
         self.llm = llm
         self.tools = tools if tools is not None else create_tools()
@@ -58,8 +61,10 @@ class Agent:
         self.max_bad_tool_calls = max_bad_tool_calls
         self.tool_timeout = tool_timeout
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-        self.skills = load_skills()
+        self.skills = load_skills() if skills is None else skills
         self._system = system_prompt(self.tools, self.skills)
+        if system_addendum:
+            self._system += "\n\n# Sub-agent Instructions\n" + system_addendum.strip()
         self.session_id: str | None = None
         self.turn_index = 0
         self.todo_tool = next((t for t in self.tools if isinstance(t, TodoTool)), None)

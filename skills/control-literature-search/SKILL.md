@@ -15,7 +15,7 @@ Use this skill to turn a broad control-theory research question into a traceable
 4. Use `paper_search` as the primary tool for academic paper search. Run 2-3 queries with different keyword combinations.
 5. Use `web_search` as a supplementary tool for Google Scholar, IEEE, Elsevier, or specific venue searches.
 6. Use `web_fetch` on important result pages when they look authoritative or likely to contain paper metadata.
-7. Produce a candidate paper table with confirmed fields and missing fields.
+7. Produce a candidate paper table with confirmed metadata fields.
 8. Mark which candidates need metadata completion by arXiv, Crossref, or DOI lookup.
 
 ## paper_search Usage
@@ -29,6 +29,7 @@ Available parameters:
 - `year_from`: Filter papers from this year (inclusive)
 - `year_to`: Filter papers up to this year (inclusive)
 - `publication_type`: Filter by source type — `journal`, `conference`, `repository`
+- `journal`: Limit to one configured control journal, or `core` for the default core journal set. Common values: `core`, `automatica`, `ieee_tac`, `systems_control_letters`, `ieee_cybernetics`, `ieee_tcns`, `ieee_tcst`, `ieee_tase`
 
 Examples:
 ```python
@@ -37,6 +38,9 @@ paper_search(query="event-triggered control multi-agent")
 
 # Filter by year and type
 paper_search(query="DoS attack consensus", year_from=2023, year_to=2025, publication_type="journal")
+
+# Search only one journal
+paper_search(query="event-triggered control", journal="automatica")
 
 # Sort by citations
 paper_search(query="Lyapunov stability networked", sort="citations", max_results=10)
@@ -75,7 +79,7 @@ Use `paper_search` for the main academic search. Run 2-3 queries with different 
 "<topic>" multi-agent systems
 ```
 
-The tool automatically returns: title, authors, year, citations, venue, DOI, PDF link.
+The tool automatically returns: title, authors, year, citations, venue, DOI, PDF link, and abstract when available.
 
 ### Supplementary: web_search queries
 
@@ -132,13 +136,13 @@ Only treat a Google Scholar result as a paper-level result when the title/snippe
 Return a table like this after the first search pass:
 
 ```text
-| # | Title | Authors | Year | Venue | Source | URL | DOI | PDF | Why relevant | Missing fields |
-|---|-------|---------|------|-------|--------|-----|-----|-----|--------------|----------------|
+| # | Title | Authors | Year | Venue | Source | URL | DOI | PDF |
+|---|-------|---------|------|-------|--------|-----|-----|-----|
 ```
 
 Rules:
 
-- Keep the full candidate table columns exactly as shown above. Do not simplify the table by dropping Source, URL, DOI, PDF, or Missing fields.
+- Keep the full candidate table columns exactly as shown above. Do not simplify the table by dropping Source, URL, DOI, or PDF.
 - Use "unknown" instead of inventing missing authors, years, venues, DOIs, or PDFs.
 - Distinguish "confirmed from source page" from "inferred from snippet".
 - Only claim Google Scholar coverage if a query explicitly targeted `scholar.google.com` or a result URL came from `scholar.google.com`; otherwise label it as general web search.
