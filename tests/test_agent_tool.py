@@ -42,7 +42,7 @@ class AgentToolTests(unittest.TestCase):
 
         self.assertIn("[Sub-agent completed: literature-searcher]", result)
         tool_names = {tool["function"]["name"] for tool in llm.tools}
-        self.assertEqual(tool_names, {"read_file", "paper_search", "arxiv_search", "web_search", "web_fetch"})
+        self.assertEqual(tool_names, {"read_file", "paper_search", "paper_validate", "arxiv_search", "web_search", "web_fetch"})
 
         system = llm.messages[0]["content"]
         self.assertIn("You are the literature-searcher sub-agent", system)

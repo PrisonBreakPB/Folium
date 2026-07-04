@@ -37,6 +37,7 @@ Scope:
 - Use `arxiv_search` to supplement preprints, abstracts, and direct PDFs.
 - Use `web_search` / `web_fetch` only for specific source verification or when structured tools are insufficient.
 - Do initial DOI/title deduplication and metadata cleanup.
+- Use `paper_validate` before presenting final candidate papers as verified.
 
 Boundaries:
 - Do not write files.
@@ -61,7 +62,7 @@ SUBAGENT_SPECS: dict[str, SubAgentSpec] = {
     ),
     "literature-searcher": SubAgentSpec(
         prompt=LITERATURE_SEARCHER_PROMPT,
-        tools=("read_file", "paper_search", "arxiv_search", "web_search", "web_fetch"),
+        tools=("read_file", "paper_search", "paper_validate", "arxiv_search", "web_search", "web_fetch"),
         skills=("control-literature-search",),
         max_rounds=12,
         default_timeout=180,

@@ -66,6 +66,7 @@ class ToolValidationTests(unittest.TestCase):
             "web_fetch": {"url": "https://example.com"},
             "pdf_fetch": {"url": "https://example.com/paper.pdf"},
             "paper_search": {"query": "machine learning"},
+            "paper_validate": {"papers": [{"title": "Attention Is All You Need"}]},
             "arxiv_search": {"query": "event-triggered control"},
         }
 

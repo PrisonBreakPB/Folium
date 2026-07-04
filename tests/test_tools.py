@@ -14,7 +14,7 @@ from folium.tools.web import WebFetchTool, WebSearchTool
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 13
+    assert len(ALL_TOOLS) == 14
 
 
 def test_all_tools_have_valid_schema():

@@ -15,8 +15,9 @@ Use this skill to turn a broad control-theory research question into a traceable
 4. Use `paper_search` as the primary tool for academic paper search. Run 2-3 queries with different keyword combinations.
 5. Use `web_search` as a supplementary tool for Google Scholar, IEEE, Elsevier, or specific venue searches.
 6. Use `web_fetch` on important result pages when they look authoritative or likely to contain paper metadata.
-7. Produce a candidate paper table with confirmed metadata fields.
-8. Mark which candidates need metadata completion by arXiv, Crossref, or DOI lookup.
+7. Before presenting final candidate papers as verified, call `paper_validate` on the candidate list.
+8. Produce a candidate paper table with confirmed metadata fields and verification status.
+9. Put unverified or mismatch results in a separate "needs verification" section, not in the confirmed paper list.
 
 ## paper_search Usage
 
@@ -81,6 +82,24 @@ Use `paper_search` for the main academic search. Run 2-3 queries with different 
 
 The tool automatically returns JSON with title, authors, year, citations, venue, DOI, abstract, OpenAlex source evidence, and verification status when available.
 
+## paper_validate Usage
+
+Use `paper_validate` after collecting candidate papers and before finalizing the paper list. Pass the candidate metadata returned by `paper_search` or extracted from other sources.
+
+Example:
+```python
+paper_validate(papers=[
+  {"title": "Event-triggered control for networked systems", "doi": "10.xxxx/example", "year": 2024, "venue": "Automatica"}
+])
+```
+
+Treat validation statuses as follows:
+
+- `confirmed`: can appear in the confirmed paper list.
+- `partial`: can appear only with the listed issues preserved.
+- `unverified`: keep as a discovery clue or needs-verification item.
+- `mismatch`: do not present as a confirmed paper.
+
 ### Supplementary: web_search queries
 
 Use `web_search` for specific venue searches or when paper_search results are insufficient:
@@ -113,9 +132,10 @@ site:scholar.google.com "<topic>"
 For control theory, use this priority order:
 
 1. `paper_search` (OpenAlex) — primary tool for structured metadata, citations, DOI, source evidence, and verification status
-2. `web_search` — supplementary for Google Scholar, IEEE, Elsevier, or specific venue searches
-3. `web_fetch` — for reading specific publisher pages or author homepages
-4. arXiv — for preprints and direct PDF access when other sources don't have full text
+2. `paper_validate` — required validation step before presenting final confirmed papers
+3. `web_search` — supplementary for Google Scholar, IEEE, Elsevier, or specific venue searches
+4. `web_fetch` — for reading specific publisher pages or author homepages
+5. arXiv — for preprints and direct PDF access when other sources don't have full text
 
 Google Scholar pages may be inaccessible or incomplete through `web_fetch`. Use Google Scholar mainly for discovery signals, citation clues, and title matching; confirm metadata through publisher pages, DOI, Crossref/OpenAlex/Semantic Scholar, arXiv, or author PDFs.
 
@@ -144,6 +164,7 @@ Rules:
 
 - Keep the full candidate table columns exactly as shown above. Do not simplify the table by dropping Source, URL, DOI, or Verification.
 - Use "unknown" instead of inventing missing authors, years, venues, DOIs, or verification status.
+- Do not mark a paper as confirmed unless `paper_validate` returned `confirmed`.
 - Distinguish "confirmed from source page" from "inferred from snippet".
 - Only claim Google Scholar coverage if a query explicitly targeted `scholar.google.com` or a result URL came from `scholar.google.com`; otherwise label it as general web search.
 - Do not use Google Scholar author profile pages as the primary URL for candidate papers unless no better source is available; if used, mark it as a discovery clue in Source and list missing verification fields.
@@ -155,6 +176,7 @@ Rules:
 Before summarizing the literature, ensure:
 
 - `paper_search` was used as the primary search tool with at least 2 different keyword combinations.
+- `paper_validate` was used before finalizing confirmed papers.
 - `web_search` was used as supplement if needed for specific venues (IEEE, Elsevier, etc.).
 - At least 2 source families were covered (e.g., OpenAlex + Google Scholar, or OpenAlex + IEEE).
 - Important candidates were opened with `web_fetch` when possible.

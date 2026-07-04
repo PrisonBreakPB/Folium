@@ -141,11 +141,16 @@ agent           启动子 Agent 处理独立子任务
 todo            更新结构化任务列表，跟踪 pending / in_progress / completed
 web_search      使用 Brave Search API 返回轻量 Web 搜索结果
 web_fetch       读取单个 HTTP(S) URL，返回清洗后的 title 和正文片段
+pdf_fetch       读取 PDF 正文文本
+paper_search    通过 OpenAlex 搜索论文，返回结构化 JSON 证据
+paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial / unverified / mismatch
 ```
 
 `web_search` 是轻量搜索工具，只返回候选网页的 title、URL 和 snippet，不抓取全文、不做 RAG。需要设置 `BRAVE_SEARCH_API_KEY`；缺少 key 时工具会返回明确错误。
 
 `web_fetch` 读取单个网页并返回清洗后的文本片段。它只允许 `http://` 和 `https://`，会拦截 localhost、内网地址、link-local 地址和重定向后的非公网地址；默认最多读取 2MB 响应体，最多返回 12000 字符，避免一次工具调用塞爆上下文。
+
+`paper_search` 返回 OpenAlex 的结构化论文证据；`paper_validate` 用于最终输出前校验候选论文，未确认的文献应作为待核验线索，而不是已确认引用。
 
 `todo` 工具用于长程、多步骤任务：
 
