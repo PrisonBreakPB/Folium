@@ -118,7 +118,7 @@ class PaperSearchExecuteTests(unittest.TestCase):
         self.tool = PaperSearchTool()
 
     @patch("folium.tools.paper_search.urllib.request.urlopen")
-    def test_returns_formatted_results(self, mock_urlopen):
+    def test_returns_json_results(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(MOCK_RESPONSE).encode("utf-8")
         mock_resp.__enter__ = lambda s: s
@@ -126,14 +126,20 @@ class PaperSearchExecuteTests(unittest.TestCase):
         mock_urlopen.return_value = mock_resp
 
         result = self.tool.execute(query="attention mechanism", max_results=2)
+        data = json.loads(result)
 
-        self.assertIn("Attention Is All You Need", result)
-        self.assertIn("Ashish Vaswani", result)
-        self.assertIn("120000", result)
-        self.assertIn("NeurIPS", result)
-        self.assertIn("arxiv.org/pdf", result)
-        self.assertIn("Abstract: Attention is all you need", result)
-        self.assertIn("BERT", result)
+        self.assertEqual(data["query"], "attention mechanism")
+        self.assertEqual(data["source"], "openalex")
+        self.assertEqual(data["count"], 2)
+        first = data["results"][0]
+        self.assertEqual(first["title"], "Attention Is All You Need")
+        self.assertEqual(first["authors"], ["Ashish Vaswani", "Noam Shazeer"])
+        self.assertEqual(first["citations"], 120000)
+        self.assertEqual(first["venue"], "NeurIPS")
+        self.assertEqual(first["abstract"], "Attention is all you need")
+        self.assertEqual(first["verification_status"], "confirmed")
+        self.assertNotIn("pdf", first)
+        self.assertEqual(data["results"][1]["title"], "BERT: Pre-training of Deep Bidirectional Transformers")
 
     @patch("folium.tools.paper_search.urllib.request.urlopen")
     def test_empty_results(self, mock_urlopen):
@@ -144,7 +150,10 @@ class PaperSearchExecuteTests(unittest.TestCase):
         mock_urlopen.return_value = mock_resp
 
         result = self.tool.execute(query="nonexistent topic xyz")
-        self.assertIn("No papers found", result)
+        data = json.loads(result)
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(data["results"], [])
+        self.assertEqual(data["message"], "No papers found")
 
     def test_empty_query_returns_error(self):
         result = self.tool.execute(query="   ")

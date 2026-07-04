@@ -79,7 +79,7 @@ Use `paper_search` for the main academic search. Run 2-3 queries with different 
 "<topic>" multi-agent systems
 ```
 
-The tool automatically returns: title, authors, year, citations, venue, DOI, PDF link, and abstract when available.
+The tool automatically returns JSON with title, authors, year, citations, venue, DOI, abstract, OpenAlex source evidence, and verification status when available.
 
 ### Supplementary: web_search queries
 
@@ -112,7 +112,7 @@ site:scholar.google.com "<topic>"
 
 For control theory, use this priority order:
 
-1. `paper_search` (OpenAlex) — primary tool for structured metadata, citations, and PDF links
+1. `paper_search` (OpenAlex) — primary tool for structured metadata, citations, DOI, source evidence, and verification status
 2. `web_search` — supplementary for Google Scholar, IEEE, Elsevier, or specific venue searches
 3. `web_fetch` — for reading specific publisher pages or author homepages
 4. arXiv — for preprints and direct PDF access when other sources don't have full text
@@ -136,14 +136,14 @@ Only treat a Google Scholar result as a paper-level result when the title/snippe
 Return a table like this after the first search pass:
 
 ```text
-| # | Title | Authors | Year | Venue | Source | URL | DOI | PDF |
-|---|-------|---------|------|-------|--------|-----|-----|-----|
+| # | Title | Authors | Year | Venue | Source | URL | DOI | Verification |
+|---|-------|---------|------|-------|--------|-----|-----|--------------|
 ```
 
 Rules:
 
-- Keep the full candidate table columns exactly as shown above. Do not simplify the table by dropping Source, URL, DOI, or PDF.
-- Use "unknown" instead of inventing missing authors, years, venues, DOIs, or PDFs.
+- Keep the full candidate table columns exactly as shown above. Do not simplify the table by dropping Source, URL, DOI, or Verification.
+- Use "unknown" instead of inventing missing authors, years, venues, DOIs, or verification status.
 - Distinguish "confirmed from source page" from "inferred from snippet".
 - Only claim Google Scholar coverage if a query explicitly targeted `scholar.google.com` or a result URL came from `scholar.google.com`; otherwise label it as general web search.
 - Do not use Google Scholar author profile pages as the primary URL for candidate papers unless no better source is available; if used, mark it as a discovery clue in Source and list missing verification fields.

@@ -82,7 +82,6 @@ Return the final answer as JSON only, with this shape:
       "venue": "...",
       "doi": "...",
       "url": "...",
-      "pdf": "...",
       "abstract": "...",
       "source": ["openalex"]
     }

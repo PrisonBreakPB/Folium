@@ -49,9 +49,10 @@ _CONTROL_JOURNALS = {
 class PaperSearchTool(Tool):
     name = "paper_search"
     description = (
-        "Search academic papers via OpenAlex. Returns title, authors, year, "
-        "citations, venue, DOI, PDF link, and abstract when available. Use for literature search, "
-        "finding papers, or research questions. Do NOT use for general web searches."
+        "Search academic papers via OpenAlex. Returns JSON with title, authors, "
+        "year, citations, venue, DOI, abstract, and source evidence when available. "
+        "Use for literature search, finding papers, or research questions. "
+        "Do NOT use for general web searches."
     )
     parameters = {
         "type": "object",
@@ -122,7 +123,7 @@ class PaperSearchTool(Tool):
             "search": query,
             "sort": sort_param,
             "per-page": count,
-            "select": "title,authorships,publication_year,cited_by_count,doi,open_access,primary_location,type,abstract_inverted_index",
+            "select": "id,title,authorships,publication_year,cited_by_count,doi,primary_location,type,abstract_inverted_index",
         }
 
         # Build filter parameter
@@ -180,51 +181,67 @@ class PaperSearchTool(Tool):
 
         results = data.get("results") or []
         if not results:
-            return f"No papers found for: {query}"
+            return json.dumps({
+                "query": query,
+                "source": "openalex",
+                "count": 0,
+                "results": [],
+                "message": "No papers found",
+            }, ensure_ascii=False, indent=2)
 
-        lines = [f"Academic papers for: {query}", ""]
+        papers = []
         for i, work in enumerate(results[:count], 1):
             title = work.get("title") or "Untitled"
-            year = work.get("publication_year") or "Unknown"
+            year = work.get("publication_year")
             cited = work.get("cited_by_count", 0)
             doi = work.get("doi") or ""
             pub_type = _format_type(work.get("type") or "")
 
-            authors = _format_authors(work.get("authorships") or [])
+            authors = _author_names(work.get("authorships") or [])
             abstract = _format_abstract(work.get("abstract_inverted_index"))
-
-            oa = work.get("open_access") or {}
-            oa_url = oa.get("oa_url") or ""
 
             primary = work.get("primary_location") or {}
             source = primary.get("source") or {}
             venue = source.get("display_name") or ""
+            openalex_id = work.get("id") or ""
 
-            lines.append(f"{i}. {title}")
-            lines.append(f"   Authors: {authors}")
-            lines.append(f"   Year: {year} | Citations: {cited} | Type: {pub_type}")
-            if venue:
-                lines.append(f"   Venue: {venue}")
-            if doi:
-                lines.append(f"   DOI: {doi}")
-            if oa_url:
-                lines.append(f"   PDF: {oa_url}")
-            if abstract:
-                lines.append(f"   Abstract: {abstract}")
-            lines.append("")
+            papers.append({
+                "rank": i,
+                "title": title,
+                "authors": authors,
+                "year": year,
+                "citations": cited,
+                "type": pub_type,
+                "venue": venue,
+                "doi": doi,
+                "abstract": abstract,
+                "source": "openalex",
+                "openalex_id": openalex_id,
+                "evidence_url": openalex_id or doi,
+                "verification_status": "confirmed",
+            })
 
-        return "\n".join(lines)
+        return json.dumps({
+            "query": query,
+            "source": "openalex",
+            "count": len(papers),
+            "results": papers,
+        }, ensure_ascii=False, indent=2)
 
 
 def _format_authors(authorships: list) -> str:
-    names = []
-    for a in authorships[:5]:
-        author = a.get("author") or {}
-        name = author.get("display_name") or "Unknown"
-        names.append(name)
+    names = _author_names(authorships[:5])
     if len(authorships) > 5:
         names.append(f"et al. ({len(authorships)} total)")
     return ", ".join(names)
+
+
+def _author_names(authorships: list) -> list[str]:
+    names = []
+    for a in authorships:
+        author = a.get("author") or {}
+        names.append(author.get("display_name") or "Unknown")
+    return names
 
 
 def _format_type(pub_type: str) -> str:
