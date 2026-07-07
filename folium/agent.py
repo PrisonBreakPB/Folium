@@ -32,6 +32,17 @@ from .observability.redaction import compact_payload
 from .encoding import repair_mojibake_text
 
 
+FINAL_ROUND_REMINDER = (
+    "<reminder>\n"
+    "This is the final allowed model round for this task. Do not call tools.\n\n"
+    "Use only the information already gathered in the conversation and tool results.\n"
+    "If that information is sufficient, provide the best possible answer to the user now.\n"
+    "If it is not sufficient, do not guess, invent evidence, or force a conclusion. "
+    "Clearly explain what is still missing, why it matters, and what the recommended next step should be.\n"
+    "</reminder>"
+)
+
+
 @dataclass
 class ToolExecutionResult:
     content: str
@@ -163,6 +174,7 @@ class Agent:
         bad_tool_calls = 0
 
         for round_index in range(1, self.max_rounds + 1):
+            is_final_round = round_index == self.max_rounds
             self._inject_todo_reminder(on_event)
             self._emit_event(on_event, "agent_status", message=f"Model inference round {round_index}")
             with span("agent_round", "agent", metadata={
@@ -171,7 +183,11 @@ class Agent:
                 "estimated_context_tokens": estimate_tokens(self.messages),
             }):
                 full_messages = self._full_messages()
-                tool_schemas = self._tool_schemas()
+                if is_final_round:
+                    full_messages = full_messages + [{"role": "user", "content": FINAL_ROUND_REMINDER}]
+                    tool_schemas = None
+                else:
+                    tool_schemas = self._tool_schemas()
                 self._record_llm_request_snapshot(full_messages, tool_schemas, round_index)
                 resp = self.llm.chat(
                     messages=full_messages,
@@ -181,6 +197,17 @@ class Agent:
                 assistant_message = self._assistant_message(resp)
                 self._record_llm_response_snapshot(assistant_message, resp, round_index)
                 self._emit_usage(on_event, resp, round_index)
+
+                if is_final_round:
+                    if resp.content:
+                        final_message = dict(assistant_message)
+                        final_message.pop("tool_calls", None)
+                        self._attach_usage_context(final_message)
+                        self._append_message(final_message)
+                        self._emit_context_update(on_event)
+                        self._emit_event(on_event, "agent_status", message="Generating final response")
+                        return resp.content
+                    return "(reached maximum tool-call rounds)"
 
                 # no tool calls -> LLM is done, return text
                 if not resp.tool_calls:

@@ -1,7 +1,7 @@
 import unittest
 import time
 
-from folium.agent import Agent
+from folium.agent import FINAL_ROUND_REMINDER, Agent
 from folium.llm import LLMResponse, ToolCall
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.agent import _sub_agent_tool
@@ -242,6 +242,72 @@ class ToolValidationTests(unittest.TestCase):
             if m.get("content") == "<reminder>Update your todos.</reminder>"
         ]
         self.assertEqual(transcript_reminders, [])
+
+    def test_final_round_disables_tools_and_requests_direct_response(self):
+        class FinalRoundLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.requests = []
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                self.requests.append({"messages": messages, "tools": tools})
+                if self.calls == 1:
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[ToolCall(id="call_1", name="echo_tool", arguments={})],
+                    )
+                return LLMResponse(content="final answer")
+
+        llm = FinalRoundLLM()
+        agent = Agent(llm=llm, tools=[EchoTool()], max_rounds=2)
+
+        self.assertEqual(agent.chat("do a bounded task"), "final answer")
+        self.assertIsNotNone(llm.requests[0]["tools"])
+        self.assertIsNone(llm.requests[1]["tools"])
+        self.assertEqual(llm.requests[1]["messages"][-1], {"role": "user", "content": FINAL_ROUND_REMINDER})
+        self.assertFalse(any(m.get("content") == FINAL_ROUND_REMINDER for m in agent.messages))
+        self.assertFalse(any(m.get("content") == FINAL_ROUND_REMINDER for m in agent.transcript))
+
+    def test_final_round_tool_calls_are_not_executed(self):
+        class StubbornLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+                self.total_prompt_tokens = 0
+                self.total_completion_tokens = 0
+                self.total_cached_tokens = 0
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(id=f"call_{self.calls}", name="echo_tool", arguments={})],
+                )
+
+        agent = Agent(llm=StubbornLLM(), tools=[EchoTool()], max_rounds=1)
+
+        self.assertEqual(agent.chat("do a bounded task"), "(reached maximum tool-call rounds)")
+        self.assertFalse(any(m.get("role") == "assistant" and m.get("tool_calls") for m in agent.messages))
+        self.assertFalse(any(m.get("role") == "tool" for m in agent.messages))
 
     def test_agent_emits_todo_update_event(self):
         class TodoLLM:
