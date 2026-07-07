@@ -1,11 +1,11 @@
 ---
 name: control-literature-search
-description: Use for academic literature search in control theory and control engineering, especially when the user asks to find papers, survey a research topic, compare prior work, identify research gaps, or search for scholarly literature. Use paper_search as the primary tool, supplemented by web_search for specific sources like Google Scholar, IEEE, or Elsevier.
+description: Use for academic literature search in control theory and control engineering, especially when the user asks to find papers, survey a research topic, compare prior work, identify research gaps, or search for scholarly literature. Use paper_search as the primary tool; use current-year arXiv and web_search only as fallback supplements when needed.
 ---
 
 # Control Literature Search
 
-Use this skill to turn a broad control-theory research question into a traceable candidate paper list. Use `paper_search` as the primary tool for academic searches, and `web_search`/`web_fetch` as supplements for specific sources. Do not treat search snippets as final evidence.
+Use this skill to turn a broad control-theory research question into a traceable candidate paper list. Use `paper_search` as the primary tool for academic searches. Use current-year `arxiv_search` only as a preprint supplement, and use `web_search`/`web_fetch` only when the primary searches do not produce enough candidates. Do not treat search snippets as final evidence.
 
 ## Workflow
 
@@ -13,7 +13,7 @@ Use this skill to turn a broad control-theory research question into a traceable
 2. Extract 3-8 core keywords from the user topic.
 3. Expand terms with control-domain variants. If the topic is in Chinese, translate to English keywords.
 4. Use `paper_search` as the primary tool for academic paper search. Run 2-3 queries with different keyword combinations.
-5. Use `web_search` as a supplementary tool for Google Scholar, IEEE, Elsevier, or specific venue searches.
+5. Use `web_search` only if `paper_search` plus current-year arXiv search cannot produce enough candidates.
 6. Use `web_fetch` on important result pages when they look authoritative or likely to contain paper metadata.
 7. Before presenting final candidate papers as verified, call `paper_validate` on the candidate list.
 8. Produce a candidate paper table with confirmed metadata fields and verification status.
@@ -100,9 +100,9 @@ Treat validation statuses as follows:
 - `unverified`: keep as a discovery clue or needs-verification item.
 - `mismatch`: do not present as a confirmed paper.
 
-### Supplementary: web_search queries
+### Fallback: web_search queries
 
-Use `web_search` for specific venue searches or when paper_search results are insufficient:
+Use these `web_search` patterns only when `paper_search` plus current-year arXiv results are insufficient:
 
 IEEE-focused queries:
 
@@ -133,9 +133,28 @@ For control theory, use this priority order:
 
 1. `paper_search` (OpenAlex) — primary tool for structured metadata, citations, DOI, source evidence, and verification status
 2. `paper_validate` — required validation step before presenting final confirmed papers
-3. `web_search` — supplementary for Google Scholar, IEEE, Elsevier, or specific venue searches
+3. `web_search` — fallback supplement only when `paper_search` plus current-year arXiv search does not produce enough candidates
 4. `web_fetch` — for reading specific publisher pages or author homepages
 5. arXiv — for preprints and direct PDF access when other sources don't have full text
+
+## arXiv Supplement Rule
+
+Use arXiv only as a current-year preprint supplement unless the user explicitly asks for older preprints.
+
+- If the current year is 2026, call `arxiv_search(..., year_from=2026, year_to=2026)`.
+- Do not place arXiv results in the confirmed journal paper list.
+- Put arXiv results in a separate "current-year preprints" or "preprint supplement" section.
+- If the user asks for a journal set, arXiv results are out-of-scope for that confirmed journal set even when the title is highly relevant.
+
+## web_search Fallback Rule
+
+Use `web_search` only after the primary searches are insufficient:
+
+1. Run `paper_search` with the requested journal, year, and publication filters.
+2. If more candidates are needed, run current-year `arxiv_search` as a preprint supplement.
+3. Only if the combined `paper_search` and arXiv results are still insufficient, use `web_search` for IEEE, Elsevier, Google Scholar, or publisher-page discovery.
+
+`web_search` results are discovery clues by default. Do not place them in the confirmed journal paper list unless their metadata is later verified by `paper_validate` and they satisfy the requested journal-scope constraints.
 
 Google Scholar pages may be inaccessible or incomplete through `web_fetch`. Use Google Scholar mainly for discovery signals, citation clues, and title matching; confirm metadata through publisher pages, DOI, Crossref/OpenAlex/Semantic Scholar, arXiv, or author PDFs.
 
@@ -177,8 +196,8 @@ Before summarizing the literature, ensure:
 
 - `paper_search` was used as the primary search tool with at least 2 different keyword combinations.
 - `paper_validate` was used before finalizing confirmed papers.
-- `web_search` was used as supplement if needed for specific venues (IEEE, Elsevier, etc.).
-- At least 2 source families were covered (e.g., OpenAlex + Google Scholar, or OpenAlex + IEEE).
+- `web_search` was used only if `paper_search` plus current-year arXiv results were insufficient.
+- If `web_search` was used, its results were kept as discovery clues unless later validated and in-scope.
 - Important candidates were opened with `web_fetch` when possible.
 - Missing metadata is explicitly marked.
 - Claims about methods, limitations, or research gaps are not made from snippets alone.
