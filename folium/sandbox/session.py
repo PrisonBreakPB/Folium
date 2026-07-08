@@ -10,6 +10,7 @@ from ..observability.context import record_sandbox_event
 
 
 SANDBOX_DIR = ".folium/sandbox/sessions"
+WORKSPACE_MODE_ENV = "FOLIUM_SANDBOX_WORKSPACE_MODE"
 EXCLUDE_NAMES = {".git", ".venv", "__pycache__", ".folium"}
 EXCLUDE_PATTERNS = {
     ".env",
@@ -35,10 +36,22 @@ class SandboxPathError(Exception):
     pass
 
 
+def sandbox_workspace_mode() -> str:
+    return os.getenv(WORKSPACE_MODE_ENV, "host").strip().lower()
+
+
+def use_copy_workspace() -> bool:
+    return sandbox_workspace_mode() == "copy"
+
+
+def get_host_workspace() -> Path:
+    return Path(os.getenv("FOLIUM_HOST_WORKSPACE") or os.getcwd()).resolve()
+
+
 class SandboxSession:
     def __init__(self, host_workspace: str | None = None, root_dir: str | None = None):
         self.session_id = uuid.uuid4().hex[:12]
-        self.host_workspace = Path(host_workspace or os.getcwd()).resolve()
+        self.host_workspace = Path(host_workspace).resolve() if host_workspace else get_host_workspace()
         base = Path(root_dir).resolve() if root_dir else self.host_workspace / SANDBOX_DIR
         self.session_dir = base / self.session_id
         self.workspace = self.session_dir / "workspace"

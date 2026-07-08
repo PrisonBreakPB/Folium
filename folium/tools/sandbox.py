@@ -7,8 +7,8 @@ from ..sandbox.diff import sandbox_diff
 class SandboxDiffTool(Tool):
     name = "sandbox_diff"
     description = (
-        "Show file changes made inside the Docker sandbox workspace compared "
-        "with the real host workspace. This only reports changes; it does not apply them."
+        "Show file changes made inside the copy-mode Docker sandbox workspace compared "
+        "with the real host workspace. In the default host workspace mode, use git diff."
     )
     parameters = {
         "type": "object",

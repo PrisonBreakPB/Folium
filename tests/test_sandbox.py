@@ -37,7 +37,21 @@ class SandboxTests(unittest.TestCase):
 
         self.assertIsInstance(executor, LocalCommandExecutor)
 
-    def test_bash_tool_defaults_to_sandbox_session_workspace(self):
+    def test_bash_tool_defaults_to_host_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            host.mkdir()
+
+            with (
+                mock.patch.dict("os.environ", {"FOLIUM_HOST_WORKSPACE": str(host)}, clear=True),
+            ):
+                tool = BashTool()
+                executor = tool.executor
+
+            self.assertIsNone(executor.session)
+            self.assertEqual(executor.workspace, host.resolve())
+
+    def test_bash_tool_can_use_copy_workspace_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
             root = Path(tmp) / "sessions"
@@ -45,7 +59,7 @@ class SandboxTests(unittest.TestCase):
             session = SandboxSession(host_workspace=str(host), root_dir=str(root))
 
             with (
-                mock.patch.dict("os.environ", {}, clear=True),
+                mock.patch.dict("os.environ", {"FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"}, clear=True),
                 mock.patch("folium.sandbox.docker.get_current_session", return_value=session),
             ):
                 tool = BashTool()
@@ -209,19 +223,19 @@ class SandboxTests(unittest.TestCase):
             self.assertFalse((session.workspace / "credentials.json").exists())
             self.assertFalse((session.workspace / "nested" / "service-account-prod.json").exists())
 
-    def test_file_tools_use_sandbox_workspace_in_docker_mode(self):
+    def test_file_tools_use_host_workspace_in_docker_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
-            root = Path(tmp) / "sessions"
             host.mkdir()
             host_file = host / "note.txt"
             host_file.write_text("old\n", encoding="utf-8")
 
-            session = SandboxSession(host_workspace=str(host), root_dir=str(root))
-
             with (
-                mock.patch.dict("os.environ", {"FOLIUM_BASH_BACKEND": "docker"}, clear=False),
-                mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_HOST_WORKSPACE": str(host)},
+                    clear=False,
+                ),
             ):
                 read_result = ReadFileTool().execute("note.txt")
                 write_result = WriteFileTool().execute("created.txt", "new\n")
@@ -230,29 +244,34 @@ class SandboxTests(unittest.TestCase):
             self.assertIn("old", read_result)
             self.assertIn("Wrote", write_result)
             self.assertIn("Edited", edit_result)
-            self.assertEqual(host_file.read_text(encoding="utf-8"), "old\n")
-            self.assertEqual((session.workspace / "note.txt").read_text(), "sandbox\n")
-            self.assertEqual((session.workspace / "created.txt").read_text(), "new\n")
+            self.assertEqual(host_file.read_text(encoding="utf-8"), "sandbox\n")
+            self.assertEqual((host / "created.txt").read_text(), "new\n")
 
-    def test_file_tools_reject_paths_outside_sandbox_workspace(self):
+    def test_file_tools_can_still_use_copy_workspace_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
             root = Path(tmp) / "sessions"
-            outside = Path(tmp) / "outside.txt"
             host.mkdir()
-            outside.write_text("secret", encoding="utf-8")
+            host_file = host / "note.txt"
+            host_file.write_text("old\n", encoding="utf-8")
             session = SandboxSession(host_workspace=str(host), root_dir=str(root))
 
             with (
-                mock.patch.dict("os.environ", {"FOLIUM_BASH_BACKEND": "docker"}, clear=False),
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    clear=False,
+                ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
             ):
-                absolute_result = ReadFileTool().execute(str(outside))
-                escape_result = WriteFileTool().execute("../outside.txt", "changed")
+                write_result = WriteFileTool().execute("created.txt", "new\n")
+                edit_result = EditFileTool().execute("note.txt", "old", "sandbox")
 
-            self.assertIn("outside sandbox workspace", absolute_result)
-            self.assertIn("escapes sandbox workspace", escape_result)
-            self.assertEqual(outside.read_text(encoding="utf-8"), "secret")
+            self.assertIn("Wrote", write_result)
+            self.assertIn("Edited", edit_result)
+            self.assertEqual(host_file.read_text(encoding="utf-8"), "old\n")
+            self.assertEqual((session.workspace / "note.txt").read_text(), "sandbox\n")
+            self.assertEqual((session.workspace / "created.txt").read_text(), "new\n")
 
     def test_glob_uses_sandbox_workspace_in_docker_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,7 +285,11 @@ class SandboxTests(unittest.TestCase):
             (session.workspace / "sandbox_only.py").write_text("print('sandbox')\n", encoding="utf-8")
 
             with (
-                mock.patch.dict("os.environ", {"FOLIUM_BASH_BACKEND": "docker"}, clear=False),
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    clear=False,
+                ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
             ):
                 result = GlobTool().execute("*.py")
@@ -286,7 +309,11 @@ class SandboxTests(unittest.TestCase):
             (session.workspace / "note.txt").write_text("sandbox token\n", encoding="utf-8")
 
             with (
-                mock.patch.dict("os.environ", {"FOLIUM_BASH_BACKEND": "docker"}, clear=False),
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    clear=False,
+                ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
             ):
                 result = GrepTool().execute("sandbox token", path="note.txt")

@@ -3,13 +3,19 @@
 import difflib
 from pathlib import Path
 
-from .session import EXCLUDE_NAMES, EXCLUDE_PARTS, SandboxSession, get_current_session
+from .session import EXCLUDE_NAMES, EXCLUDE_PARTS, SandboxSession, get_current_session, use_copy_workspace
 
 
 MAX_DIFF_CHARS = 30_000
 
 
 def sandbox_diff(session: SandboxSession | None = None, max_chars: int = MAX_DIFF_CHARS) -> str:
+    if session is None and not use_copy_workspace():
+        return (
+            "sandbox_diff is only available when FOLIUM_SANDBOX_WORKSPACE_MODE=copy. "
+            "Current Docker mode mounts the real workspace directly, so changes are applied "
+            "to the project as tools run. Use git diff to inspect project changes."
+        )
     session = session or get_current_session()
     session.prepare()
     host_files = _file_map(session.host_workspace)

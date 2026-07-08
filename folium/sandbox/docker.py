@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..observability.context import record_sandbox_event
 from .local import check_dangerous, decode_process_output, truncate_output
-from .session import get_current_session
+from .session import get_current_session, get_host_workspace, use_copy_workspace
 
 
 class DockerSandboxExecutor:
@@ -23,8 +23,12 @@ class DockerSandboxExecutor:
     ):
         self.image = image
         if workspace is None:
-            self.session = get_current_session()
-            self.workspace = self.session.workspace.resolve()
+            self.session = get_current_session() if use_copy_workspace() else None
+            self.workspace = (
+                self.session.workspace.resolve()
+                if self.session is not None
+                else get_host_workspace()
+            )
         else:
             self.session = None
             self.workspace = Path(workspace).resolve()
@@ -164,7 +168,8 @@ class DockerSandboxExecutor:
         base = {
             "container_id": self.container_id,
             "container_name": self.container_name,
-            "sandbox_workspace": str(self.workspace),
+            "workspace": str(self.workspace),
+            "workspace_mode": "copy" if self.session is not None else "host",
         }
         if self.session is not None:
             base["sandbox_session_id"] = self.session.session_id
