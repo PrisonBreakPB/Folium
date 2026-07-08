@@ -1,8 +1,8 @@
 """File creation / overwrite."""
 
-from pathlib import Path
 from .base import Tool
 from .edit import _changed_files
+from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 
 class WriteFileTool(Tool):
@@ -28,11 +28,13 @@ class WriteFileTool(Tool):
 
     def execute(self, file_path: str, content: str) -> str:
         try:
-            p = Path(file_path).expanduser().resolve()
+            p = resolve_tool_path(file_path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
             _changed_files.add(str(p))
             n_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
             return f"Wrote {n_lines} lines to {file_path}"
+        except SandboxPathError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"

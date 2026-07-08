@@ -1,7 +1,7 @@
 """File pattern matching."""
 
-from pathlib import Path
 from .base import Tool
+from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 
 class GlobTool(Tool):
@@ -27,7 +27,7 @@ class GlobTool(Tool):
 
     def execute(self, pattern: str, path: str = ".") -> str:
         try:
-            base = Path(path).expanduser().resolve()
+            base = resolve_tool_path(path)
             if not base.is_dir():
                 return f"Error: {path} is not a directory"
 
@@ -43,5 +43,7 @@ class GlobTool(Tool):
             if total > 100:
                 result += f"\n... ({total} matches, showing first 100)"
             return result or "No files matched."
+        except SandboxPathError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"

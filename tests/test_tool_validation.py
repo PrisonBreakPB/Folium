@@ -68,6 +68,7 @@ class ToolValidationTests(unittest.TestCase):
             "paper_search": {"query": "machine learning"},
             "paper_validate": {"papers": [{"title": "Attention Is All You Need"}]},
             "arxiv_search": {"query": "event-triggered control"},
+            "sandbox_diff": {},
         }
 
         for tool in ALL_TOOLS:

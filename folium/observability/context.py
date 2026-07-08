@@ -172,5 +172,9 @@ def record_event(name: str, event_type: str, metadata: dict[str, Any] | None = N
     })
 
 
+def record_sandbox_event(action: str, metadata: dict[str, Any] | None = None) -> None:
+    record_event(action, "sandbox_event", metadata)
+
+
 def _iso_time(ts: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)) + f".{int((ts % 1) * 1000):03d}"

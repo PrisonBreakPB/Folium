@@ -19,6 +19,8 @@ from folium.context import (
 )
 from folium.session import save_session, load_session, list_sessions
 from folium.tools import get_tool
+from folium.tools.edit import EditFileTool
+from folium.tools.write import WriteFileTool
 
 
 def test_version():
@@ -30,7 +32,7 @@ def test_public_api_exports():
     assert Agent is not None
     assert LLM is not None
     assert Config is not None
-    assert len(ALL_TOOLS) == 14
+    assert len(ALL_TOOLS) == 15
 
 
 def test_config_from_env():
@@ -386,10 +388,11 @@ def test_cost_estimation_unknown_model():
 def test_edit_tracks_changed_files(tmp_path):
     from folium.tools.edit import _changed_files
     _changed_files.clear()
-    edit = get_tool("edit_file")
     path = tmp_path / "sample.py"
     path.write_text("aaa\nbbb\n")
-    edit.execute(file_path=str(path), old_string="aaa", new_string="zzz")
+    with mock.patch.dict(os.environ, {"FOLIUM_BASH_BACKEND": "local"}, clear=False):
+        edit = EditFileTool()
+        edit.execute(file_path=str(path), old_string="aaa", new_string="zzz")
     assert any(str(path) in p for p in _changed_files)
     _changed_files.clear()
 
@@ -397,8 +400,9 @@ def test_edit_tracks_changed_files(tmp_path):
 def test_write_tracks_changed_files(tmp_path):
     from folium.tools.edit import _changed_files
     _changed_files.clear()
-    write = get_tool("write_file")
     path = tmp_path / "tracked.txt"
-    write.execute(file_path=str(path), content="tracked\n")
+    with mock.patch.dict(os.environ, {"FOLIUM_BASH_BACKEND": "local"}, clear=False):
+        write = WriteFileTool()
+        write.execute(file_path=str(path), content="tracked\n")
     assert any("tracked" not in p and path.name in p for p in _changed_files) or len(_changed_files) > 0
     _changed_files.clear()

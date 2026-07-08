@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 from .base import Tool
+from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # skip these dirs to avoid noise
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", "dist", "build"}
@@ -39,7 +40,10 @@ class GrepTool(Tool):
         except re.error as e:
             return f"Invalid regex: {e}"
 
-        base = Path(path).expanduser().resolve()
+        try:
+            base = resolve_tool_path(path)
+        except SandboxPathError as e:
+            return f"Error: {e}"
         if not base.exists():
             return f"Error: {path} not found"
 

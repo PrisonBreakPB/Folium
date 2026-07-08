@@ -75,6 +75,11 @@ FOLIUM_TEMPERATURE          采样温度
 FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
 FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
+FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
+FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
+FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 none
+FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
+FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
 ```
 
@@ -136,7 +141,7 @@ write_file      创建或覆盖文件
 edit_file       基于唯一字符串匹配的安全编辑，返回 diff
 glob            按 glob 模式查找文件
 grep            按正则搜索文件内容
-bash            执行 shell 命令，包含危险命令拦截、超时终止进程和输出截断
+bash            执行 shell 命令，支持 local/docker 后端、危险命令拦截、超时终止和输出截断
 agent           启动子 Agent 处理独立子任务
 todo            更新结构化任务列表，跟踪 pending / in_progress / completed
 web_search      使用 Brave Search API 返回轻量 Web 搜索结果
@@ -144,6 +149,7 @@ web_fetch       读取单个 HTTP(S) URL，返回清洗后的 title 和正文片
 pdf_fetch       读取 PDF 正文文本
 paper_search    通过 OpenAlex 搜索论文，返回结构化 JSON 证据
 paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial / unverified / mismatch
+sandbox_diff    查看 Docker 沙箱工作区相对真实项目的文件差异，不会写回宿主机
 ```
 
 `web_search` 是轻量搜索工具，只返回候选网页的 title、URL 和 snippet，不抓取全文、不做 RAG。需要设置 `BRAVE_SEARCH_API_KEY`；缺少 key 时工具会返回明确错误。
@@ -274,6 +280,7 @@ conversations/traces/
 - `llm`：模型调用、消息数量、工具数量、token、首 token 时间、输出摘要
 - `llm_error`：模型调用失败时的 provider、状态码、错误类型、错误码和 request id
 - `tool`：工具名称、参数、结果摘要、耗时、错误状态
+- `sandbox_event`：Docker 沙箱工作区、容器启动、命令结束、超时和清理等生命周期事件
 - `todo_update` / `todo_reminder`：todo 状态更新和自动提醒注入
 - `context_compression`：上下文压缩前后的 token 和消息数量
 - `llm_request_snapshot` / `llm_response_snapshot`：每次模型调用实际输入和模型响应快照

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from .base import Tool
+from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 
 def _read_text_prefer_utf8(path: Path) -> str:
@@ -38,7 +39,7 @@ class ReadFileTool(Tool):
 
     def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
         try:
-            p = Path(file_path).expanduser().resolve()
+            p = resolve_tool_path(file_path)
             if not p.exists():
                 return f"Error: {file_path} not found"
             if not p.is_file():
@@ -56,5 +57,7 @@ class ReadFileTool(Tool):
             if total > start + limit:
                 result += f"\n... ({total} lines total, showing {start+1}-{start+len(chunk)})"
             return result or "(empty file)"
+        except SandboxPathError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"

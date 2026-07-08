@@ -7,9 +7,9 @@ and makes edits safe and reviewable.
 """
 
 import difflib
-from pathlib import Path
 
 from .base import Tool
+from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # track files changed this session for /diff
 _changed_files: set[str] = set()
@@ -43,7 +43,7 @@ class EditFileTool(Tool):
 
     def execute(self, file_path: str, old_string: str, new_string: str) -> str:
         try:
-            p = Path(file_path).expanduser().resolve()
+            p = resolve_tool_path(file_path)
             if not p.exists():
                 return f"Error: {file_path} not found"
 
@@ -69,6 +69,8 @@ class EditFileTool(Tool):
             # generate a unified diff so the user/LLM can see exactly what changed
             diff = _unified_diff(content, new_content, str(p))
             return f"Edited {file_path}\n{diff}"
+        except SandboxPathError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"
 
