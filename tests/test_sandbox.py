@@ -181,6 +181,34 @@ class SandboxTests(unittest.TestCase):
             self.assertFalse((session.workspace / ".git").exists())
             self.assertFalse((session.workspace / ".venv").exists())
 
+    def test_session_excludes_sensitive_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            root = Path(tmp) / "sessions"
+            host.mkdir()
+            (host / "README.md").write_text("hello", encoding="utf-8")
+            (host / ".env").write_text("OPENAI_API_KEY=secret\n", encoding="utf-8")
+            (host / ".env.local").write_text("TOKEN=secret\n", encoding="utf-8")
+            (host / "id_rsa").write_text("private key\n", encoding="utf-8")
+            (host / "client.pem").write_text("pem\n", encoding="utf-8")
+            (host / "credentials.json").write_text('{"token":"secret"}\n', encoding="utf-8")
+            nested = host / "nested"
+            nested.mkdir()
+            (nested / "service-account-prod.json").write_text('{"key":"secret"}\n', encoding="utf-8")
+            (nested / "mod.py").write_text("print('ok')\n", encoding="utf-8")
+
+            session = SandboxSession(host_workspace=str(host), root_dir=str(root))
+            session.prepare()
+
+            self.assertTrue((session.workspace / "README.md").exists())
+            self.assertTrue((session.workspace / "nested" / "mod.py").exists())
+            self.assertFalse((session.workspace / ".env").exists())
+            self.assertFalse((session.workspace / ".env.local").exists())
+            self.assertFalse((session.workspace / "id_rsa").exists())
+            self.assertFalse((session.workspace / "client.pem").exists())
+            self.assertFalse((session.workspace / "credentials.json").exists())
+            self.assertFalse((session.workspace / "nested" / "service-account-prod.json").exists())
+
     def test_file_tools_use_sandbox_workspace_in_docker_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"

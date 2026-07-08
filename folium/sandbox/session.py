@@ -1,5 +1,6 @@
 """Sandbox session workspace management."""
 
+import fnmatch
 import os
 import shutil
 import uuid
@@ -10,6 +11,21 @@ from ..observability.context import record_sandbox_event
 
 SANDBOX_DIR = ".folium/sandbox/sessions"
 EXCLUDE_NAMES = {".git", ".venv", "__pycache__", ".folium"}
+EXCLUDE_PATTERNS = {
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa",
+    "id_rsa.*",
+    "id_ed25519",
+    "id_ed25519.*",
+    "credentials.json",
+    "token.json",
+    "service-account*.json",
+}
 EXCLUDE_PARTS = {("conversations", "traces")}
 
 _current_session: "SandboxSession | None" = None
@@ -95,6 +111,8 @@ def _ignore_names(directory: str, names: list[str]) -> set[str]:
 
 def _should_exclude(path: Path, root: Path) -> bool:
     if path.name in EXCLUDE_NAMES:
+        return True
+    if any(fnmatch.fnmatch(path.name, pattern) for pattern in EXCLUDE_PATTERNS):
         return True
     try:
         parts = path.resolve().relative_to(root.resolve()).parts
