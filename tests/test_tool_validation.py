@@ -2,6 +2,7 @@ import unittest
 import time
 
 from folium.agent import FINAL_ROUND_REMINDER, Agent
+from folium.context import TOOL_OUTPUT_DEDUPE_PLACEHOLDER
 from folium.llm import LLMResponse, ToolCall
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.agent import _sub_agent_tool
@@ -365,7 +366,7 @@ class ToolValidationTests(unittest.TestCase):
         self.assertIsNot(sub_todo.manager, agent.todo_manager)
         self.assertEqual(sub_todo.manager.snapshot(), [])
 
-    def test_agent_transcript_keeps_full_tool_output_after_context_trim(self):
+    def test_agent_transcript_keeps_full_tool_output_after_context_compression(self):
         long_output = "x" * 9000
 
         class LongTool(Tool):
@@ -416,7 +417,7 @@ class ToolValidationTests(unittest.TestCase):
             m for m in agent.transcript
             if m.get("role") == "tool" and m.get("tool_call_id") == "call_1"
         )
-        self.assertIn("trimmed to save context", context_tool["content"])
+        self.assertEqual(context_tool["content"], TOOL_OUTPUT_DEDUPE_PLACEHOLDER)
         self.assertEqual(transcript_tool["content"], long_output)
 
 

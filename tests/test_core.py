@@ -12,6 +12,8 @@ from folium.context import (
     SUMMARY_PREFIX,
     TOOL_COMPRESS_EXEMPT,
     TOOL_COMPRESSION_TIER,
+    TOOL_OUTPUT_DEDUPE_PLACEHOLDER,
+    TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS,
     TOOL_OUTPUT_TRIM_KEEP_CHARS,
     TOOL_OUTPUT_TRIM_MARKER,
     TOOL_OUTPUT_TRIM_THRESHOLD_CHARS,
@@ -134,6 +136,69 @@ def test_context_prune_skips_secondary_tools():
     assert TOOL_OUTPUT_TRIM_MARKER in msgs[0]["content"]
 
 
+def test_context_dedupe_keeps_latest_full_tool_output():
+    content = "duplicate output\n" + ("x" * TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS)
+    msgs = [
+        {"role": "tool", "name": "read_file", "tool_call_id": "oldest", "content": content},
+        {"role": "tool", "name": "read_file", "tool_call_id": "middle", "content": content},
+        {"role": "tool", "name": "read_file", "tool_call_id": "latest", "content": content},
+    ]
+
+    report = ContextManager._dedupe_tool_outputs(msgs)
+
+    assert report["changed"] is True
+    assert report["tools"] == [
+        {"tool_call_id": "oldest", "name": "read_file"},
+        {"tool_call_id": "middle", "name": "read_file"},
+    ]
+    assert msgs[0]["content"] == TOOL_OUTPUT_DEDUPE_PLACEHOLDER
+    assert msgs[1]["content"] == TOOL_OUTPUT_DEDUPE_PLACEHOLDER
+    assert msgs[2]["content"] == content
+
+
+def test_context_dedupe_skips_short_non_string_and_exempt_outputs():
+    TOOL_COMPRESS_EXEMPT.add("test_exempt")
+    try:
+        short = "s" * (TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS - 1)
+        exempt = "exempt output\n" + ("x" * TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS)
+        msgs = [
+            {"role": "tool", "tool_call_id": "short_1", "content": short},
+            {"role": "tool", "tool_call_id": "short_2", "content": short},
+            {"role": "tool", "tool_call_id": "blocks_1", "content": [{"type": "text", "text": "same"}]},
+            {"role": "tool", "tool_call_id": "blocks_2", "content": [{"type": "text", "text": "same"}]},
+            {"role": "tool", "name": "test_exempt", "tool_call_id": "exempt_1", "content": exempt},
+            {"role": "tool", "name": "test_exempt", "tool_call_id": "exempt_2", "content": exempt},
+        ]
+
+        report = ContextManager._dedupe_tool_outputs(msgs)
+
+        assert report["changed"] is False
+        assert msgs[0]["content"] == short
+        assert msgs[1]["content"] == short
+        assert msgs[2]["content"] == [{"type": "text", "text": "same"}]
+        assert msgs[3]["content"] == [{"type": "text", "text": "same"}]
+        assert msgs[4]["content"] == exempt
+        assert msgs[5]["content"] == exempt
+    finally:
+        TOOL_COMPRESS_EXEMPT.discard("test_exempt")
+
+
+def test_context_dedupe_runs_at_half_input_budget_before_snip():
+    ctx = ContextManager(max_tokens=100_000)
+    content = "duplicate output\n" + ("x" * 500)
+    msgs = [
+        {"role": "tool", "name": "read_file", "tool_call_id": "old", "content": content},
+        {"role": "tool", "name": "read_file", "tool_call_id": "new", "content": content},
+    ]
+
+    report = ctx.maybe_compress(msgs, None, real_tokens=ctx._dedupe_at + 1)
+
+    assert report["compressed"] is True
+    assert [layer["name"] for layer in report["layers"]] == ["dedupe"]
+    assert msgs[0]["content"] == TOOL_OUTPUT_DEDUPE_PLACEHOLDER
+    assert msgs[1]["content"] == content
+
+
 def test_context_snip_exempt_tool():
     """Exempt tools are never compressed."""
     TOOL_COMPRESS_EXEMPT.add("test_exempt")
@@ -207,6 +272,7 @@ def test_context_reserves_output_tokens():
 
     assert ctx.reserved_output_tokens == DEFAULT_RESERVED_OUTPUT_TOKENS
     assert ctx.input_budget_tokens == 80_000
+    assert ctx._dedupe_at == 40_000
     assert ctx._snip_at == 48_000
     assert ctx._secondary_snip_at == 56_000
     assert ctx._prune_at == 64_000

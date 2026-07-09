@@ -7,12 +7,15 @@ Claude Code uses a 4-layer strategy:
   4. Autocompact    - periodic background compaction
 
 Folium implements a 3-layer progressive strategy:
+  Pre-layer            - 50%: fold exact duplicate tool outputs
   Layer 1 (snip)      - 60%/70%: trim primary/secondary tool outputs, keep head/tail chars
   Layer 2 (prune)     - 80%: replace trimmed primary/default tool outputs with placeholders
   Layer 3 (summarize) - 90%: incremental LLM summary + protected user messages
 """
 
 from __future__ import annotations
+
+import hashlib
 from typing import TYPE_CHECKING
 
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
@@ -26,6 +29,10 @@ DEFAULT_PROTECTED_USER_TOKENS = 20_000
 TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4096
 TOOL_OUTPUT_TRIM_KEEP_CHARS = 1536
 TOOL_OUTPUT_TRIM_MARKER = "trimmed to save context"
+TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS = 200
+TOOL_OUTPUT_DEDUPE_PLACEHOLDER = (
+    "[Duplicate tool output folded: same content as later tool result]"
+)
 RECENT_TOOL_ROUNDS_TO_KEEP = 2
 
 # Exempt tools: never compress these outputs
@@ -105,6 +112,7 @@ class ContextManager:
         self.protected_user_tokens = max(1, protected_user_tokens)
         self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
         # layer thresholds (fraction of input budget after reserving output tokens)
+        self._dedupe_at = int(self.input_budget_tokens * 0.50)  # 50% -> fold duplicate tool outputs
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
         self._secondary_snip_at = int(self.input_budget_tokens * 0.70)  # 70% -> snip secondary tools
         self._prune_at = int(self.input_budget_tokens * 0.80)    # 80% -> prune to placeholders
@@ -121,6 +129,15 @@ class ContextManager:
         current = real_tokens if real_tokens is not None else estimate_tokens(messages)
         context_usage_ratio = current / self.input_budget_tokens if self.input_budget_tokens > 0 else 0.0
         report = {"compressed": False, "layers": []}
+
+        # Pre-layer: fold exact duplicate tool outputs before lossy trimming.
+        if current > self._dedupe_at:
+            layer = self._dedupe_tool_outputs(messages)
+            if layer["changed"]:
+                report["compressed"] = True
+                report["layers"].append(layer)
+                current = estimate_tokens(messages)
+                context_usage_ratio = current / self.input_budget_tokens if self.input_budget_tokens > 0 else 0.0
 
         # Layer 1: trim verbose tool outputs
         if current > self._snip_at:
@@ -153,6 +170,37 @@ class ContextManager:
                 current = estimate_tokens(messages)
 
         return report
+
+    @staticmethod
+    def _dedupe_tool_outputs(messages: list[dict]) -> dict:
+        """Fold exact duplicate tool outputs, preserving the latest full result."""
+        tools = []
+        content_hashes: set[str] = set()
+
+        for m in reversed(messages):
+            if m.get("role") != "tool":
+                continue
+
+            tool_name = m.get("name", "_default")
+            if tool_name in TOOL_COMPRESS_EXEMPT:
+                continue
+
+            content = m.get("content", "")
+            if not isinstance(content, str):
+                continue
+            if len(content) < TOOL_OUTPUT_DEDUPE_THRESHOLD_CHARS:
+                continue
+
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            if content_hash in content_hashes:
+                m["content"] = TOOL_OUTPUT_DEDUPE_PLACEHOLDER
+                tools.append(_tool_report_item(m))
+                continue
+
+            content_hashes.add(content_hash)
+
+        tools.reverse()
+        return _layer_report("dedupe", tools)
 
     @staticmethod
     def _snip_tool_outputs(messages: list[dict], context_usage_ratio: float = 0.0,
