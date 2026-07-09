@@ -14,6 +14,7 @@ from ..agent import Agent
 from ..config import Config
 from ..llm import LLMProviderError
 from ..session import save_session, load_session, list_sessions, delete_session, new_session_id, calculate_session_stats
+from ..session_prompts import save_prompt
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
@@ -108,6 +109,7 @@ def _auto_save():
             config.model,
             _state["session_id"],
             transcript=getattr(agent, "transcript", agent.messages),
+            system_prompt=agent._system,
         )
         _state["session_id"] = sid
         agent.session_id = sid
@@ -164,6 +166,8 @@ async def chat(req: ChatRequest):
     async with _chat_lock:
         if _state["session_id"] is None:
             _state["session_id"] = new_session_id()
+            # Save current system prompt to DB for new session
+            save_prompt(_state["session_id"], _state["agent"]._system)
         _state["agent"].session_id = _state["session_id"]
         _state["agent"].edit_approval_callback = on_edit_approval
         task = asyncio.create_task(
@@ -256,13 +260,17 @@ async def switch_conversation(req: SwitchRequest):
     if not loaded:
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
-    messages, model, transcript = loaded
+    messages, model, transcript, system_prompt = loaded
     _state["agent"].messages = messages
     _state["agent"].transcript = transcript
     _state["agent"].reset_todos()
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
     _state["dirty"] = False
+
+    # Restore system prompt from DB if available
+    if system_prompt is not None:
+        _state["agent"]._system = system_prompt
 
     # restore cumulative token counts from _usage in messages
     llm = _state["agent"].llm

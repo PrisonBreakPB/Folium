@@ -26,6 +26,7 @@ from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
 from .skills import load_skills
+from .session_prompts import save_prompt
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
@@ -538,6 +539,13 @@ class Agent:
             return current + 1
         return 0
 
+    def _refresh_system_prompt(self) -> None:
+        """Rescan skills and regenerate system prompt, then persist to DB."""
+        self.skills = load_skills()
+        self._system = system_prompt(self.tools, self.skills)
+        if self.session_id:
+            save_prompt(self.session_id, self._system)
+
     def reset(self):
         """Clear conversation history and reset LLM cumulative counters."""
         self.messages.clear()
@@ -593,6 +601,8 @@ class Agent:
                         "layers": report["layers"],
                     },
                 })
+                # Rescan skills and refresh system prompt after compression
+                self._refresh_system_prompt()
         return report["compressed"]
 
     def _update_todo_nag_state(self, used_todo: bool, on_event=None):

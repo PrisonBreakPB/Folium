@@ -12,6 +12,7 @@ import uuid
 import copy
 from pathlib import Path
 from .encoding import repair_mojibake_text
+from .session_prompts import save_prompt, load_prompt
 
 SESSIONS_DIR = Path(os.getcwd()) / "conversations"
 _SAFE_SESSION_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -48,6 +49,7 @@ def save_session(
     model: str,
     session_id: str | None = None,
     transcript: list[dict] | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Save conversation to disk. Returns the session ID."""
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,6 +71,11 @@ def save_session(
 
     path = _session_path(session_id)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Save system prompt to SQLite
+    if system_prompt is not None:
+        save_prompt(session_id, system_prompt)
+
     return session_id
 
 
@@ -83,14 +90,16 @@ def _load_raw(session_id: str) -> dict | None:
         return None
 
 
-def load_session(session_id: str) -> tuple[list[dict], str, list[dict]] | None:
-    """Load a saved session. Returns (messages, model, transcript) or None."""
+def load_session(session_id: str) -> tuple[list[dict], str, list[dict], str | None] | None:
+    """Load a saved session. Returns (messages, model, transcript, system_prompt) or None."""
     data = _load_raw(session_id)
     if not data:
         return None
     messages = data["messages"]
     transcript = data.get("transcript")
-    return messages, data["model"], transcript if transcript is not None else copy.deepcopy(messages)
+    # Try to load system prompt from SQLite
+    system_prompt = load_prompt(session_id)
+    return messages, data["model"], transcript if transcript is not None else copy.deepcopy(messages), system_prompt
 
 
 def delete_session(session_id: str) -> bool:
