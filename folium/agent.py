@@ -30,6 +30,7 @@ from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
 from .encoding import repair_mojibake_text
+from .edit_approval import build_edit_approval_proposal
 
 
 FINAL_ROUND_REMINDER = (
@@ -81,6 +82,7 @@ class Agent:
         self.todo_tool = next((t for t in self.tools if isinstance(t, TodoTool)), None)
         self.todo_manager = self.todo_tool.manager if self.todo_tool else None
         self.rounds_since_todo = 0
+        self.edit_approval_callback = None
 
         # wire up sub-agent capability
         for t in self.tools:
@@ -244,10 +246,23 @@ class Agent:
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
-                    # parallel execution for multiple tool calls
-                    for tc in resp.tool_calls:
-                        self._emit_tool_start(on_event, tc)
-                    results = self._exec_tools_parallel(resp.tool_calls, on_tool)
+                    # Parallel execution is fine for independent tools. If a round
+                    # contains edit approvals, run sequentially so the UI shows one
+                    # clear decision at a time.
+                    if any(tc.name in {"write_file", "edit_file", "bash"} for tc in resp.tool_calls):
+                        results = []
+                        for tc in resp.tool_calls:
+                            if on_tool:
+                                on_tool(tc.name, tc.arguments)
+                            self._emit_tool_start(on_event, tc)
+                            result = self._exec_tool(tc)
+                            if on_tool:
+                                on_tool(tc.name, tc.arguments, result.status)
+                            results.append(result)
+                    else:
+                        for tc in resp.tool_calls:
+                            self._emit_tool_start(on_event, tc)
+                        results = self._exec_tools_parallel(resp.tool_calls, on_tool)
                     for tc, result in zip(resp.tool_calls, results):
                         self._emit_tool_result(on_event, tc, result)
                         self._append_message({
@@ -336,6 +351,30 @@ class Agent:
                     and arguments["timeout"] > self.tool_timeout
                 ):
                     arguments["timeout"] = self.tool_timeout
+                approval_error = self._maybe_require_edit_approval(tc, arguments)
+                if approval_error:
+                    result = approval_error
+                    status = "error"
+                    duration_ms = int((time.perf_counter() - started_at) * 1000)
+                    if status in {"error", "bad_arguments", "timeout"}:
+                        mark_current_span_status("error")
+                    observer.record({
+                        "event": "tool_result",
+                        "trace_id": current_trace_id(),
+                        "span_id": current_span_id(),
+                        "name": tc.name,
+                        "type": "tool",
+                        "status": status,
+                        "metadata": {
+                            "result": compact_payload(
+                                result,
+                                include_full=cfg.full_tool_output,
+                                max_preview_chars=cfg.max_preview_chars,
+                                redact=cfg.redact_secrets,
+                            )
+                        },
+                    })
+                    return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
                 result = tool.execute(**arguments)
                 result = repair_mojibake_text(result)
                 status = _status_from_tool_result(result)
@@ -390,6 +429,19 @@ class Agent:
             for tc, result in zip(tool_calls, results):
                 on_tool(tc.name, tc.arguments, result.status)
         return results
+
+    def _maybe_require_edit_approval(self, tc, arguments: dict) -> str | None:
+        if tc.name not in {"write_file", "edit_file", "bash"} or self.edit_approval_callback is None:
+            return None
+        proposal = build_edit_approval_proposal(tc.name, arguments)
+        if proposal is None:
+            return None if tc.name == "bash" else "Error: could not prepare edit approval preview; file was not modified."
+        approved = bool(self.edit_approval_callback(tc, proposal))
+        if approved:
+            return None
+        if tc.name == "bash":
+            return "Error: bash command rejected by user; workspace was not modified."
+        return f"Error: edit rejected by user; {proposal.path} was not modified."
 
     def _emit_tool_start(self, on_event, tc):
         self._emit_event(

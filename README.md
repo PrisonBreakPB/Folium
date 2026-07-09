@@ -79,7 +79,7 @@ FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 
 FOLIUM_HOST_WORKSPACE       Docker 默认挂载的真实项目目录，默认当前进程工作目录
 FOLIUM_SANDBOX_WORKSPACE_MODE Docker 工作区模式：host 或 copy，默认 host；copy 会复制项目到 .folium/sandbox/sessions
 FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
-FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 none
+FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需禁止 bash 容器联网可设为 none
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
 FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
@@ -359,6 +359,10 @@ python -m unittest tests.test_tool_validation tests.test_tool_encoding tests.tes
 ```bash
 pytest
 ```
+
+## 写入审批
+
+Web UI 中，`write_file`、`edit_file` 以及看起来会写入挂载工作区的 `bash` 命令，会先展示 diff 或命令预览并等待用户审批；审批不会自动超时。general 子 Agent 调用这些工具时也会走同一套审批路径。
 
 ## License
 

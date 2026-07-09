@@ -104,7 +104,7 @@ class SandboxTests(unittest.TestCase):
                 "--name",
                 executor.container_name,
                 "--network",
-                "none",
+                "bridge",
             ])
             self.assertIn(f"{Path(tmp).resolve()}:/workspace", run_calls[0])
             self.assertEqual(popen_calls[0], [

@@ -16,7 +16,7 @@ class DockerSandboxExecutor:
         self,
         image: str = "python:3.11-slim",
         workspace: str | None = None,
-        network: str = "none",
+        network: str = "bridge",
         cpus: str = "1",
         memory: str = "2g",
         pids_limit: int = 256,

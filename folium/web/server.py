@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -27,6 +29,7 @@ _state = {
     "dirty": False,
 }
 _chat_lock = asyncio.Lock()
+_pending_approvals = {}
 
 app = FastAPI(title="Folium")
 
@@ -41,6 +44,18 @@ class CommandRequest(BaseModel):
 
 class SwitchRequest(BaseModel):
     session_id: str
+
+
+class ApprovalDecisionRequest(BaseModel):
+    approval_id: str
+    approved: bool
+
+
+class PendingApproval:
+    def __init__(self, payload: dict):
+        self.payload = payload
+        self.event = threading.Event()
+        self.approved = False
 
 
 # ── SSE bridge: sync callbacks → async queue ────────────────
@@ -58,7 +73,27 @@ def _make_bridge(queue: asyncio.Queue):
     def on_event(event: dict):
         queue.put_nowait(event)
 
-    return on_token, on_tool, on_event
+    def on_edit_approval(tc, proposal):
+        approval_id = uuid.uuid4().hex
+        payload = {
+            "type": "approval_request",
+            "approval_id": approval_id,
+            "tool_call_id": tc.id,
+            "tool_name": tc.name,
+            "path": proposal.path,
+            "title": proposal.title,
+            "diff": proposal.diff,
+            "truncated": proposal.truncated,
+            "diff_chars": proposal.diff_chars,
+        }
+        pending = PendingApproval(payload)
+        _pending_approvals[approval_id] = pending
+        queue.put_nowait(payload)
+        pending.event.wait()
+        _pending_approvals.pop(approval_id, None)
+        return pending.approved
+
+    return on_token, on_tool, on_event, on_edit_approval
 
 
 # ── auto-save helper ────────────────────────────────────────
@@ -124,12 +159,13 @@ async def chat(req: ChatRequest):
         return JSONResponse({"error": "A chat is already in progress"}, status_code=409)
 
     queue: asyncio.Queue = asyncio.Queue()
-    on_token, on_tool, on_event = _make_bridge(queue)
+    on_token, on_tool, on_event, on_edit_approval = _make_bridge(queue)
 
     async with _chat_lock:
         if _state["session_id"] is None:
             _state["session_id"] = new_session_id()
         _state["agent"].session_id = _state["session_id"]
+        _state["agent"].edit_approval_callback = on_edit_approval
         task = asyncio.create_task(
             asyncio.to_thread(
                 _state["agent"].chat,
@@ -141,6 +177,7 @@ async def chat(req: ChatRequest):
         )
 
         def _on_complete(t):
+            _state["agent"].edit_approval_callback = None
             if t.exception():
                 queue.put_nowait(_error_event(t.exception()))
             else:
@@ -163,6 +200,16 @@ async def chat(req: ChatRequest):
             media_type="text/event-stream",
             background=BackgroundTask(_auto_save),
         )
+
+
+@app.post("/approval")
+async def approval(req: ApprovalDecisionRequest):
+    pending = _pending_approvals.get(req.approval_id)
+    if pending is None:
+        return JSONResponse({"error": "审批请求不存在或已失效"}, status_code=404)
+    pending.approved = bool(req.approved)
+    pending.event.set()
+    return {"result": "ok"}
 
 
 @app.post("/new")

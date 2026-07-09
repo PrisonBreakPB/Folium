@@ -46,7 +46,7 @@ def _executor_from_env():
         return DockerSandboxExecutor(
             image=os.getenv("FOLIUM_DOCKER_IMAGE", "python:3.11-slim"),
             workspace=os.getenv("FOLIUM_DOCKER_WORKSPACE") or None,
-            network=os.getenv("FOLIUM_DOCKER_NETWORK", "none"),
+            network=os.getenv("FOLIUM_DOCKER_NETWORK", "bridge"),
             cpus=os.getenv("FOLIUM_DOCKER_CPUS", "1"),
             memory=os.getenv("FOLIUM_DOCKER_MEMORY", "2g"),
             pids_limit=int(os.getenv("FOLIUM_DOCKER_PIDS_LIMIT", "256")),

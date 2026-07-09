@@ -1,7 +1,10 @@
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from folium.agent import Agent
-from folium.llm import LLMResponse
+from folium.llm import LLMResponse, ToolCall
 from folium.tools import create_tools
 from folium.tools.agent import AgentTool
 
@@ -17,6 +20,25 @@ class CaptureLLM:
         self.messages = messages
         self.tools = tools or []
         return LLMResponse(content="done")
+
+
+class WriteOnceLLM:
+    model = "fake-model"
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, messages, tools=None, on_token=None):
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(tool_calls=[
+                ToolCall(
+                    id="write_1",
+                    name="write_file",
+                    arguments={"file_path": "sub.txt", "content": "hello\n"},
+                )
+            ])
+        return LLMResponse(content="sub done")
 
 
 class AgentToolTests(unittest.TestCase):
@@ -61,6 +83,33 @@ class AgentToolTests(unittest.TestCase):
         result = tool.execute(task="search papers", context="full")
 
         self.assertIn("only context='none' is supported", result)
+
+    def test_general_sub_agent_inherits_edit_approval(self):
+        old_workspace = os.environ.get("FOLIUM_HOST_WORKSPACE")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FOLIUM_HOST_WORKSPACE"] = tmp
+            try:
+                llm = WriteOnceLLM()
+                parent = Agent(llm=llm, tools=create_tools(), tool_timeout=60)
+                approvals = []
+
+                def reject(tc, proposal):
+                    approvals.append((tc.name, proposal.path))
+                    return False
+
+                parent.edit_approval_callback = reject
+                tool = next(t for t in parent.tools if isinstance(t, AgentTool))
+
+                result = tool.execute(task="write sub.txt", agent_type="general", timeout=30)
+                self.assertEqual(approvals, [("write_file", str(Path(tmp) / "sub.txt"))])
+                self.assertFalse((Path(tmp) / "sub.txt").exists())
+            finally:
+                if old_workspace is None:
+                    os.environ.pop("FOLIUM_HOST_WORKSPACE", None)
+                else:
+                    os.environ["FOLIUM_HOST_WORKSPACE"] = old_workspace
+
+        self.assertIn("[Sub-agent completed: general]", result)
 
 
 if __name__ == "__main__":

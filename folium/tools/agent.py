@@ -167,6 +167,7 @@ class AgentTool(Tool):
             skills=_sub_agent_skills(parent.skills, spec),
             system_addendum=spec.prompt,
         )
+        sub.edit_approval_callback = parent.edit_approval_callback
 
         try:
             result = _run_with_timeout(sub.chat, _format_task(task, output_format), timeout_seconds)

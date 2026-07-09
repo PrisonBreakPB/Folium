@@ -620,6 +620,136 @@ body {
   border-color: #ebc7bd;
 }
 
+.approval-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(920px, calc(100vw - 36px));
+  max-height: min(76vh, 720px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 22px 58px rgba(30, 43, 35, 0.24);
+  z-index: 300;
+  display: none;
+  overflow: hidden;
+}
+
+.approval-panel.visible {
+  display: flex;
+  flex-direction: column;
+}
+
+.approval-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fbf7;
+}
+
+.approval-title {
+  font-size: 15px;
+  font-weight: 720;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.approval-path {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-tag {
+  align-self: start;
+  border: 1px solid #bdd7c4;
+  background: #eef7f0;
+  color: #2f6d42;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.approval-diff {
+  margin: 0;
+  padding: 14px 16px;
+  background: #f6f8f4;
+  color: #243128;
+  border: 0;
+  overflow: auto;
+  max-height: 470px;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.approval-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 13px 18px;
+  border-top: 1px solid var(--border);
+  background: #fbfcfa;
+}
+
+.approval-note {
+  margin-right: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.approval-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 15px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.approval-btn:hover {
+  border-color: var(--border-strong);
+}
+
+.approval-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.approval-btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+.approval-btn.danger {
+  background: #fff8f6;
+  border-color: #efc6bd;
+  color: var(--error);
+}
+
+.approval-btn.danger:hover {
+  border-color: #d99889;
+  background: #fff2ee;
+}
+
+.approval-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .tool-actions {
   display: flex;
   gap: 10px;
@@ -790,6 +920,10 @@ body {
     grid-template-columns: 1fr;
     padding: 9px 14px;
   }
+  .approval-panel {
+    bottom: 12px;
+    width: calc(100vw - 20px);
+  }
   .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cmd-bar button { padding: 6px 8px; }
 }
@@ -885,6 +1019,22 @@ body {
   </div>
 </main>
 
+<section class="approval-panel" id="approvalPanel" aria-live="polite">
+  <div class="approval-head">
+    <div>
+      <div class="approval-title" id="approvalTitle">审查文件改动</div>
+      <div class="approval-path" id="approvalPath"></div>
+    </div>
+    <div class="approval-tag" id="approvalTool">write_file</div>
+  </div>
+  <pre class="approval-diff" id="approvalDiff"></pre>
+  <div class="approval-foot">
+    <div class="approval-note" id="approvalNote">只有你同意后，文件才会被修改。</div>
+    <button class="approval-btn danger" id="approvalDenyBtn" type="button">拒绝</button>
+    <button class="approval-btn primary" id="approvalAllowBtn" type="button">同意修改</button>
+  </div>
+</section>
+
 <script>
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('input');
@@ -894,7 +1044,16 @@ const sessionIdEl = document.getElementById('sessionId');
 const todoPanelEl = document.getElementById('todoPanel');
 const todoItemsEl = document.getElementById('todoItems');
 const todoProgressEl = document.getElementById('todoProgress');
+const approvalPanelEl = document.getElementById('approvalPanel');
+const approvalTitleEl = document.getElementById('approvalTitle');
+const approvalPathEl = document.getElementById('approvalPath');
+const approvalToolEl = document.getElementById('approvalTool');
+const approvalDiffEl = document.getElementById('approvalDiff');
+const approvalNoteEl = document.getElementById('approvalNote');
+const approvalAllowBtn = document.getElementById('approvalAllowBtn');
+const approvalDenyBtn = document.getElementById('approvalDenyBtn');
 let busy = false;
+let activeApproval = null;
 const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
 const DEFAULT_RESERVED_OUTPUT_TOKENS = 20000;
 let usageState = emptyUsageState();
@@ -1217,6 +1376,60 @@ function appendMsg(role, text) {
   scrollToBottom();
   return div;
 }
+
+function showApproval(event) {
+  activeApproval = event;
+  approvalTitleEl.textContent = normalizeText(event.title || '审查文件改动');
+  approvalPathEl.textContent = normalizeText(event.path || '');
+  approvalPathEl.title = normalizeText(event.path || '');
+  approvalToolEl.textContent = normalizeText(event.tool_name || 'edit');
+  approvalDiffEl.textContent = normalizeToolText(event.diff || '没有可显示的 diff');
+  approvalNoteEl.textContent = event.truncated
+    ? `diff 较长，已截断显示（共 ${event.diff_chars || 0} 个字符）。请确认关键改动后再同意。`
+    : '只有你同意后，文件才会被修改。';
+  approvalAllowBtn.disabled = false;
+  approvalDenyBtn.disabled = false;
+  approvalPanelEl.classList.add('visible');
+}
+
+function clearApproval() {
+  activeApproval = null;
+  approvalPanelEl.classList.remove('visible');
+  approvalDiffEl.textContent = '';
+}
+
+async function submitApproval(approved) {
+  if (!activeApproval) return;
+  const approvalId = activeApproval.approval_id;
+  approvalAllowBtn.disabled = true;
+  approvalDenyBtn.disabled = true;
+  approvalNoteEl.textContent = approved ? '正在同意修改...' : '正在拒绝修改...';
+  try {
+    const resp = await fetch('/approval', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({approval_id: approvalId, approved})
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      const message = err.error === 'Approval request not found' || err.error === '审批请求不存在或已失效'
+        ? '这条审批请求已经失效，可能是服务重启或已被处理。请让 Agent 重新发起操作。'
+        : (err.error || '提交审批结果失败。');
+      approvalNoteEl.textContent = message;
+      approvalAllowBtn.disabled = false;
+      approvalDenyBtn.disabled = false;
+      return;
+    }
+    clearApproval();
+  } catch (e) {
+    approvalNoteEl.textContent = `连接失败：${e.message}`;
+    approvalAllowBtn.disabled = false;
+    approvalDenyBtn.disabled = false;
+  }
+}
+
+approvalAllowBtn.addEventListener('click', () => submitApproval(true));
+approvalDenyBtn.addEventListener('click', () => submitApproval(false));
 
 function renderMarkdown(text) {
   if (!text) return '';
@@ -1718,6 +1931,9 @@ async function sendMessage() {
             renderTodos(event.items || []);
           } else if (event.type === 'todo_reminder') {
             appendStatus(process, 'Todo reminder sent');
+          } else if (event.type === 'approval_request') {
+            showApproval(event);
+            appendStatus(process, `等待你审查：${event.title || event.path || event.tool_name}`);
           } else if (event.type === 'tool_start') {
             appendToolEntry(process, {
               type: 'tool_start',
