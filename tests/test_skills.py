@@ -86,7 +86,8 @@ description: Use for experiments.
             self.assertIn("<skill_system>", prompt)
             self.assertIn("<name>experiment-runner</name>", prompt)
             self.assertIn("Use for experiments.", prompt)
-            self.assertIn(str(skill_file), prompt)
+            self.assertIn("skills/<name>/SKILL.md", prompt)
+            self.assertNotIn(str(skill_file), prompt)
 
     def test_missing_skills_directory_returns_empty_list(self):
         with tempfile.TemporaryDirectory() as tmp:

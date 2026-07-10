@@ -51,19 +51,18 @@ def _skills_section(skills) -> str:
         "  <skill>\n"
         f"    <name>{_xml_escape(skill.name)}</name>\n"
         f"    <description>{_xml_escape(skill.description)}</description>\n"
-        f"    <location>{_xml_escape(str(skill.skill_file))}</location>\n"
         "  </skill>"
         for skill in skills
     )
     return f"""# Skills
 <skill_system>
-You have access to skills that provide optimized workflows for specific research tasks.
+You have access to skills that provide optimized workflows for specific research and engineering tasks.
 
-Progressive loading pattern:
-1. When the user query matches a skill's use case, call `read_file` on that skill's SKILL.md file first.
-2. Read and follow the skill workflow before choosing a general approach.
-3. Load additional resources referenced by the skill only when needed.
-4. Do not load every skill preemptively.
+Before replying, scan the skills below. If a skill matches or is even partially relevant to the task, load it first by calling `read_file` on `skills/<name>/SKILL.md` (relative to the working directory above), then follow its workflow before choosing a general approach.
+
+Skills encode specialized knowledge and proven workflows — literature search strategies, debugging discipline, planning and verification routines — that outperform ad-hoc approaches. Load a skill even if you think you could handle the task with basic tools like web_search, paper_search, or bash. Skills also encode the user's preferred conventions and quality standards (how code review, testing, and verification should be done here), so load them even for tasks you already know how to do.
+
+Load only skills relevant to the current task; do not load every skill preemptively. Only proceed without loading a skill if genuinely none are relevant.
 
 <available_skills>
 {skill_items}
