@@ -338,7 +338,7 @@ class Agent:
         """Execute a single tool call."""
         tool = self._get_tool(tc.name)
         if tool is None:
-            message = f"Error: unknown tool '{tc.name}'"
+            message = f"Error: unknown tool '{tc.name}', please check the tool name and try again"
             return ToolExecutionResult(message, "error", preview=_preview_text(message))
         observer = active_observer()
         cfg = observer.config

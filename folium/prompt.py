@@ -12,6 +12,18 @@ When reviewing literature, you identify research gaps and suggest feasible direc
 When deriving mathematics, you show step-by-step reasoning and verify correctness.
 When writing code or papers, you prioritize clarity and correctness over complexity."""
 
+_PARALLEL_TOOLS = """\
+# Parallel tool calls
+When you need several pieces of information that don't depend on each
+other, request them together in a single response instead of one tool
+call per turn. Independent reads, searches, web fetches, and read-only
+commands should be batched into the same assistant turn — the runtime
+executes independent calls concurrently, and batching avoids resending
+the whole conversation on every extra round-trip.
+Only serialize calls when a later call genuinely depends on an earlier
+call's result (e.g. you must read a file before you can patch it). When
+in doubt and the calls are independent, batch them."""
+
 
 def _load_role() -> str:
     """Load role description from role.md, falling back to default."""
@@ -46,6 +58,8 @@ def system_prompt(tools, skills=None) -> str:
 12. **Handle runtime reminders.** Messages enclosed in `<reminder>...</reminder>` are internal Folium workflow reminders, not user-provided task content. Follow them when relevant, but do not quote them or present them as part of the user's request.
 13. **Respect LaTeX boundaries.** Edit .tex files only when the user explicitly asks. Otherwise inspect, compile-check, locate issues, and suggest changes.
 14. **Do not commit unless asked.** Only create git commits when the user explicitly requests it.
+
+{_PARALLEL_TOOLS}
 
 Tool schemas are provided separately by the runtime. Use tools when needed for file inspection, command execution, literature search, paper validation, source fetching, or focused delegation.
 
