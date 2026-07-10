@@ -44,6 +44,18 @@ FINAL_ROUND_REMINDER = (
     "</reminder>"
 )
 
+_SERIAL_TOOLS = {"write_file", "edit_file", "bash"}
+_NEVER_PARALLEL_TOOLS: set[str] = set()
+
+
+def _should_parallelize_tool_batch(tool_calls) -> bool:
+    """Return whether a tool-call batch is safe to run concurrently."""
+    if len(tool_calls) <= 1:
+        return False
+
+    tool_names = {tc.name for tc in tool_calls}
+    return not bool(tool_names & (_SERIAL_TOOLS | _NEVER_PARALLEL_TOOLS))
+
 
 @dataclass
 class ToolExecutionResult:
@@ -247,10 +259,8 @@ class Agent:
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
-                    # Parallel execution is fine for independent tools. If a round
-                    # contains edit approvals, run sequentially so the UI shows one
-                    # clear decision at a time.
-                    if any(tc.name in {"write_file", "edit_file", "bash"} for tc in resp.tool_calls):
+                    # Keep state-changing tools serial; independent tools can run together.
+                    if self._requires_serial_execution(resp.tool_calls) or not _should_parallelize_tool_batch(resp.tool_calls):
                         results = []
                         for tc in resp.tool_calls:
                             if on_tool:
@@ -407,6 +417,15 @@ class Agent:
                 },
             })
             return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
+
+    def _requires_serial_execution(self, tool_calls) -> bool:
+        """Check if tool calls must run sequentially due to dependencies.
+
+        Override this method to enforce serial execution when tools have
+        data dependencies (e.g., edit_file needs read_file's output first).
+        By default, all independent tools run in parallel.
+        """
+        return False
 
     def _exec_tools_parallel(self, tool_calls, on_tool=None) -> list[ToolExecutionResult]:
         """Run multiple tool calls concurrently using threads.
