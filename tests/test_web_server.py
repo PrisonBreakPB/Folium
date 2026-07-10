@@ -13,6 +13,7 @@ class DummyAgent:
         self.messages = [{"role": "user", "content": "hello"}]
         self.transcript = [{"role": "user", "content": "hello"}]
         self.session_id = None
+        self._system = "dummy system prompt"
         self.llm = DummyLLM()
         self.todo_manager = DummyTodoManager()
         self.rounds_since_todo = 0
