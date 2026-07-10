@@ -48,10 +48,7 @@ def _skills_section(skills) -> str:
         return ""
 
     skill_items = "\n".join(
-        "  <skill>\n"
-        f"    <name>{_xml_escape(skill.name)}</name>\n"
-        f"    <description>{_xml_escape(skill.description)}</description>\n"
-        "  </skill>"
+        f"  - {_oneline(skill.name)}: {_oneline(skill.description)}"
         for skill in skills
     )
     return f"""# Skills
@@ -64,15 +61,14 @@ Skills encode specialized knowledge and proven workflows — literature search s
 
 Load only skills relevant to the current task; do not load every skill preemptively. Only proceed without loading a skill if genuinely none are relevant.
 
+Each line below is `name: description`.
+
 <available_skills>
 {skill_items}
 </available_skills>
 </skill_system>"""
 
 
-def _xml_escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+def _oneline(text: str) -> str:
+    """Collapse newlines so each skill stays on one line."""
+    return text.replace("\n", " ").replace("\r", " ").strip()

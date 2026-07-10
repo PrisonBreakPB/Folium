@@ -84,8 +84,7 @@ description: Use for experiments.
             prompt = system_prompt([], [skill])
 
             self.assertIn("<skill_system>", prompt)
-            self.assertIn("<name>experiment-runner</name>", prompt)
-            self.assertIn("Use for experiments.", prompt)
+            self.assertIn("- experiment-runner: Use for experiments.", prompt)
             self.assertIn("skills/<name>/SKILL.md", prompt)
             self.assertNotIn(str(skill_file), prompt)
 
