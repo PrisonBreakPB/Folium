@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改造成面向科研场景的智能体系统。项目会围绕科研调研、报告生成、论文写作、实验代码生成与执行，以及 Agent Harness 工程组件持续扩展。
+Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改造成面向科研场景的智能体系统。项目会围绕文献综述、数学推导、仿真实验、论文写作，以及 Agent Harness 工程组件持续扩展。
 
 ## 当前能力
 
@@ -224,6 +224,8 @@ skills/
 
 启动时 Agent 会扫描 `skills/*/SKILL.md`，只把 skill 的名称、描述和文件路径加入系统提示词。完整 `SKILL.md` 不会预先塞进上下文；模型在判断任务匹配某个 skill 时，会先用 `read_file` 读取对应文件，再按其中的工作流执行。
 
+用户也可以在输入框使用 `/skill-name` 前缀直接激活某个 skill，例如 `/literature-review 帮我找关于 Transformer 的论文`，系统会自动注入该 skill 的完整内容。
+
 `SKILL.md` 需要包含简单 frontmatter：
 
 ```markdown
@@ -325,6 +327,7 @@ folium/
 ├── session.py               会话保存、读取、切换和删除
 ├── config.py                环境变量配置
 ├── prompt.py                系统提示词
+├── role.md                  角色介绍，可自定义
 ├── observability/           本地 trace、span、脱敏和摘要读取
 ├── tools/                   内置工具
 └── web/
@@ -336,10 +339,10 @@ folium/
 
 后续计划围绕科研工作流和 Harness 组件继续扩展：
 
-- 科研主题调研
-- 结构化报告生成
+- 文献综述与研究方向发现
+- 数学推导与公式验证
+- 仿真实验代码生成与运行
 - TeX 论文写作
-- Python 实验代码生成与运行
 - Agentic RAG 和证据链追踪
 - 沙箱执行与文件影响追踪
 - Artifact 记录，如报告、TeX、代码、图表、实验日志
