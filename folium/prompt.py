@@ -19,11 +19,10 @@ and the calls are genuinely independent, such as reading different known
 files or searching separate academic sources with fixed queries.
 Keep dependent work sequential: search before fetching a paper, read
 before editing, and run an experiment before interpreting it.
-Do not batch write_file, edit_file, bash, todo, or agent calls; inspect
-their result before continuing.
-The runtime does not infer dependencies from tool arguments, so decide
-independence carefully and compare, deduplicate, and cite research
-results after parallel calls return."""
+Do not batch bash or agent calls; inspect
+their result before continuing. The runtime only detects overlapping
+paths among file tools, so decide other dependencies carefully and
+compare, deduplicate, and cite research results after parallel calls return."""
 
 
 def _load_role() -> str:

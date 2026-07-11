@@ -1,7 +1,5 @@
 # Folium
 
-> 基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 二开的科研智能体改造项目。
-
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -241,10 +239,11 @@ description: Use when the user asks for this specialized workflow.
 
 ## 上下文压缩
 
-Folium 采用三级渐进式上下文压缩策略，自动触发时优先使用 LLM API 返回的 usage，并对新增内容使用本地估算：
+Folium 采用预处理层加三级渐进式上下文压缩策略，自动触发时优先使用 LLM API 返回的 usage，并对新增内容使用本地估算：
 
 | 层级 | 触发阈值 | 操作 | 成本 |
 |------|---------|------|------|
+| 预处理层 | 50% | 折叠完全相同且不少于 200 字符的 tool 输出：保留最新完整结果，将较早重复结果替换为占位符；豁免工具跳过 | 零 LLM 调用 |
 | Layer 1 | 60% / 70% | 截断长 tool 输出（primary 工具 60%，secondary 工具 70%，保留首尾各 1536 字符） | 零 LLM 调用 |
 | Layer 2 | 80% | 将已截断的 primary/default tool 输出替换为占位符 | 零 LLM 调用 |
 | Layer 3 | 90% | 增量更新历史摘要，并按预算保护最近用户原文 | 调 LLM，失败时本地兜底 |
@@ -259,9 +258,10 @@ Token 计算：
 - 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
 - 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
 - 压缩后不再保留 recent tail；系统会从真实用户消息中倒序保护最近原文，默认预算 20000 tokens。若最近一条用户消息本身超过预算，也会整条保留。该预算使用同一个本地 token 估算器：优先 tokenizer，失败再回退 `len(text) // 3`
+- 预处理层会先对超过 50% 输入预算时出现的重复 tool 输出做精确去重，再进入后续可能有损的截断、占位符压缩和摘要流程；仅字符串内容、长度不少于 200 字符且不属于豁免工具的结果参与去重
 - `bash`、`grep`、`glob` 等 primary 工具在 60% 后可裁剪；`read_file`、`agent` 等 secondary 工具在 70% 后可裁剪，但 80% 的占位符压缩会跳过 secondary 工具
 - Layer 1 会跳过最近 2 个工具调用轮次的 tool 输出，避免刚读到的文件、实验结果或子 Agent 结论立刻被裁剪
-- 上下文压缩只作用于发送给模型的 `messages`；用于 Web 历史和持久化复盘的 `transcript` 保留原始 user / assistant / tool 消息
+- 上下文压缩只作用于发送给模型的 `messages`；用于 Web 历史和持久化复盘的 `transcript` 保留原始 user / assistant / tool 消息，因此完整工具输出不会因去重或其他压缩层丢失
 
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）
@@ -286,7 +286,7 @@ conversations/traces/
 - `tool`：工具名称、参数、结果摘要、耗时、错误状态
 - `sandbox_event`：Docker 工作区模式、容器启动、命令结束、超时和清理等生命周期事件
 - `todo_update` / `todo_reminder`：todo 状态更新和自动提醒注入
-- `context_compression`：上下文压缩前后的 token 和消息数量
+- `context_compression`：上下文压缩前后的 token、消息数量和实际执行的压缩层
 - `llm_request_snapshot` / `llm_response_snapshot`：每次模型调用实际输入和模型响应快照
 - `context_snapshot`：上下文压缩前后的 `messages` 快照
 - `agent_result`：最终回复摘要、消息数量和上下文 token 估算

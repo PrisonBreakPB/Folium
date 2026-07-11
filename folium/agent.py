@@ -32,6 +32,7 @@ from .observability.context import active_observer, current_span_id, current_tra
 from .observability.redaction import compact_payload
 from .encoding import repair_mojibake_text
 from .edit_approval import build_edit_approval_proposal
+from .sandbox.filesystem import resolve_tool_path
 
 
 FINAL_ROUND_REMINDER = (
@@ -44,8 +45,10 @@ FINAL_ROUND_REMINDER = (
     "</reminder>"
 )
 
-_SERIAL_TOOLS = {"write_file", "edit_file", "bash"}
+_SERIAL_TOOLS = {"bash", "agent"}
 _NEVER_PARALLEL_TOOLS: set[str] = set()
+_FILE_TOOLS = {"read_file", "write_file", "edit_file"}
+_FILE_WRITE_TOOLS = {"write_file", "edit_file"}
 
 
 def _should_parallelize_tool_batch(tool_calls) -> bool:
@@ -54,7 +57,49 @@ def _should_parallelize_tool_batch(tool_calls) -> bool:
         return False
 
     tool_names = {tc.name for tc in tool_calls}
-    return not bool(tool_names & (_SERIAL_TOOLS | _NEVER_PARALLEL_TOOLS))
+    if tool_names & (_SERIAL_TOOLS | _NEVER_PARALLEL_TOOLS):
+        return False
+
+    file_calls = []
+    for tc in tool_calls:
+        if tc.name not in _FILE_TOOLS:
+            continue
+        path = _resolve_file_tool_path(tc)
+        if path is None:
+            return False
+        file_calls.append((tc.name, path))
+
+    for index, (name, path) in enumerate(file_calls):
+        for other_name, other_path in file_calls[index + 1 :]:
+            if name not in _FILE_WRITE_TOOLS and other_name not in _FILE_WRITE_TOOLS:
+                continue
+            if _paths_overlap(path, other_path):
+                return False
+
+    return True
+
+
+def _resolve_file_tool_path(tool_call):
+    file_path = tool_call.arguments.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return None
+    try:
+        return resolve_tool_path(file_path)
+    except Exception:
+        return None
+
+
+def _paths_overlap(left, right) -> bool:
+    try:
+        left.relative_to(right)
+        return True
+    except ValueError:
+        pass
+    try:
+        right.relative_to(left)
+        return True
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -259,7 +304,7 @@ class Agent:
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
                 else:
-                    # Keep state-changing tools serial; independent tools can run together.
+                    # Keep bash and sub-agent calls serial; other tools can run together.
                     if self._requires_serial_execution(resp.tool_calls) or not _should_parallelize_tool_batch(resp.tool_calls):
                         results = []
                         for tc in resp.tool_calls:
