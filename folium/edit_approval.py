@@ -24,6 +24,55 @@ class EditApprovalProposal:
     diff_chars: int = 0
 
 
+@dataclass
+class FileChangeSnapshot:
+    tool_name: str
+    file_path: str
+    path: Path
+    before: str
+    existed: bool
+
+
+def capture_file_change_snapshot(tool_name: str, arguments: dict) -> FileChangeSnapshot | None:
+    if tool_name not in {"write_file", "edit_file"}:
+        return None
+
+    file_path = arguments.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return None
+
+    path = resolve_tool_path(file_path)
+    if path.exists() and not path.is_file():
+        return None
+    return FileChangeSnapshot(
+        tool_name=tool_name,
+        file_path=file_path,
+        path=path,
+        before=_read_text(path) if path.exists() else "",
+        existed=path.exists(),
+    )
+
+
+def build_file_change_proposal(snapshot: FileChangeSnapshot) -> EditApprovalProposal | None:
+    if not snapshot.path.exists() or not snapshot.path.is_file():
+        return None
+
+    after = _read_text(snapshot.path)
+    diff = _diff_text(snapshot.before, after, str(snapshot.path), old_exists=snapshot.existed)
+    if not diff and not snapshot.existed:
+        diff = f"--- /dev/null\n+++ b/{snapshot.path}\n"
+    diff, truncated, total = _truncate_diff(diff)
+    action = "创建文件" if not snapshot.existed else "修改文件"
+    return EditApprovalProposal(
+        tool_name=snapshot.tool_name,
+        path=str(snapshot.path),
+        title=f"{action}：{snapshot.file_path}",
+        diff=diff,
+        truncated=truncated,
+        diff_chars=total,
+    )
+
+
 def build_edit_approval_proposal(tool_name: str, arguments: dict) -> EditApprovalProposal | None:
     if tool_name == "write_file":
         return _write_file_proposal(arguments)

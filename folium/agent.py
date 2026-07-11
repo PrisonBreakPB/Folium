@@ -31,7 +31,13 @@ from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
 from .encoding import repair_mojibake_text
-from .edit_approval import build_edit_approval_proposal
+from .edit_approval import (
+    EditApprovalProposal,
+    FileChangeSnapshot,
+    build_edit_approval_proposal,
+    build_file_change_proposal,
+    capture_file_change_snapshot,
+)
 from .sandbox.filesystem import resolve_tool_path
 
 
@@ -108,6 +114,7 @@ class ToolExecutionResult:
     status: str
     preview: str = ""
     duration_ms: int | None = None
+    file_change: EditApprovalProposal | None = None
 
 
 class Agent:
@@ -293,12 +300,7 @@ class Agent:
                     if on_tool:
                         on_tool(tc.name, tc.arguments, result.status)
                     self._emit_tool_result(on_event, tc, result)
-                    self._append_message({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": tc.name,
-                        "content": result.content,
-                    })
+                    self._append_tool_message(tc, result)
                     used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                     tool_tokens += _approx_tokens(result.content)
                     self._emit_context_update(on_event)
@@ -321,12 +323,7 @@ class Agent:
                         results = self._exec_tools_parallel(resp.tool_calls, on_tool)
                     for tc, result in zip(resp.tool_calls, results):
                         self._emit_tool_result(on_event, tc, result)
-                        self._append_message({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                            "content": result.content,
-                        })
+                        self._append_tool_message(tc, result)
                         used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                         tool_tokens += _approx_tokens(result.content)
                         self._emit_context_update(on_event)
@@ -407,6 +404,7 @@ class Agent:
                     and arguments["timeout"] > self.tool_timeout
                 ):
                     arguments["timeout"] = self.tool_timeout
+                file_change_snapshot = self._prepare_file_change(tc.name, arguments)
                 approval_error = self._maybe_require_edit_approval(tc, arguments)
                 if approval_error:
                     result = approval_error
@@ -461,7 +459,14 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
+            file_change = self._build_file_change(file_change_snapshot) if status == "ok" else None
+            return ToolExecutionResult(
+                result,
+                status,
+                preview=_preview_text(result),
+                duration_ms=duration_ms,
+                file_change=file_change if status == "ok" else None,
+            )
 
     def _requires_serial_execution(self, tool_calls) -> bool:
         """Check if tool calls must run sequentially due to dependencies.
@@ -496,17 +501,31 @@ class Agent:
         return results
 
     def _maybe_require_edit_approval(self, tc, arguments: dict) -> str | None:
-        if tc.name not in {"write_file", "edit_file", "bash"} or self.edit_approval_callback is None:
+        if tc.name != "bash" or self.edit_approval_callback is None:
             return None
         proposal = build_edit_approval_proposal(tc.name, arguments)
         if proposal is None:
-            return None if tc.name == "bash" else "Error: could not prepare edit approval preview; file was not modified."
+            return None
         approved = bool(self.edit_approval_callback(tc, proposal))
         if approved:
             return None
-        if tc.name == "bash":
-            return "Error: bash command rejected by user; workspace was not modified."
-        return f"Error: edit rejected by user; {proposal.path} was not modified."
+        return "Error: bash command rejected by user; workspace was not modified."
+
+    @staticmethod
+    def _prepare_file_change(tool_name: str, arguments: dict) -> FileChangeSnapshot | None:
+        try:
+            return capture_file_change_snapshot(tool_name, arguments)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_file_change(snapshot: FileChangeSnapshot | None) -> EditApprovalProposal | None:
+        if snapshot is None:
+            return None
+        try:
+            return build_file_change_proposal(snapshot)
+        except Exception:
+            return None
 
     def _emit_tool_start(self, on_event, tc):
         self._emit_event(
@@ -518,14 +537,22 @@ class Agent:
 
     def _emit_tool_result(self, on_event, tc, result: ToolExecutionResult):
         event_type = "tool_error" if result.status in {"error", "bad_arguments", "timeout"} else "tool_result"
+        display_content = result.content
+        if result.file_change:
+            display_content = result.content.split("\n", 1)[0]
+        payload = {
+            "name": tc.name,
+            "status": result.status,
+            "duration_ms": result.duration_ms,
+            "preview": _preview_text(display_content),
+            "content": _preview_text(display_content, max_chars=6000),
+        }
+        if result.file_change:
+            payload["file_change"] = self._file_change_payload(result.file_change)
         self._emit_event(
             on_event,
             event_type,
-            name=tc.name,
-            status=result.status,
-            duration_ms=result.duration_ms,
-            preview=result.preview or _preview_text(result.content),
-            content=_preview_text(result.content, max_chars=6000),
+            **payload,
         )
 
     def _assistant_message(self, resp: LLMResponse) -> dict:
@@ -590,6 +617,15 @@ class Agent:
     def _emit_event(on_event, event_type: str, **payload):
         if on_event:
             on_event({"type": event_type, **payload})
+
+    @staticmethod
+    def _file_change_payload(change: EditApprovalProposal) -> dict:
+        return {
+            "path": change.path,
+            "diff": change.diff,
+            "truncated": change.truncated,
+            "diff_chars": change.diff_chars,
+        }
 
     def _get_tool(self, name: str) -> Tool | None:
         for tool in self.tools:
@@ -691,6 +727,15 @@ class Agent:
         self.messages.append({"role": "user", "content": TODO_REMINDER})
         self.rounds_since_todo = 0
         self._emit_event(on_event, "todo_reminder", message=TODO_REMINDER)
+
+    def _append_tool_message(self, tc, result: ToolExecutionResult):
+        message = {
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "name": tc.name,
+            "content": result.content,
+        }
+        self._append_message(message)
 
     def _append_message(self, message: dict):
         self.messages.append(message)

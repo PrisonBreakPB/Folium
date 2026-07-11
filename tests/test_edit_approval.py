@@ -11,7 +11,7 @@ from folium.tools.write import WriteFileTool
 from folium.web import server
 
 
-def test_write_file_approval_rejects_without_writing(tmp_path, monkeypatch):
+def test_write_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     agent = Agent(llm=None, tools=[WriteFileTool()])
     agent.edit_approval_callback = lambda tc, proposal: False
@@ -22,22 +22,17 @@ def test_write_file_approval_rejects_without_writing(tmp_path, monkeypatch):
         "content": "hello\n",
     }))
 
-    assert result.status == "error"
-    assert "rejected by user" in result.content
-    assert not target.exists()
+    assert result.status == "ok"
+    assert target.read_text(encoding="utf-8") == "hello\n"
+    assert result.file_change is not None
+    assert "+hello" in result.file_change.diff
 
 
-def test_edit_file_approval_allows_write(tmp_path, monkeypatch):
+def test_edit_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     target.write_text("old\n", encoding="utf-8")
-    seen = {}
     agent = Agent(llm=None, tools=[EditFileTool()])
-
-    def approve(tc, proposal):
-        seen["diff"] = proposal.diff
-        return True
-
-    agent.edit_approval_callback = approve
+    agent.edit_approval_callback = lambda tc, proposal: False
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
 
     result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
@@ -48,8 +43,83 @@ def test_edit_file_approval_allows_write(tmp_path, monkeypatch):
 
     assert result.status == "ok"
     assert target.read_text(encoding="utf-8") == "new\n"
-    assert "-old" in seen["diff"]
-    assert "+new" in seen["diff"]
+    assert result.file_change is not None
+    assert "-old" in result.file_change.diff
+    assert "+new" in result.file_change.diff
+
+
+def test_file_change_is_included_in_tool_result_event(tmp_path, monkeypatch):
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    tc = ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "note.txt",
+        "content": "hello\n",
+    })
+
+    result = agent._exec_tool(tc)
+    events = []
+    agent._emit_tool_result(events.append, tc, result)
+
+    assert events[0]["type"] == "tool_result"
+    assert events[0]["file_change"]["path"].endswith("note.txt")
+    assert "+hello" in events[0]["file_change"]["diff"]
+
+    agent._append_tool_message(tc, result)
+    assert "file_change" not in agent.messages[-1]
+    assert "file_change" not in agent.transcript[-1]
+
+
+def test_file_change_uses_content_written_to_disk(tmp_path, monkeypatch):
+    target = tmp_path / "note.txt"
+    tool = WriteFileTool()
+    agent = Agent(llm=None, tools=[tool])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    def write_actual_content(**_kwargs):
+        target.write_text("actual\n", encoding="utf-8")
+        return "Wrote 1 lines to note.txt"
+
+    monkeypatch.setattr(tool, "execute", write_actual_content)
+    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "note.txt",
+        "content": "planned\n",
+    }))
+
+    assert result.status == "ok"
+    assert result.file_change is not None
+    assert "+actual" in result.file_change.diff
+    assert "+planned" not in result.file_change.diff
+
+
+def test_empty_file_creation_has_a_visible_diff(tmp_path, monkeypatch):
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "empty.txt",
+        "content": "",
+    }))
+
+    assert result.status == "ok"
+    assert result.file_change is not None
+    assert "--- /dev/null" in result.file_change.diff
+    assert "+++ b/" in result.file_change.diff
+
+
+def test_failed_file_edit_does_not_return_diff(tmp_path, monkeypatch):
+    target = tmp_path / "note.txt"
+    target.write_text("old\n", encoding="utf-8")
+    agent = Agent(llm=None, tools=[EditFileTool()])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
+        "file_path": "note.txt",
+        "old_string": "missing",
+        "new_string": "new",
+    }))
+
+    assert result.status == "error"
+    assert result.file_change is None
 
 
 class RecordingExecutor:
@@ -108,10 +178,10 @@ def test_approval_endpoint_resolves_pending_request():
         server._pending_approvals.update(old)
 
 
-def test_web_edit_approval_callback_waits_for_decision():
+def test_web_bash_approval_callback_waits_for_decision():
     queue = SimpleQueue()
     _on_token, _on_tool, _on_event, on_edit_approval = server._make_bridge(queue)
-    tc = SimpleNamespace(id="tool_1", name="write_file")
+    tc = SimpleNamespace(id="tool_1", name="bash")
     proposal = SimpleNamespace(
         path="README.md",
         title="Overwrite README.md",
@@ -129,7 +199,7 @@ def test_web_edit_approval_callback_waits_for_decision():
 
     event = queue.get(timeout=1)
     assert event["type"] == "approval_request"
-    assert event["tool_name"] == "write_file"
+    assert event["tool_name"] == "bash"
 
     pending = server._pending_approvals[event["approval_id"]]
     pending.approved = True

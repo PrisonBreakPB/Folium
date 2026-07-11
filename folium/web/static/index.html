@@ -1022,14 +1022,14 @@ body {
 <section class="approval-panel" id="approvalPanel" aria-live="polite">
   <div class="approval-head">
     <div>
-      <div class="approval-title" id="approvalTitle">审查文件改动</div>
+      <div class="approval-title" id="approvalTitle">审查写入命令</div>
       <div class="approval-path" id="approvalPath"></div>
     </div>
     <div class="approval-tag" id="approvalTool">write_file</div>
   </div>
   <pre class="approval-diff" id="approvalDiff"></pre>
   <div class="approval-foot">
-    <div class="approval-note" id="approvalNote">只有你同意后，文件才会被修改。</div>
+    <div class="approval-note" id="approvalNote">只有你同意后，命令才会执行。</div>
     <button class="approval-btn danger" id="approvalDenyBtn" type="button">拒绝</button>
     <button class="approval-btn primary" id="approvalAllowBtn" type="button">同意修改</button>
   </div>
@@ -1379,14 +1379,14 @@ function appendMsg(role, text) {
 
 function showApproval(event) {
   activeApproval = event;
-  approvalTitleEl.textContent = normalizeText(event.title || '审查文件改动');
+  approvalTitleEl.textContent = normalizeText(event.title || '审查写入命令');
   approvalPathEl.textContent = normalizeText(event.path || '');
   approvalPathEl.title = normalizeText(event.path || '');
   approvalToolEl.textContent = normalizeText(event.tool_name || 'edit');
   approvalDiffEl.textContent = normalizeToolText(event.diff || '没有可显示的 diff');
   approvalNoteEl.textContent = event.truncated
     ? `diff 较长，已截断显示（共 ${event.diff_chars || 0} 个字符）。请确认关键改动后再同意。`
-    : '只有你同意后，文件才会被修改。';
+    : '只有你同意后，命令才会执行。';
   approvalAllowBtn.disabled = false;
   approvalDenyBtn.disabled = false;
   approvalPanelEl.classList.add('visible');
@@ -1594,6 +1594,12 @@ function appendToolEntry(container, event) {
   const outputText = previewText || contentText;
   if (outputText) {
     appendToolBlock(div, isError ? '错误' : '结果', outputText);
+  }
+
+  const fileChange = event.file_change;
+  if (fileChange && fileChange.diff) {
+    const label = fileChange.truncated ? '文件变更（已截断）' : '文件变更';
+    appendToolBlock(div, label, normalizeToolText(fileChange.diff));
   }
 
   if (contentText && contentText !== previewText) {
