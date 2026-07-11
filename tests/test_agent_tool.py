@@ -84,7 +84,7 @@ class AgentToolTests(unittest.TestCase):
 
         self.assertIn("only context='none' is supported", result)
 
-    def test_general_sub_agent_inherits_edit_approval(self):
+    def test_general_sub_agent_write_file_runs_without_approval(self):
         old_workspace = os.environ.get("FOLIUM_HOST_WORKSPACE")
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FOLIUM_HOST_WORKSPACE"] = tmp
@@ -101,8 +101,8 @@ class AgentToolTests(unittest.TestCase):
                 tool = next(t for t in parent.tools if isinstance(t, AgentTool))
 
                 result = tool.execute(task="write sub.txt", agent_type="general", timeout=30)
-                self.assertEqual(approvals, [("write_file", str(Path(tmp) / "sub.txt"))])
-                self.assertFalse((Path(tmp) / "sub.txt").exists())
+                self.assertEqual(approvals, [])
+                self.assertEqual((Path(tmp) / "sub.txt").read_text(encoding="utf-8"), "hello\n")
             finally:
                 if old_workspace is None:
                     os.environ.pop("FOLIUM_HOST_WORKSPACE", None)

@@ -1591,12 +1591,17 @@ function appendToolEntry(container, event) {
 
   const previewText = normalizeToolText(event.preview || '');
   const contentText = normalizeToolText(event.content || '');
+  const diffText = normalizeToolText(event.diff || '');
   const outputText = previewText || contentText;
   if (outputText) {
     appendToolBlock(div, isError ? '错误' : '结果', outputText);
   }
 
-  if (contentText && contentText !== previewText) {
+  if (diffText) {
+    appendToolBlock(div, '\u53d8\u66f4', diffText);
+  }
+
+  if (!diffText && contentText && contentText !== previewText) {
     const full = createPreview(contentText);
     full.style.display = 'none';
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from .skills.types import Skill
 from .llm import LLM, LLMResponse, estimate_cost
 from .tools import create_tools
-from .tools.base import Tool, ToolValidationError
+from .tools.base import Tool, ToolOutput, ToolValidationError
 from .tools.agent import AgentTool
 from .tools.todo import TODO_REMINDER, TodoTool
 from .prompt import system_prompt
@@ -107,6 +107,7 @@ class ToolExecutionResult:
     content: str
     status: str
     preview: str = ""
+    diff: str = ""
     duration_ms: int | None = None
 
 
@@ -407,7 +408,7 @@ class Agent:
                     and arguments["timeout"] > self.tool_timeout
                 ):
                     arguments["timeout"] = self.tool_timeout
-                approval_error = self._maybe_require_edit_approval(tc, arguments)
+                approval_error = self._maybe_require_bash_approval(tc, arguments)
                 if approval_error:
                     result = approval_error
                     status = "error"
@@ -431,18 +432,29 @@ class Agent:
                         },
                     })
                     return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
-                result = tool.execute(**arguments)
-                result = repair_mojibake_text(result)
+                tool_output = tool.execute(**arguments)
+                if isinstance(tool_output, ToolOutput):
+                    result = repair_mojibake_text(tool_output.content)
+                    preview = repair_mojibake_text(tool_output.preview)
+                    diff = repair_mojibake_text(tool_output.diff)
+                else:
+                    result = repair_mojibake_text(tool_output)
+                    preview = _preview_text(result)
+                    diff = ""
                 status = _status_from_tool_result(result)
             except ToolValidationError as e:
                 result = f"Error: {e}"
                 status = "bad_arguments"
+                preview = _preview_text(result)
+                diff = ""
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
                 status = "error"
+                preview = _preview_text(result)
+                diff = ""
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             if timed_out and timed_out.is_set():
-                return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
+                return ToolExecutionResult(result, status, preview=preview, diff=diff, duration_ms=duration_ms)
             if status in {"error", "bad_arguments", "timeout"}:
                 mark_current_span_status("error")
             observer.record({
@@ -461,7 +473,7 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
+            return ToolExecutionResult(result, status, preview=preview, diff=diff, duration_ms=duration_ms)
 
     def _requires_serial_execution(self, tool_calls) -> bool:
         """Check if tool calls must run sequentially due to dependencies.
@@ -495,18 +507,16 @@ class Agent:
                 on_tool(tc.name, tc.arguments, result.status)
         return results
 
-    def _maybe_require_edit_approval(self, tc, arguments: dict) -> str | None:
-        if tc.name not in {"write_file", "edit_file", "bash"} or self.edit_approval_callback is None:
+    def _maybe_require_bash_approval(self, tc, arguments: dict) -> str | None:
+        if tc.name != "bash" or self.edit_approval_callback is None:
             return None
         proposal = build_edit_approval_proposal(tc.name, arguments)
         if proposal is None:
-            return None if tc.name == "bash" else "Error: could not prepare edit approval preview; file was not modified."
+            return None
         approved = bool(self.edit_approval_callback(tc, proposal))
         if approved:
             return None
-        if tc.name == "bash":
-            return "Error: bash command rejected by user; workspace was not modified."
-        return f"Error: edit rejected by user; {proposal.path} was not modified."
+        return "Error: bash command rejected by user; workspace was not modified."
 
     def _emit_tool_start(self, on_event, tc):
         self._emit_event(
@@ -525,6 +535,7 @@ class Agent:
             status=result.status,
             duration_ms=result.duration_ms,
             preview=result.preview or _preview_text(result.content),
+            diff=_preview_text(result.diff, max_chars=6000),
             content=_preview_text(result.content, max_chars=6000),
         )
 

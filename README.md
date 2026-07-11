@@ -363,9 +363,9 @@ python -m unittest tests.test_tool_validation tests.test_tool_encoding tests.tes
 pytest
 ```
 
-## 写入审批
+## 写入与审批
 
-Web UI 中，`write_file`、`edit_file` 以及看起来会写入挂载工作区的 `bash` 命令，会先展示 diff 或命令预览并等待用户审批；审批不会自动超时。general 子 Agent 调用这些工具时也会走同一套审批路径。
+Web UI 中，`write_file` 和 `edit_file` 会直接执行，并在对应工具卡片中展示完成后的统一 diff。看起来会写入挂载工作区的 `bash` 命令仍会在执行前展示命令预览并等待用户审批；审批不会自动超时。`general` 子 Agent 调用 `write_file` 或 `edit_file` 时也直接执行并返回 diff。
 
 ## License
 

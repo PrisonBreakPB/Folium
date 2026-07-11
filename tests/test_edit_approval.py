@@ -11,10 +11,11 @@ from folium.tools.write import WriteFileTool
 from folium.web import server
 
 
-def test_write_file_approval_rejects_without_writing(tmp_path, monkeypatch):
+def test_write_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     agent = Agent(llm=None, tools=[WriteFileTool()])
-    agent.edit_approval_callback = lambda tc, proposal: False
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append((tc, proposal)) or False
 
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
     result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
@@ -22,22 +23,20 @@ def test_write_file_approval_rejects_without_writing(tmp_path, monkeypatch):
         "content": "hello\n",
     }))
 
-    assert result.status == "error"
-    assert "rejected by user" in result.content
-    assert not target.exists()
+    assert result.status == "ok"
+    assert target.read_text(encoding="utf-8") == "hello\n"
+    assert approvals == []
+    assert result.preview == "Wrote 1 lines to note.txt"
+    assert result.diff.startswith("--- /dev/null")
+    assert "+hello" in result.diff
 
 
-def test_edit_file_approval_allows_write(tmp_path, monkeypatch):
+def test_edit_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     target.write_text("old\n", encoding="utf-8")
-    seen = {}
     agent = Agent(llm=None, tools=[EditFileTool()])
-
-    def approve(tc, proposal):
-        seen["diff"] = proposal.diff
-        return True
-
-    agent.edit_approval_callback = approve
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append((tc, proposal)) or False
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
 
     result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
@@ -48,8 +47,26 @@ def test_edit_file_approval_allows_write(tmp_path, monkeypatch):
 
     assert result.status == "ok"
     assert target.read_text(encoding="utf-8") == "new\n"
-    assert "-old" in seen["diff"]
-    assert "+new" in seen["diff"]
+    assert approvals == []
+    assert result.preview == "Edited note.txt"
+    assert "-old" in result.diff
+    assert "+new" in result.diff
+
+
+def test_tool_result_event_includes_file_diff(tmp_path, monkeypatch):
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    tc = ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "note.txt",
+        "content": "hello\n",
+    })
+    result = agent._exec_tool(tc)
+    events = []
+
+    agent._emit_tool_result(events.append, tc, result)
+
+    assert events[0]["preview"] == "Wrote 1 lines to note.txt"
+    assert events[0]["diff"] == result.diff.strip()
 
 
 class RecordingExecutor:
@@ -108,10 +125,10 @@ def test_approval_endpoint_resolves_pending_request():
         server._pending_approvals.update(old)
 
 
-def test_web_edit_approval_callback_waits_for_decision():
+def test_web_bash_approval_callback_waits_for_decision():
     queue = SimpleQueue()
     _on_token, _on_tool, _on_event, on_edit_approval = server._make_bridge(queue)
-    tc = SimpleNamespace(id="tool_1", name="write_file")
+    tc = SimpleNamespace(id="tool_1", name="bash")
     proposal = SimpleNamespace(
         path="README.md",
         title="Overwrite README.md",
@@ -129,7 +146,7 @@ def test_web_edit_approval_callback_waits_for_decision():
 
     event = queue.get(timeout=1)
     assert event["type"] == "approval_request"
-    assert event["tool_name"] == "write_file"
+    assert event["tool_name"] == "bash"
 
     pending = server._pending_approvals[event["approval_id"]]
     pending.approved = True

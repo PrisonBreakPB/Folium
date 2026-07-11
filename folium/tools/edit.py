@@ -8,7 +8,7 @@ and makes edits safe and reviewable.
 
 import difflib
 
-from .base import Tool
+from .base import Tool, ToolOutput
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # track files changed this session for /diff
@@ -42,7 +42,7 @@ class EditFileTool(Tool):
         "required": ["file_path", "old_string", "new_string"],
     }
 
-    def execute(self, file_path: str, old_string: str, new_string: str) -> str:
+    def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput:
         try:
             p = resolve_tool_path(file_path)
             if not p.exists():
@@ -69,20 +69,31 @@ class EditFileTool(Tool):
 
             # generate a unified diff so the user/LLM can see exactly what changed
             diff = _unified_diff(content, new_content, str(p))
-            return f"Edited {file_path}\n{diff}"
+            summary = f"Edited {file_path}"
+            return ToolOutput(
+                content=f"{summary}\n{diff}",
+                preview=summary,
+                diff=diff,
+            )
         except SandboxPathError as e:
             return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"
 
 
-def _unified_diff(old: str, new: str, filename: str, context: int = 3) -> str:
+def _unified_diff(
+    old: str,
+    new: str,
+    filename: str,
+    context: int = 3,
+    old_exists: bool = True,
+) -> str:
     """Generate a compact unified diff between old and new file content."""
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
     diff = difflib.unified_diff(
         old_lines, new_lines,
-        fromfile=f"a/{filename}", tofile=f"b/{filename}",
+        fromfile=f"a/{filename}" if old_exists else "/dev/null", tofile=f"b/{filename}",
         n=context,
     )
     result = "".join(diff)
