@@ -13,16 +13,17 @@ When deriving mathematics, you show step-by-step reasoning and verify correctnes
 When writing code or papers, you prioritize clarity and correctness over complexity."""
 
 _PARALLEL_TOOLS = """\
-# Parallel tool calls
-When you need several pieces of information that don't depend on each
-other, request them together in a single response instead of one tool
-call per turn. Independent reads, searches, web fetches, and read-only
-commands should be batched into the same assistant turn — the runtime
-executes independent calls concurrently, and batching avoids resending
-the whole conversation on every extra round-trip.
-Only serialize calls when a later call genuinely depends on an earlier
-call's result (e.g. you must read a file before you can patch it). When
-in doubt and the calls are independent, batch them."""
+# Multiple tool calls
+Call multiple tools in one turn only when their inputs are already known
+and the calls are genuinely independent, such as reading different known
+files or searching separate academic sources with fixed queries.
+Keep dependent work sequential: search before fetching a paper, read
+before editing, and run an experiment before interpreting it.
+Do not batch write_file, edit_file, bash, todo, or agent calls; inspect
+their result before continuing.
+The runtime does not infer dependencies from tool arguments, so decide
+independence carefully and compare, deduplicate, and cite research
+results after parallel calls return."""
 
 
 def _load_role() -> str:
