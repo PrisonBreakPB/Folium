@@ -16,6 +16,7 @@ class ReadFileTool(Tool):
     name = "read_file"
     description = (
         "Read a file's contents with line numbers. "
+        "Use this tool instead of shell commands such as cat, head, or tail. "
         "Always read a file before editing it."
     )
     parameters = {

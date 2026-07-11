@@ -8,8 +8,9 @@ from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 class WriteFileTool(Tool):
     name = "write_file"
     description = (
-        "Create a new file or completely overwrite an existing one. "
-        "For small edits to existing files, prefer edit_file instead."
+        "Create a new file or write the complete contents of a file, replacing any existing contents. "
+        "Do not create or overwrite files through bash with echo, cat, heredocs, or shell redirection. "
+        "For targeted edits to an existing file, use edit_file instead."
     )
     parameters = {
         "type": "object",

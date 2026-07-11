@@ -9,8 +9,14 @@ from ..sandbox import DockerSandboxExecutor, LocalCommandExecutor
 class BashTool(Tool):
     name = "bash"
     description = (
-        "Execute a shell command. Returns stdout, stderr, and exit code. "
-        "Use this for running tests, installing packages, git operations, etc."
+        "Run shell commands and return stdout, stderr, and exit code. "
+        "Reserve this tool for operations that require a shell, such as builds, tests, "
+        "running scripts, package installation, Git, process management, and network commands. "
+        "Do not use it to read files with cat, head, or tail; use read_file instead. "
+        "Do not use it to search files or content with grep, rg, find, or ls; use glob or grep instead. "
+        "Do not use it to edit files with sed or awk; use edit_file instead. "
+        "Do not use it to create or overwrite files with echo, cat, heredocs, or shell redirection; "
+        "use write_file instead."
     )
     parameters = {
         "type": "object",

@@ -18,9 +18,10 @@ _changed_files: set[str] = set()
 class EditFileTool(Tool):
     name = "edit_file"
     description = (
-        "Edit a file by replacing an exact string match. "
-        "old_string must appear exactly once in the file for safety. "
-        "Include enough surrounding context to ensure uniqueness."
+        "Make a targeted edit to an existing file by replacing one exact string with another. "
+        "old_string must appear exactly once; include enough surrounding context to make it unique. "
+        "Use this tool for local changes instead of rewriting a whole file. "
+        "Do not edit files through bash with sed or awk."
     )
     parameters = {
         "type": "object",
