@@ -17,6 +17,7 @@ dist/
 .pytest_cache/
 .tmp/
 conversations/
+data/
 decode*.py
 decode*.txt
 output*.txt

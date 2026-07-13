@@ -14,12 +14,20 @@ from pydantic import BaseModel
 from ..agent import Agent
 from ..config import Config
 from ..llm import LLMProviderError
-from ..session import save_session, load_session, list_sessions, delete_session, new_session_id, calculate_session_stats
-from ..session_prompts import save_prompt
+from ..session import (
+    calculate_session_stats,
+    delete_session,
+    ensure_session,
+    list_sessions,
+    load_session,
+    new_session_id,
+    save_session,
+)
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
+from ..persistence_migration import migrate_legacy_storage
 from ..sandbox.session import reset_current_session
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -168,8 +176,11 @@ async def chat(req: ChatRequest):
     async with _chat_lock:
         if _state["session_id"] is None:
             _state["session_id"] = new_session_id()
-            # Save current system prompt to DB for new session
-            save_prompt(_state["session_id"], _state["agent"]._system)
+            ensure_session(
+                _state["session_id"],
+                _state["config"].model,
+                _state["agent"]._system,
+            )
         _state["agent"].session_id = _state["session_id"]
         _state["agent"].edit_approval_callback = on_edit_approval
         task = asyncio.create_task(
@@ -276,23 +287,17 @@ async def switch_conversation(req: SwitchRequest):
     if system_prompt is not None:
         _state["agent"]._system = system_prompt
 
-    # restore cumulative token counts from _usage in messages
+    # Restore cumulative token counts from persisted LLM trace events.
     llm = _state["agent"].llm
     llm.total_prompt_tokens = 0
     llm.total_completion_tokens = 0
     llm.total_cached_tokens = 0
     llm.last_prompt_tokens = 0
     llm.last_completion_tokens = 0
-    for msg in messages:
-        usage = msg.get("_usage")
-        if usage:
-            llm.total_prompt_tokens += usage.get("prompt_tokens", 0)
-            llm.total_completion_tokens += usage.get("completion_tokens", 0)
-            llm.total_cached_tokens += usage.get("cached_tokens", 0)
-            llm.last_prompt_tokens = usage.get("prompt_tokens", 0)
-            llm.last_completion_tokens = usage.get("completion_tokens", 0)
-
-    stats = calculate_session_stats(messages)
+    stats = calculate_session_stats(req.session_id)
+    llm.total_prompt_tokens = stats["prompt_tokens"]
+    llm.total_completion_tokens = stats["completion_tokens"]
+    llm.total_cached_tokens = stats["cached_tokens"]
     return {
         "result": f"Switched to {req.session_id}",
         "session_id": _state["session_id"],
@@ -307,7 +312,8 @@ async def delete_conversation(req: SwitchRequest):
     deleted_current = req.session_id == _state["session_id"]
     deleted = delete_session(req.session_id)
     if deleted:
-        deleted_traces = delete_traces_for_session(req.session_id)
+        # Session foreign-key cascade already removed related traces.
+        deleted_traces = 0
         if deleted_current:
             _state["agent"].reset()
             _state["session_id"] = None
@@ -433,6 +439,7 @@ async def command(req: CommandRequest):
 
 def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 8000):
     os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
+    migrate_legacy_storage()
     reset_current_session()
     _state["agent"] = agent
     _state["config"] = config

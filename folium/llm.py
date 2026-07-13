@@ -173,7 +173,12 @@ class LLM:
     @property
     def estimated_cost(self) -> float | None:
         """Rough cost estimate in USD. Returns None if model not in pricing table."""
-        return estimate_cost(self.model, self.total_prompt_tokens, self.total_completion_tokens, self.total_cached_tokens)
+        return estimate_cost(
+            self.model,
+            self.total_prompt_tokens,
+            self.total_completion_tokens,
+            getattr(self, "total_cached_tokens", 0),
+        )
 
     def chat(
         self,

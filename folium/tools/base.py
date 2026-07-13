@@ -18,11 +18,12 @@ class ToolValidationError(Exception):
 
 @dataclass
 class ToolOutput:
-    """Structured tool output for the UI while preserving model-visible text."""
+    """Structured tool output with optional full text for persistence."""
 
     content: str
     preview: str = ""
     diff: str = ""
+    raw_content: str | None = None
 
 class Tool(ABC):
     """Minimal tool interface. Subclass this to add new capabilities."""

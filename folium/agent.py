@@ -26,7 +26,6 @@ from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
 from .skills import load_skills
-from .session_prompts import save_prompt
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
@@ -108,6 +107,7 @@ class ToolExecutionResult:
     status: str
     preview: str = ""
     diff: str = ""
+    raw_content: str | None = None
     duration_ms: int | None = None
 
 
@@ -299,6 +299,7 @@ class Agent:
                         "tool_call_id": tc.id,
                         "name": tc.name,
                         "content": result.content,
+                        "_raw_content": result.raw_content,
                     })
                     used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                     tool_tokens += _approx_tokens(result.content)
@@ -327,6 +328,7 @@ class Agent:
                             "tool_call_id": tc.id,
                             "name": tc.name,
                             "content": result.content,
+                            "_raw_content": result.raw_content,
                         })
                         used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                         tool_tokens += _approx_tokens(result.content)
@@ -378,14 +380,20 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(message, "timeout", preview=_preview_text(message), duration_ms=duration_ms)
+            return ToolExecutionResult(
+                message,
+                "timeout",
+                preview=_preview_text(message),
+                raw_content=message,
+                duration_ms=duration_ms,
+            )
 
     def _exec_tool_impl(self, tc, timed_out: threading.Event | None = None) -> ToolExecutionResult:
         """Execute a single tool call."""
         tool = self._get_tool(tc.name)
         if tool is None:
             message = f"Error: unknown tool '{tc.name}', please check the tool name and try again"
-            return ToolExecutionResult(message, "error", preview=_preview_text(message))
+            return ToolExecutionResult(message, "error", preview=_preview_text(message), raw_content=message)
         observer = active_observer()
         cfg = observer.config
         metadata = {
@@ -431,14 +439,22 @@ class Agent:
                             )
                         },
                     })
-                    return ToolExecutionResult(result, status, preview=_preview_text(result), duration_ms=duration_ms)
+                    return ToolExecutionResult(
+                        result,
+                        status,
+                        preview=_preview_text(result),
+                        raw_content=result,
+                        duration_ms=duration_ms,
+                    )
                 tool_output = tool.execute(**arguments)
                 if isinstance(tool_output, ToolOutput):
                     result = repair_mojibake_text(tool_output.content)
+                    raw_content = repair_mojibake_text(tool_output.raw_content or tool_output.content)
                     preview = repair_mojibake_text(tool_output.preview)
                     diff = repair_mojibake_text(tool_output.diff)
                 else:
                     result = repair_mojibake_text(tool_output)
+                    raw_content = result
                     preview = _preview_text(result)
                     diff = ""
                 status = _status_from_tool_result(result)
@@ -447,14 +463,23 @@ class Agent:
                 status = "bad_arguments"
                 preview = _preview_text(result)
                 diff = ""
+                raw_content = result
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
                 status = "error"
                 preview = _preview_text(result)
                 diff = ""
+                raw_content = result
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             if timed_out and timed_out.is_set():
-                return ToolExecutionResult(result, status, preview=preview, diff=diff, duration_ms=duration_ms)
+                return ToolExecutionResult(
+                    result,
+                    status,
+                    preview=preview,
+                    diff=diff,
+                    raw_content=raw_content,
+                    duration_ms=duration_ms,
+                )
             if status in {"error", "bad_arguments", "timeout"}:
                 mark_current_span_status("error")
             observer.record({
@@ -473,7 +498,14 @@ class Agent:
                     )
                 },
             })
-            return ToolExecutionResult(result, status, preview=preview, diff=diff, duration_ms=duration_ms)
+            return ToolExecutionResult(
+                result,
+                status,
+                preview=preview,
+                diff=diff,
+                raw_content=raw_content,
+                duration_ms=duration_ms,
+            )
 
     def _requires_serial_execution(self, tool_calls) -> bool:
         """Check if tool calls must run sequentially due to dependencies.
@@ -615,11 +647,9 @@ class Agent:
         return 0
 
     def _refresh_system_prompt(self) -> None:
-        """Rescan skills and regenerate system prompt, then persist to DB."""
+        """Rescan skills and regenerate the system prompt."""
         self.skills = load_skills()
         self._system = system_prompt(self.tools, self.skills)
-        if self.session_id:
-            save_prompt(self.session_id, self._system)
 
     def reset(self):
         """Clear conversation history and reset LLM cumulative counters."""

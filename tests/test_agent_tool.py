@@ -68,8 +68,8 @@ class AgentToolTests(unittest.TestCase):
 
         system = llm.messages[0]["content"]
         self.assertIn("You are the literature-searcher sub-agent", system)
-        self.assertIn("<name>control-literature-search</name>", system)
-        self.assertNotIn("<name>deep-research</name>", system)
+        self.assertIn("- control-literature-search:", system)
+        self.assertNotIn("- deep-research:", system)
 
         user_task = llm.messages[1]["content"]
         self.assertIn("Search event-triggered control papers.", user_task)

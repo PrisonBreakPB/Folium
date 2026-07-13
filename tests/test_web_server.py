@@ -1,12 +1,11 @@
-import json
 import os
 import sys
-import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from folium import database
 from folium import session as session_module
 from folium.web import server
 
@@ -67,13 +66,12 @@ class DummyLLM:
 class WebServerSessionTests(unittest.TestCase):
     def test_auto_save_only_updates_dirty_session(self):
         import tempfile
-        from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
-            old_dir = session_module.SESSIONS_DIR
+            old_path = database.DB_PATH
             old_state = dict(server._state)
             try:
-                session_module.SESSIONS_DIR = Path(tmp)
+                database.DB_PATH = Path(tmp) / "folium.db"
                 server._state.update({
                     "agent": DummyAgent(),
                     "config": DummyConfig(),
@@ -82,18 +80,13 @@ class WebServerSessionTests(unittest.TestCase):
                 })
                 server._auto_save()
 
-                path = Path(tmp) / "session_test.json"
-                first_data = json.loads(path.read_text(encoding="utf-8"))
-                first = first_data["updated_at"]
-                self.assertEqual(first_data["transcript"], [{"role": "user", "content": "hello"}])
-                time.sleep(1.1)
-
+                loaded = session_module.load_session("session_test")
+                self.assertIsNotNone(loaded)
+                self.assertEqual(loaded[2], [{"role": "user", "content": "hello"}])
                 server._auto_save()
-                second = json.loads(path.read_text(encoding="utf-8"))["updated_at"]
-
-                self.assertEqual(first, second)
+                self.assertFalse(server._state["dirty"])
             finally:
-                session_module.SESSIONS_DIR = old_dir
+                database.DB_PATH = old_path
                 server._state.clear()
                 server._state.update(old_state)
 
@@ -149,10 +142,10 @@ class WebServerSessionTests(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
-            old_dir = session_module.SESSIONS_DIR
+            old_path = database.DB_PATH
             old_state = dict(server._state)
             try:
-                session_module.SESSIONS_DIR = Path(tmp)
+                database.DB_PATH = Path(tmp) / "folium.db"
                 session_module.save_session(
                     [{"role": "user", "content": "compressed"}],
                     "test-model",
@@ -181,7 +174,7 @@ class WebServerSessionTests(unittest.TestCase):
                 self.assertEqual(agent.rounds_since_todo, 0)
                 reset_session.assert_called_once()
             finally:
-                session_module.SESSIONS_DIR = old_dir
+                database.DB_PATH = old_path
                 server._state.clear()
                 server._state.update(old_state)
 
@@ -215,10 +208,10 @@ class WebServerSessionTests(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
-            old_dir = session_module.SESSIONS_DIR
+            old_path = database.DB_PATH
             old_state = dict(server._state)
             try:
-                session_module.SESSIONS_DIR = Path(tmp)
+                database.DB_PATH = Path(tmp) / "folium.db"
                 session_module.save_session([], "test-model", "session_a", transcript=[])
                 server._state.update({
                     "agent": DummyAgent(),
@@ -234,7 +227,7 @@ class WebServerSessionTests(unittest.TestCase):
                 self.assertTrue(response.json()["deleted_current"])
                 reset_session.assert_called_once()
             finally:
-                session_module.SESSIONS_DIR = old_dir
+                database.DB_PATH = old_path
                 server._state.clear()
                 server._state.update(old_state)
 

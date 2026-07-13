@@ -14,8 +14,9 @@ from prompt_toolkit.key_binding import KeyBindings
 from .agent import Agent
 from .llm import LLM, LiteLLM
 from .config import Config
-from .session import save_session, load_session, list_sessions
+from .session import calculate_session_stats, save_session, load_session, list_sessions
 from .observability import list_traces, read_trace_summary
+from .persistence_migration import migrate_legacy_storage
 from . import __version__
 
 console = Console()
@@ -72,26 +73,24 @@ def main():
         max_tokens=config.max_tokens,
     )
     agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
+    migrate_legacy_storage()
 
     # resume saved session
     if args.resume:
         loaded = load_session(args.resume)
         if loaded:
-            agent.messages, loaded_model, agent.transcript = loaded
+            agent.messages, loaded_model, agent.transcript, system_prompt = loaded
             agent.session_id = args.resume
             # restore the model from the saved session unless overridden by CLI
             if not args.model:
                 agent.llm.model = loaded_model
                 config.model = loaded_model
-            # restore cumulative token counts from _usage in messages
-            for msg in agent.messages:
-                usage = msg.get("_usage")
-                if usage:
-                    agent.llm.total_prompt_tokens += usage.get("prompt_tokens", 0)
-                    agent.llm.total_completion_tokens += usage.get("completion_tokens", 0)
-                    agent.llm.total_cached_tokens += usage.get("cached_tokens", 0)
-                    agent.llm.last_prompt_tokens = usage.get("prompt_tokens", 0)
-                    agent.llm.last_completion_tokens = usage.get("completion_tokens", 0)
+            if system_prompt:
+                agent._system = system_prompt
+            stats = calculate_session_stats(args.resume)
+            agent.llm.total_prompt_tokens = stats["prompt_tokens"]
+            agent.llm.total_completion_tokens = stats["completion_tokens"]
+            agent.llm.total_cached_tokens = stats["cached_tokens"]
             console.print(f"[green]Resumed session: {args.resume} (model: {agent.llm.model})[/green]")
         else:
             console.print(f"[red]Session '{args.resume}' not found.[/red]")

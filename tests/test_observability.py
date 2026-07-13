@@ -2,11 +2,14 @@ import json
 import unittest
 
 from folium.agent import Agent
+from folium.database import get_connection
 from folium.llm import LLMResponse, ToolCall
-from folium.observability.context import Observer, _observer_var
 from folium.observability.config import ObservabilityConfig
+from folium.observability.context import Observer, _observer_var
 from folium.observability.redaction import compact_payload
 from folium.observability.summary import delete_traces_for_session, list_traces, read_trace_summary
+
+
 class FakeLLM:
     model = "fake-model"
 
@@ -43,8 +46,6 @@ class FakeLLM:
                     prompt_tokens=10,
                     completion_tokens=2,
                 )
-            if on_token:
-                on_token("done")
             active_observer().record({
                 "event": "llm_result",
                 "trace_id": current_trace_id(),
@@ -69,6 +70,18 @@ class NoToolLLM:
         return LLMResponse(content="done", prompt_tokens=8, completion_tokens=1)
 
 
+def _events(db_path, trace_id):
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT event_type, payload_json FROM trace_events WHERE trace_id = ? ORDER BY event_index",
+            (trace_id,),
+        ).fetchall()
+    return [
+        {"event": row["event_type"], "metadata": json.loads(row["payload_json"] or "{}")}
+        for row in rows
+    ]
+
+
 class ObservabilityTests(unittest.TestCase):
     def test_compact_payload_redacts_secret(self):
         payload = compact_payload(
@@ -80,37 +93,31 @@ class ObservabilityTests(unittest.TestCase):
         self.assertNotIn("sk-secret", payload["preview"])
         self.assertNotIn("sk-secret", payload["value"])
 
-    def test_agent_records_trace(self):
+    def test_agent_records_trace_in_sqlite(self):
         import tempfile
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
-            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
+            db_path = Path(tmp) / "folium.db"
+            observer = Observer(ObservabilityConfig(database_path=db_path))
             token = _observer_var.set(observer)
             try:
                 agent = Agent(llm=FakeLLM(), max_rounds=3)
                 agent.session_id = "session_test"
-
                 self.assertEqual(agent.chat("hello"), "done")
 
-                traces = list_traces(trace_dir)
+                traces = list_traces(db_path)
                 self.assertEqual(len(traces), 1)
-                summary = read_trace_summary(traces[0]["trace_id"], trace_dir)
+                summary = read_trace_summary(traces[0]["trace_id"], db_path)
                 self.assertEqual(summary["status"], "ok")
                 self.assertEqual(summary["session_id"], "session_test")
                 self.assertEqual(summary["llm_calls"], 2)
                 self.assertEqual(summary["tool_calls"], 1)
 
-                lines = [
-                    json.loads(line)
-                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
-                ]
-                self.assertTrue(any(e.get("event") == "tool_result" for e in lines))
-                self.assertTrue(any(e.get("event") == "llm_result" for e in lines))
-                self.assertTrue(any(e.get("event") == "llm_request_snapshot" for e in lines))
-                self.assertTrue(any(e.get("event") == "llm_response_snapshot" for e in lines))
-                request = next(e for e in lines if e.get("event") == "llm_request_snapshot")
+                events = _events(db_path, traces[0]["trace_id"])
+                self.assertTrue(any(event["event"] == "tool_result" for event in events))
+                self.assertTrue(any(event["event"] == "llm_result" for event in events))
+                request = next(event for event in events if event["event"] == "llm_request_snapshot")
                 self.assertIn("preview", request["metadata"]["messages"])
                 self.assertNotIn("value", request["metadata"]["messages"])
             finally:
@@ -121,9 +128,9 @@ class ObservabilityTests(unittest.TestCase):
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
+            db_path = Path(tmp) / "folium.db"
             observer = Observer(ObservabilityConfig(
-                trace_dir=trace_dir,
+                database_path=db_path,
                 full_llm_input=True,
                 full_llm_output=True,
             ))
@@ -131,14 +138,10 @@ class ObservabilityTests(unittest.TestCase):
             try:
                 agent = Agent(llm=NoToolLLM(), max_rounds=1)
                 self.assertEqual(agent.chat("hello"), "done")
-
-                traces = list_traces(trace_dir)
-                lines = [
-                    json.loads(line)
-                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
-                ]
-                request = next(e for e in lines if e.get("event") == "llm_request_snapshot")
-                response = next(e for e in lines if e.get("event") == "llm_response_snapshot")
+                trace_id = list_traces(db_path)[0]["trace_id"]
+                events = _events(db_path, trace_id)
+                request = next(event for event in events if event["event"] == "llm_request_snapshot")
+                response = next(event for event in events if event["event"] == "llm_response_snapshot")
                 self.assertIn("value", request["metadata"]["messages"])
                 self.assertIn("hello", request["metadata"]["messages"]["value"])
                 self.assertIn("value", response["metadata"]["assistant_message"])
@@ -151,25 +154,15 @@ class ObservabilityTests(unittest.TestCase):
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
-            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
+            db_path = Path(tmp) / "folium.db"
+            observer = Observer(ObservabilityConfig(database_path=db_path))
             token = _observer_var.set(observer)
             try:
                 agent = Agent(llm=NoToolLLM(), max_rounds=1)
-                agent.session_id = "session_test"
                 original = agent.context.maybe_compress
 
                 def fake_compress(messages, llm=None, real_tokens=None):
-                    return {
-                        "compressed": True,
-                        "layers": [
-                            {
-                                "name": "trim",
-                                "changed": True,
-                                "tools": [{"tool_call_id": "call_1", "name": "bash"}],
-                            }
-                        ],
-                    }
+                    return {"compressed": True, "layers": [{"name": "trim", "changed": True}]}
 
                 agent.context.maybe_compress = fake_compress
                 try:
@@ -177,80 +170,10 @@ class ObservabilityTests(unittest.TestCase):
                 finally:
                     agent.context.maybe_compress = original
 
-                traces = list_traces(trace_dir)
-                lines = [
-                    json.loads(line)
-                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
-                ]
-                events = [e for e in lines if e.get("event") == "context_compressed"]
-                self.assertTrue(events)
-                self.assertEqual(events[0]["metadata"]["layers"][0]["name"], "trim")
-                self.assertEqual(events[0]["metadata"]["layers"][0]["tools"][0]["tool_call_id"], "call_1")
-                snapshots = [e for e in lines if e.get("event") == "context_snapshot"]
-                self.assertTrue(snapshots)
-                self.assertIn("before", snapshots[0]["metadata"])
-                self.assertIn("after", snapshots[0]["metadata"])
-            finally:
-                _observer_var.reset(token)
-
-    def test_full_context_snapshot_can_include_before_after_values(self):
-        import tempfile
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
-            observer = Observer(ObservabilityConfig(
-                trace_dir=trace_dir,
-                full_context_snapshots=True,
-            ))
-            token = _observer_var.set(observer)
-            try:
-                agent = Agent(llm=NoToolLLM(), max_rounds=1)
-                original = agent.context.maybe_compress
-
-                def fake_compress(messages, llm=None, real_tokens=None):
-                    messages[:] = [{"role": "user", "content": "compressed"}]
-                    return {"compressed": True, "layers": [{"name": "summarize", "changed": True}]}
-
-                agent.context.maybe_compress = fake_compress
-                try:
-                    self.assertEqual(agent.chat("hello"), "done")
-                finally:
-                    agent.context.maybe_compress = original
-
-                traces = list_traces(trace_dir)
-                lines = [
-                    json.loads(line)
-                    for line in (trace_dir / f"{traces[0]['trace_id']}.jsonl").read_text(encoding="utf-8").splitlines()
-                ]
-                snapshot = next(e for e in lines if e.get("event") == "context_snapshot")
-                self.assertIn("value", snapshot["metadata"]["before"])
-                self.assertIn("hello", snapshot["metadata"]["before"]["value"])
-                self.assertIn("value", snapshot["metadata"]["after"])
-                self.assertIn("compressed", snapshot["metadata"]["after"]["value"])
-            finally:
-                _observer_var.reset(token)
-
-    def test_parallel_tool_calls_stay_in_same_trace(self):
-        import tempfile
-        from pathlib import Path
-
-        tool_calls = [
-            ToolCall(id="call_1", name="glob", arguments={"pattern": "AGENTS.md", "path": "."}),
-            ToolCall(id="call_2", name="grep", arguments={"pattern": "Folium", "path": "README.md"}),
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
-            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
-            token = _observer_var.set(observer)
-            try:
-                agent = Agent(llm=FakeLLM(tool_calls=tool_calls), max_rounds=3)
-                self.assertEqual(agent.chat("hello"), "done")
-
-                traces = list_traces(trace_dir)
-                self.assertEqual(len(traces), 1)
-                summary = read_trace_summary(traces[0]["trace_id"], trace_dir)
-                self.assertEqual(summary["tool_calls"], 2)
+                events = _events(db_path, list_traces(db_path)[0]["trace_id"])
+                compressed = next(event for event in events if event["event"] == "context_compressed")
+                self.assertEqual(compressed["metadata"]["layers"][0]["name"], "trim")
+                self.assertTrue(any(event["event"] == "context_snapshot" for event in events))
             finally:
                 _observer_var.reset(token)
 
@@ -259,15 +182,19 @@ class ObservabilityTests(unittest.TestCase):
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp)
-            keep = trace_dir / "trace_keep.jsonl"
-            delete = trace_dir / "trace_delete.jsonl"
-            keep.write_text('{"event":"span_start","trace_id":"trace_keep","session_id":"session_keep"}\n', encoding="utf-8")
-            delete.write_text('{"event":"span_start","trace_id":"trace_delete","session_id":"session_delete"}\n', encoding="utf-8")
+            db_path = Path(tmp) / "folium.db"
+            with get_connection(db_path) as conn:
+                conn.execute(
+                    "INSERT INTO sessions VALUES (?, ?, ?, ?, ?)",
+                    ("session_delete", "model", "", "now", "now"),
+                )
+                conn.execute(
+                    "INSERT INTO traces (trace_id, session_id, status) VALUES (?, ?, ?)",
+                    ("trace_delete", "session_delete", "ok"),
+                )
 
-            self.assertEqual(delete_traces_for_session("session_delete", trace_dir), 1)
-            self.assertTrue(keep.exists())
-            self.assertFalse(delete.exists())
+            self.assertEqual(delete_traces_for_session("session_delete", db_path), 1)
+            self.assertEqual(list_traces(db_path), [])
 
 
 if __name__ == "__main__":

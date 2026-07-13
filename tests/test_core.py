@@ -37,19 +37,17 @@ def test_public_api_exports():
     assert len(ALL_TOOLS) == 14
 
 
-def test_config_from_env():
-    os.environ["FOLIUM_MODEL"] = "test-model"
+def test_config_from_env(monkeypatch):
+    monkeypatch.setenv("FOLIUM_MODEL", "test-model")
     c = Config.from_env()
     assert c.model == "test-model"
-    del os.environ["FOLIUM_MODEL"]
 
 
-def test_config_defaults():
+def test_config_defaults(monkeypatch):
     # temporarily clear relevant env vars
-    saved = {}
     for k in ["FOLIUM_MODEL", "FOLIUM_MAX_TOKENS"]:
-        if k in os.environ:
-            saved[k] = os.environ.pop(k)
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("folium.config._load_dotenv", lambda: None)
 
     c = Config.from_env()
     assert c.model == "gpt-4o"
@@ -57,8 +55,6 @@ def test_config_defaults():
     assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
     assert c.token_estimator == "deepseek"
-
-    os.environ.update(saved)
 
 
 # --- Context ---
@@ -468,26 +464,27 @@ def test_context_initial_user_messages_ignore_token_budget():
 
 # --- Session ---
 
-def test_session_save_load():
+def test_session_save_load(tmp_path, monkeypatch):
+    from folium import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "folium.db")
     msgs = [{"role": "user", "content": "test message"}]
     sid = save_session(msgs, "test-model", "pytest_test_session")
     loaded = load_session("pytest_test_session")
     assert loaded is not None
     assert loaded[0] == msgs
     assert loaded[1] == "test-model"
-    # cleanup
-    pathlib.Path.home().joinpath(".folium/sessions/pytest_test_session.json").unlink()
 
 
-def test_session_name_is_sanitized():
+def test_session_name_is_sanitized(tmp_path, monkeypatch):
+    from folium import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "folium.db")
     msgs = [{"role": "user", "content": "test message"}]
     sid = save_session(msgs, "test-model", "../Research Notes!")
 
     assert sid == "Research-Notes"
-    path = pathlib.Path.home().joinpath(".folium/sessions/Research-Notes.json")
-    assert path.exists()
     assert load_session("../Research Notes!") is not None
-    path.unlink()
 
 
 def test_session_not_found():

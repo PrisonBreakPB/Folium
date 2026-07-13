@@ -9,12 +9,12 @@ from .context import (
     observe_trace,
     span,
 )
-from .recorder import JSONLRecorder, NullRecorder
+from .recorder import NullRecorder, SQLiteRecorder
 from .summary import delete_traces_for_session, list_traces, read_trace_summary
 
 __all__ = [
     "ObservabilityConfig",
-    "JSONLRecorder",
+    "SQLiteRecorder",
     "NullRecorder",
     "active_observer",
     "current_span_id",

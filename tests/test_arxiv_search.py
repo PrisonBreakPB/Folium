@@ -67,7 +67,11 @@ class ArxivExecuteTests(unittest.TestCase):
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = self.tool.execute(query="event-triggered control", max_results=2)
+        result = self.tool.execute(
+            query="event-triggered control",
+            max_results=2,
+            year_from=2023,
+        )
 
         self.assertIn("Event-Triggered Control", result)
         self.assertIn("Alice Smith", result)

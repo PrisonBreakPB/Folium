@@ -12,7 +12,7 @@ Folium 面向科研任务的完整链路：从围绕研究主题检索和梳理�
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
 - Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
 - 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
-- 会话持久化：对话内容保存到项目内 `conversations/`
+- 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
 - 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
 - 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
@@ -110,9 +110,10 @@ Web 入口提供：
 
 - 点击“新建对话”会进入一个空白对话状态
 - 空白对话不会立刻持久化
-- 发送第一条消息后，对话才会保存到 `conversations/`
+- 发送第一条消息后，对话才会保存到 `data/folium.db`
 - 切换到其他对话前，当前已有内容的对话会自动保存
-- 会话文件同时保存压缩后的模型上下文 `messages` 和完整历史 `transcript`；Web 历史展示优先使用 `transcript`
+- 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
+- 旧版 `conversations/*.json`、`conversations/traces/*.jsonl` 和 `data/session_prompts.db` 会在 Web 或 CLI 启动时幂等导入 SQLite；源文件不会自动删除，确认迁移结果后可自行清理
 
 ## CLI 命令
 
@@ -268,15 +269,24 @@ Token 计算：
 
 ## 本地可观测性
 
-Folium 已经加入本地 JSONL trace 记录。一次用户输入会生成一个 trace，一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
+Folium 将会话与可观测性数据统一保存到本地 SQLite。一次用户输入会生成一个 trace；一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
 
 默认保存位置：
 
 ```text
-conversations/traces/
+data/folium.db
 ```
 
-当前记录内容包括：
+数据库包含四张业务表：
+
+- `sessions`：会话 ID、模型、system prompt、创建时间和更新时间
+- `messages`：完整对话历史、模型实际使用的压缩上下文，以及工具调用关联信息
+- `traces`：每次 Agent 执行的摘要，如会话、轮次、状态和耗时
+- `trace_events`：trace 内的细粒度事件、span、快照、工具元数据和错误信息
+
+其中 `messages` 保存会话内容，`traces` / `trace_events` 保存执行过程；两者用途不同，不会重复保存一份完整工具输出。工具输出的完整原文保存在 `messages.content`，trace 默认只保存脱敏后的预览、长度和 hash。
+
+当前 trace 事件包括：
 
 - `user_task`：一次用户输入触发的完整 Agent 执行
 - `agent_round`：每轮 Agent 循环
@@ -295,6 +305,7 @@ conversations/traces/
 ```text
 FOLIUM_OBSERVABILITY=1
 FOLIUM_TRACE_MODE=all
+FOLIUM_DB_PATH=data/folium.db
 FOLIUM_TRACE_FULL_USER_INPUT=1
 FOLIUM_TRACE_FULL_LLM_INPUT=0
 FOLIUM_TRACE_FULL_LLM_OUTPUT=0
@@ -305,7 +316,7 @@ FOLIUM_TRACE_REDACT_SECRETS=1
 FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 ```
 
-默认 trace 只保存快照 preview、长度和 hash；打开 `FOLIUM_TRACE_FULL_LLM_INPUT`、`FOLIUM_TRACE_FULL_LLM_OUTPUT` 或 `FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS` 后，会把对应完整内容写入本地 trace 文件，适合调试但会显著增加文件体积。
+默认 trace 只保存快照 preview、长度和 hash；打开 `FOLIUM_TRACE_FULL_LLM_INPUT`、`FOLIUM_TRACE_FULL_LLM_OUTPUT` 或 `FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS` 后，会把对应完整内容写入 `trace_events`，适合调试但会显著增加数据库体积。
 
 查看 trace：
 

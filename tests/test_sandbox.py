@@ -127,8 +127,8 @@ class SandboxTests(unittest.TestCase):
                 return b"hello\n", b""
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp) / "traces"
-            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
+            db_path = Path(tmp) / "folium.db"
+            observer = Observer(ObservabilityConfig(database_path=db_path))
             token = _observer_var.set(observer)
             try:
                 executor = DockerSandboxExecutor(workspace=str(Path(tmp) / "workspace"), image="python:test")
@@ -143,18 +143,19 @@ class SandboxTests(unittest.TestCase):
                 _observer_var.reset(token)
 
             self.assertEqual(result, "hello")
-            trace_path = next(trace_dir.glob("*.jsonl"))
-            events = [
-                json.loads(line)
-                for line in trace_path.read_text(encoding="utf-8").splitlines()
-            ]
-            sandbox_events = [event for event in events if event.get("event") == "sandbox_event"]
-            actions = [event.get("name") for event in sandbox_events]
+            from folium.database import get_connection
+
+            with get_connection(db_path) as conn:
+                rows = conn.execute(
+                    "SELECT name, payload_json FROM trace_events WHERE event_type = 'sandbox_event'"
+                ).fetchall()
+            actions = [row["name"] for row in rows]
             self.assertIn("container_started", actions)
             self.assertIn("command_finished", actions)
-            command_event = next(event for event in sandbox_events if event.get("name") == "command_finished")
-            self.assertEqual(command_event["metadata"]["returncode"], 0)
-            self.assertIn("command_hash", command_event["metadata"])
+            command_event = next(row for row in rows if row["name"] == "command_finished")
+            metadata = json.loads(command_event["payload_json"])
+            self.assertEqual(metadata["returncode"], 0)
+            self.assertIn("command_hash", metadata)
 
     def test_docker_executor_reports_missing_docker(self):
         with tempfile.TemporaryDirectory() as tmp:

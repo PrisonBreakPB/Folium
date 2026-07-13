@@ -23,7 +23,7 @@ def _load_dotenv():
                     env_path = candidate
                     break
                 cur = cur.parent
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     except ImportError:
         pass  # python-dotenv not installed, silently skip
 
