@@ -46,7 +46,7 @@ FINAL_ROUND_REMINDER = (
 )
 
 _SERIAL_TOOLS = {"bash", "agent"}
-_NEVER_PARALLEL_TOOLS: set[str] = set()
+_NEVER_PARALLEL_TOOLS = {"memory"}
 _FILE_TOOLS = {"read_file", "write_file", "edit_file"}
 _FILE_WRITE_TOOLS = {"write_file", "edit_file"}
 

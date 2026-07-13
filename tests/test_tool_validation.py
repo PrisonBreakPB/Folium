@@ -70,6 +70,7 @@ class ToolValidationTests(unittest.TestCase):
             "paper_validate": {"papers": [{"title": "Attention Is All You Need"}]},
             "arxiv_search": {"query": "event-triggered control"},
             "session_history": {"action": "search"},
+            "memory": {"section": "user_preferences", "content": "Prefer Chinese responses."},
         }
 
         for tool in ALL_TOOLS:

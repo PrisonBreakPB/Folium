@@ -75,8 +75,9 @@ class ToolParallelismTests(unittest.TestCase):
 
         self.assertFalse(_should_parallelize_tool_batch(tool_calls))
 
-    def test_never_parallel_tool_set_is_empty_by_default(self):
-        self.assertEqual(_NEVER_PARALLEL_TOOLS, set())
+    def test_memory_tool_never_runs_in_parallel(self):
+        self.assertIn("memory", _NEVER_PARALLEL_TOOLS)
+        self.assertFalse(_should_parallelize_tool_batch(_tool_calls("web_search", "memory")))
 
     def test_prompt_matches_serial_tool_policy(self):
         self.assertIn("Do not batch bash or agent calls", _PARALLEL_TOOLS)
