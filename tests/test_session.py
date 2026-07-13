@@ -1,5 +1,7 @@
 from folium import session as session_module
-from folium.session import load_session, save_session
+from folium import session_prompts
+from folium.session import delete_session, load_session, save_session
+from folium.session_prompts import load_prompt
 
 
 def test_default_session_ids_do_not_collide(tmp_path, monkeypatch):
@@ -53,3 +55,20 @@ def test_legacy_session_transcript_fallback_is_independent(tmp_path, monkeypatch
     assert model == "model-a"
     assert transcript == messages
     assert transcript is not messages
+
+
+def test_delete_session_deletes_system_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_module, "SESSIONS_DIR", tmp_path / "conversations")
+    monkeypatch.setattr(session_prompts, "DB_DIR", tmp_path / "data")
+    monkeypatch.setattr(session_prompts, "DB_PATH", tmp_path / "data" / "session_prompts.db")
+
+    session_id = save_session(
+        [{"role": "user", "content": "test"}],
+        "model-a",
+        "session_a",
+        system_prompt="test system prompt",
+    )
+
+    assert load_prompt(session_id) == "test system prompt"
+    assert delete_session(session_id) is True
+    assert load_prompt(session_id) is None

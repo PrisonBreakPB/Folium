@@ -12,7 +12,7 @@ import uuid
 import copy
 from pathlib import Path
 from .encoding import repair_mojibake_text
-from .session_prompts import save_prompt, load_prompt
+from .session_prompts import delete_prompt, save_prompt, load_prompt
 
 SESSIONS_DIR = Path(os.getcwd()) / "conversations"
 _SAFE_SESSION_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -103,10 +103,11 @@ def load_session(session_id: str) -> tuple[list[dict], str, list[dict], str | No
 
 
 def delete_session(session_id: str) -> bool:
-    """Delete a session file. Returns True if deleted."""
+    """Delete a session file and its stored system prompt."""
     path = _session_path(session_id)
     if path.exists():
         path.unlink()
+        delete_prompt(path.stem)
         return True
     return False
 

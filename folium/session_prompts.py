@@ -51,3 +51,16 @@ def load_prompt(session_id: str) -> str | None:
         return row[0] if row else None
     finally:
         conn.close()
+
+
+def delete_prompt(session_id: str) -> None:
+    """Delete the system prompt stored for a session."""
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM session_prompts WHERE session_id = ?",
+            (session_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()

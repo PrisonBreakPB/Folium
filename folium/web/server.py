@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -19,6 +20,7 @@ from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
+from ..sandbox.session import reset_current_session
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -226,6 +228,7 @@ async def new_conversation():
     _state["session_id"] = None
     _state["agent"].session_id = None
     _state["dirty"] = False
+    reset_current_session()
     return {"result": "New conversation started.", "session_id": _state["session_id"]}
 
 
@@ -267,6 +270,7 @@ async def switch_conversation(req: SwitchRequest):
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
     _state["dirty"] = False
+    reset_current_session()
 
     # Restore system prompt from DB if available
     if system_prompt is not None:
@@ -309,6 +313,7 @@ async def delete_conversation(req: SwitchRequest):
             _state["session_id"] = None
             _state["agent"].session_id = None
             _state["dirty"] = False
+            reset_current_session()
         return {
             "result": f"Deleted {req.session_id}",
             "deleted_traces": deleted_traces,
@@ -328,6 +333,7 @@ async def command(req: CommandRequest):
         _state["session_id"] = None
         agent.session_id = None
         _state["dirty"] = False
+        reset_current_session()
         return {"result": "Conversation reset."}
 
     if cmd in ("/tokens", "tokens"):
@@ -426,6 +432,8 @@ async def command(req: CommandRequest):
 # ── server runner ───────────────────────────────────────────
 
 def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 8000):
+    os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
+    reset_current_session()
     _state["agent"] = agent
     _state["config"] = config
     _state["session_id"] = None

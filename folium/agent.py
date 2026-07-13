@@ -789,7 +789,7 @@ class Agent:
 def _status_from_tool_result(result: str) -> str:
     if result.startswith("Error: timed out") or "timed out after" in result:
         return "timeout"
-    if result.startswith("Error") or result.startswith("\u26a0"):
+    if result.startswith(("Error", "\u26a0", "[Warning] Blocked:")):
         return "error"
     return "ok"
 

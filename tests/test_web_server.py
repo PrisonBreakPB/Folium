@@ -1,8 +1,11 @@
 import json
+import os
+import sys
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from folium import session as session_module
 from folium.web import server
@@ -167,7 +170,8 @@ class WebServerSessionTests(unittest.TestCase):
                     "dirty": False,
                 })
                 client = TestClient(server.app)
-                resp = client.post("/switch", json={"session_id": "session_a"})
+                with mock.patch("folium.web.server.reset_current_session") as reset_session:
+                    resp = client.post("/switch", json={"session_id": "session_a"})
 
                 self.assertEqual(resp.status_code, 200)
                 self.assertEqual(resp.json()["messages"], [{"role": "user", "content": "saved"}])
@@ -175,10 +179,103 @@ class WebServerSessionTests(unittest.TestCase):
                 self.assertEqual(agent.transcript, [{"role": "user", "content": "saved"}])
                 self.assertEqual(agent.todo_manager.snapshot(), [])
                 self.assertEqual(agent.rounds_since_todo, 0)
+                reset_session.assert_called_once()
             finally:
                 session_module.SESSIONS_DIR = old_dir
                 server._state.clear()
                 server._state.update(old_state)
+
+    def test_new_and_reset_commands_reset_sandbox_session(self):
+        from fastapi.testclient import TestClient
+
+        old_state = dict(server._state)
+        try:
+            server._state.update({
+                "agent": DummyAgent(),
+                "config": DummyConfig(),
+                "session_id": "session_test",
+                "dirty": True,
+            })
+            client = TestClient(server.app)
+            with mock.patch("folium.web.server.reset_current_session") as reset_session:
+                new_response = client.post("/new")
+                self.assertEqual(new_response.status_code, 200)
+                reset_session.assert_called_once()
+
+                reset_session.reset_mock()
+                reset_response = client.post("/command", json={"command": "/reset"})
+                self.assertEqual(reset_response.status_code, 200)
+                reset_session.assert_called_once()
+        finally:
+            server._state.clear()
+            server._state.update(old_state)
+
+    def test_delete_current_conversation_resets_sandbox_session(self):
+        from fastapi.testclient import TestClient
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_dir = session_module.SESSIONS_DIR
+            old_state = dict(server._state)
+            try:
+                session_module.SESSIONS_DIR = Path(tmp)
+                session_module.save_session([], "test-model", "session_a", transcript=[])
+                server._state.update({
+                    "agent": DummyAgent(),
+                    "config": DummyConfig(),
+                    "session_id": "session_a",
+                    "dirty": False,
+                })
+                client = TestClient(server.app)
+                with mock.patch("folium.web.server.reset_current_session") as reset_session:
+                    response = client.post("/delete", json={"session_id": "session_a"})
+
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["deleted_current"])
+                reset_session.assert_called_once()
+            finally:
+                session_module.SESSIONS_DIR = old_dir
+                server._state.clear()
+                server._state.update(old_state)
+
+    def test_run_server_defaults_web_to_copy_workspace(self):
+        old_state = dict(server._state)
+        uvicorn = mock.Mock()
+        try:
+            with (
+                mock.patch.dict("os.environ", {}, clear=True),
+                mock.patch.dict(sys.modules, {"uvicorn": uvicorn}),
+                mock.patch("folium.web.server.reset_current_session"),
+            ):
+                server.run_server(DummyAgent(), DummyConfig())
+
+                self.assertEqual(os.environ["FOLIUM_SANDBOX_WORKSPACE_MODE"], "copy")
+                uvicorn.run.assert_called_once_with(
+                    server.app, host="0.0.0.0", port=8000, log_level="info"
+                )
+        finally:
+            server._state.clear()
+            server._state.update(old_state)
+
+    def test_run_server_respects_explicit_workspace_mode(self):
+        old_state = dict(server._state)
+        uvicorn = mock.Mock()
+        try:
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_SANDBOX_WORKSPACE_MODE": "host"},
+                    clear=True,
+                ),
+                mock.patch.dict(sys.modules, {"uvicorn": uvicorn}),
+                mock.patch("folium.web.server.reset_current_session"),
+            ):
+                server.run_server(DummyAgent(), DummyConfig())
+
+                self.assertEqual(os.environ["FOLIUM_SANDBOX_WORKSPACE_MODE"], "host")
+        finally:
+            server._state.clear()
+            server._state.update(old_state)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ from .pdf import PdfFetchTool
 from .paper_search import PaperSearchTool
 from .paper_validate import PaperValidateTool
 from .arxiv_search import ArxivSearchTool
-from .sandbox import SandboxDiffTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -30,7 +29,6 @@ ALL_TOOLS = [
     PaperSearchTool(),
     PaperValidateTool(),
     ArxivSearchTool(),
-    SandboxDiffTool(),
 ]
 
 
@@ -51,7 +49,6 @@ def create_tools():
         PaperSearchTool(),
         PaperValidateTool(),
         ArxivSearchTool(),
-        SandboxDiffTool(),
     ]
 
 

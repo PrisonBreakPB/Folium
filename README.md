@@ -74,8 +74,8 @@ FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
 FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
 FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
-FOLIUM_HOST_WORKSPACE       Docker 默认挂载的真实项目目录，默认当前进程工作目录
-FOLIUM_SANDBOX_WORKSPACE_MODE Docker 工作区模式：host 或 copy，默认 host；copy 会复制项目到 .folium/sandbox/sessions
+FOLIUM_HOST_WORKSPACE       真实项目目录，默认当前进程工作目录
+FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host 或 copy；Web 默认 copy，CLI 默认 host。copy 会在每个 Web 会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目
 FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
 FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需禁止 bash 容器联网可设为 none
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
@@ -149,7 +149,6 @@ web_fetch       读取单个 HTTP(S) URL，返回清洗后的 title 和正文片
 pdf_fetch       读取 PDF 正文文本
 paper_search    通过 OpenAlex 搜索论文，返回结构化 JSON 证据
 paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial / unverified / mismatch
-sandbox_diff    查看 copy 模式 Docker 沙箱工作区相对真实项目的文件差异；默认 host 模式请用 git diff
 ```
 
 `web_search` 是轻量搜索工具，只返回候选网页的 title、URL 和 snippet，不抓取全文、不做 RAG。需要设置 `BRAVE_SEARCH_API_KEY`；缺少 key 时工具会返回明确错误。

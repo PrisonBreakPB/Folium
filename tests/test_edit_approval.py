@@ -106,6 +106,17 @@ def test_bash_read_only_command_does_not_require_approval():
     assert executor.commands == ["pwd && ls -la"]
 
 
+def test_blocked_bash_command_has_error_status():
+    agent = Agent(llm=None, tools=[BashTool()])
+
+    result = agent._exec_tool(ToolCall(id="t1", name="bash", arguments={
+        "command": "rm -rf /",
+    }))
+
+    assert result.status == "error"
+    assert result.content.startswith("[Warning] Blocked:")
+
+
 def test_approval_endpoint_resolves_pending_request():
     client = TestClient(server.app)
     approval_id = "approval_test"

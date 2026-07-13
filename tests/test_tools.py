@@ -24,7 +24,7 @@ def local_bash_backend(monkeypatch):
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 15
+    assert len(ALL_TOOLS) == 14
 
 
 def test_all_tools_have_valid_schema():
