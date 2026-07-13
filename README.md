@@ -113,7 +113,6 @@ Web 入口提供：
 - 发送第一条消息后，对话才会保存到 `data/folium.db`
 - 切换到其他对话前，当前已有内容的对话会自动保存
 - 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
-- 旧版 `conversations/*.json`、`conversations/traces/*.jsonl` 和 `data/session_prompts.db` 会在 Web 或 CLI 启动时幂等导入 SQLite；源文件不会自动删除，确认迁移结果后可自行清理
 
 ## CLI 命令
 

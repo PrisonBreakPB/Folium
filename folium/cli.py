@@ -16,7 +16,6 @@ from .llm import LLM, LiteLLM
 from .config import Config
 from .session import calculate_session_stats, save_session, load_session, list_sessions
 from .observability import list_traces, read_trace_summary
-from .persistence_migration import migrate_legacy_storage
 from . import __version__
 
 console = Console()
@@ -73,7 +72,6 @@ def main():
         max_tokens=config.max_tokens,
     )
     agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
-    migrate_legacy_storage()
 
     # resume saved session
     if args.resume:

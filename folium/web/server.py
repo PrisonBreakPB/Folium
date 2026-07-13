@@ -27,7 +27,6 @@ from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
-from ..persistence_migration import migrate_legacy_storage
 from ..sandbox.session import reset_current_session
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -439,7 +438,6 @@ async def command(req: CommandRequest):
 
 def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 8000):
     os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
-    migrate_legacy_storage()
     reset_current_session()
     _state["agent"] = agent
     _state["config"] = config
