@@ -380,7 +380,11 @@ def test_context_summarize_report_marks_fallback():
 
 
 def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
-    ctx = ContextManager(max_tokens=1000, protected_user_tokens=5)
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=5,
+        protected_initial_user_messages=0,
+    )
     msgs = [
         {"role": "user", "content": "older"},
         {"role": "assistant", "content": "assistant"},
@@ -393,6 +397,73 @@ def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
     assert len(protected) == 1
     assert protected[0]["content"] == "latest very long request"
     assert protected[0]["_protected"] is True
+
+
+def test_context_protects_initial_and_recent_user_messages():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "assistant"},
+        {"role": "user", "content": "middle"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch(
+        "folium.context.estimate_text_tokens",
+        side_effect=lambda text: 10 if text in {"first", "second"} else 1,
+    ):
+        protected = ctx._collect_protected_user_messages(msgs)
+
+    assert [message["content"] for message in protected] == ["first", "second", "latest"]
+    assert all(message["_protected"] is True for message in protected)
+
+
+def test_context_summary_keeps_initial_and_recent_user_messages():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "assistant detail"},
+        {"role": "user", "content": "middle"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch("folium.context.estimate_text_tokens", return_value=1):
+        report = ctx._summarize_old(msgs, FakeLLM())
+
+    assert report["protected_user_count"] == 3
+    assert [message["content"] for message in msgs[:-1]] == ["first", "second", "latest"]
+    assert msgs[-1]["content"].startswith(f"{SUMMARY_PREFIX}\nsummary")
+
+
+def test_context_initial_user_messages_ignore_token_budget():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch(
+        "folium.context.estimate_text_tokens",
+        side_effect=lambda text: 10 if text in {"first", "second"} else 1,
+    ):
+        protected = ctx._collect_protected_user_messages(msgs)
+
+    assert [message["content"] for message in protected] == ["first", "second", "latest"]
 
 
 # --- Session ---
