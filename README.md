@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改造成面向科研场景的智能体系统。项目会围绕文献综述、数学推导、仿真实验、论文写作，以及 Agent Harness 工程组件持续扩展。
+Folium 面向科研任务的完整链路：从围绕研究主题检索和梳理文献、识别已有工作的条件与局限，到检查数学推导和控制理论中的关键结论，再到生成、运行和分析仿真实验，并辅助组织论文写作内容。项目也会同步建设支撑这些工作流的 Agent Harness 工程组件，包括工具调用与状态的可观测性、受控的沙箱执行、检索与记忆结合的 Agentic RAG，以及面向多步骤科研任务的上下文管理和可靠性机制。
 
 ## 当前能力
 
