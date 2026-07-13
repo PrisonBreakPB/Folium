@@ -137,11 +137,12 @@ quit            退出
 
 ```text
 read_file       读取文件，支持 offset/limit
-write_file      创建或覆盖文件
-edit_file       基于唯一字符串匹配的安全编辑，返回 diff
+write_file      创建或覆盖文件（包括完整 LaTeX .tex 源文件）
+edit_file       基于唯一字符串匹配的安全编辑（包括已有 LaTeX .tex 源文件），返回 diff
 glob            按 glob 模式查找文件
 grep            按正则搜索文件内容
 bash            执行 shell 命令，支持 local/docker 后端、危险命令拦截、超时终止和输出截断
+session_history 查询当前会话已持久化的完整历史；支持关键词搜索和按 message_id 分段读取
 agent           启动子 Agent 处理独立子任务
 todo            更新结构化任务列表，跟踪 pending / in_progress / completed
 web_search      使用 Brave Search API 返回轻量 Web 搜索结果

@@ -196,7 +196,7 @@ def _sub_agent_tools(tools: list[Tool], spec: SubAgentSpec) -> list[Tool]:
     return [
         _sub_agent_tool(t)
         for t in tools
-        if t.name != "agent" and (allowed is None or t.name in allowed)
+        if t.name not in {"agent", "session_history"} and (allowed is None or t.name in allowed)
     ]
 
 

@@ -20,6 +20,7 @@ class EditFileTool(Tool):
     description = (
         "Make a targeted edit to an existing file by replacing one exact string with another. "
         "old_string must appear exactly once; include enough surrounding context to make it unique. "
+        "Use this tool for targeted edits to existing LaTeX (.tex) source files. "
         "Use this tool for local changes instead of rewriting a whole file. "
         "Do not edit files through bash with sed or awk."
     )
@@ -48,7 +49,7 @@ class EditFileTool(Tool):
             if not p.exists():
                 return f"Error: {file_path} not found"
 
-            content = p.read_text()
+            content = p.read_text(encoding="utf-8")
             occurrences = content.count(old_string)
 
             if occurrences == 0:
@@ -64,7 +65,7 @@ class EditFileTool(Tool):
                 )
 
             new_content = content.replace(old_string, new_string, 1)
-            p.write_text(new_content)
+            p.write_text(new_content, encoding="utf-8")
             _changed_files.add(str(p))
 
             # generate a unified diff so the user/LLM can see exactly what changed

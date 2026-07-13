@@ -21,6 +21,7 @@ from .llm import LLM, LLMResponse, estimate_cost
 from .tools import create_tools
 from .tools.base import Tool, ToolOutput, ToolValidationError
 from .tools.agent import AgentTool
+from .tools.session_history import SessionHistoryTool
 from .tools.todo import TODO_REMINDER, TodoTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
@@ -143,9 +144,9 @@ class Agent:
         self.rounds_since_todo = 0
         self.edit_approval_callback = None
 
-        # wire up sub-agent capability
+        # Wire tools that need their owning agent's runtime state.
         for t in self.tools:
-            if isinstance(t, AgentTool):
+            if isinstance(t, (AgentTool, SessionHistoryTool)):
                 t._parent_agent = self
 
     def _full_messages(self) -> list[dict]:
