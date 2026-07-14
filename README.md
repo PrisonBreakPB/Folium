@@ -8,7 +8,6 @@ Folium 面向科研任务的完整链路：从围绕研究主题检索和梳理�
 ## 当前能力
 
 - Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
-- CLI 入口：支持交互式对话、单次 prompt、会话恢复和内置命令
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
 - Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
 - 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
@@ -45,18 +44,6 @@ python -m folium
 http://localhost:8000
 ```
 
-启动 CLI：
-
-```bash
-python -m folium --cli
-```
-
-单次任务：
-
-```bash
-python -m folium --cli -p "读一下 README.md，总结当前项目能力"
-```
-
 ## 配置
 
 常用环境变量：
@@ -75,7 +62,7 @@ FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek �
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
 FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
 FOLIUM_HOST_WORKSPACE       真实项目目录，默认当前进程工作目录
-FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host 或 copy；Web 默认 copy，CLI 默认 host。copy 会在每个 Web 会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目
+FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host 或 copy；Web 默认 copy。copy 会在每个 Web 会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目
 FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
 FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需禁止 bash 容器联网可设为 none
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
@@ -113,23 +100,6 @@ Web 入口提供：
 - 发送第一条消息后，对话才会保存到 `data/folium.db`
 - 切换到其他对话前，当前已有内容的对话会自动保存
 - 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
-
-## CLI 命令
-
-```text
-/help           查看帮助
-/model          查看当前模型
-/model <名称>   切换模型
-/tokens         查看累计 token 用量和费用估算
-/compact        手动压缩上下文
-/diff           查看当前会话修改过的文件
-/save           手动保存会话
-/sessions       列出已保存会话
-/traces         列出最近执行 trace
-/trace <id>     查看某个 trace 摘要
-/reset          清空当前对话历史
-quit            退出
-```
 
 ## 工具
 
@@ -329,8 +299,7 @@ FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 
 ```text
 folium/
-├── __main__.py              Web/CLI 入口分发
-├── cli.py                   CLI REPL 和命令
+├── __main__.py              Web 入口
 ├── agent.py                 Agent 主循环、工具调用和观测插桩
 ├── llm.py                   OpenAI 兼容 LLM 客户端和 LiteLLM 后端
 ├── context.py               上下文估算与压缩
