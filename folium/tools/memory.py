@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -22,14 +25,18 @@ _SECTIONS = {
 class MemoryTool(Tool):
     name = "memory"
     description = (
-        "Persist one durable user preference, stable research context, confirmed decision, "
-        "or open item in long-term memory. Use only for information likely to remain useful "
-        "across future tasks; never store secrets, full chat transcripts, temporary guesses, "
-        "or raw tool output."
+        "Read or persist durable long-term memory. Append only stable user preferences, "
+        "research context, confirmed decisions, or open items; never store secrets, full "
+        "chat transcripts, temporary guesses, or raw tool output."
     )
     parameters = {
         "type": "object",
         "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["read", "append"],
+                "description": "read returns memory and its version; append adds one entry.",
+            },
             "section": {
                 "type": "string",
                 "description": (
@@ -41,11 +48,33 @@ class MemoryTool(Tool):
                 "type": "string",
                 "description": "One concise, durable fact to append.",
             },
+            "expected_version": {
+                "type": "string",
+                "description": "Version returned by read. Use for conflict-safe background appends.",
+            },
         },
-        "required": ["section", "content"],
+        "required": [],
     }
 
-    def execute(self, section: str, content: str) -> str:
+    def execute(
+        self,
+        section: str | None = None,
+        content: str | None = None,
+        action: str | None = None,
+        expected_version: str | None = None,
+    ) -> str:
+        action = action or "append"
+        if action == "read":
+            if section is not None or content is not None or expected_version is not None:
+                return "Error: read does not accept section, content, or expected_version"
+            with _MEMORY_LOCK:
+                memory = _read_memory(MEMORY_FILE)
+            return f"Memory version: {_memory_version(memory)}\n\n{memory}"
+        if action != "append":
+            return "Error: action must be one of: read, append"
+        if section is None or content is None:
+            return "Error: append requires section and content"
+
         heading = _SECTIONS.get(section)
         if heading is None:
             return "Error: section must be one of: " + ", ".join(_SECTIONS)
@@ -58,6 +87,8 @@ class MemoryTool(Tool):
 
         with _MEMORY_LOCK:
             memory = _read_memory(MEMORY_FILE)
+            if expected_version is not None and expected_version != _memory_version(memory):
+                return "Conflict: memory changed; read the latest memory before retrying."
             bullet = f"- {entry}"
             if bullet in memory.splitlines():
                 return "Error: this memory entry already exists"
@@ -69,8 +100,7 @@ class MemoryTool(Tool):
                     "do not add this entry"
                 )
 
-            MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            MEMORY_FILE.write_text(updated, encoding="utf-8")
+            _write_memory(MEMORY_FILE, updated)
 
         return f"Saved long-term memory in {section}: {entry}"
 
@@ -95,6 +125,35 @@ def _empty_memory() -> str:
 ## Confirmed Decisions
 
 ## Open Items"""
+
+
+def _memory_version(memory: str) -> str:
+    return hashlib.sha256(memory.encode("utf-8")).hexdigest()
+
+
+def _write_memory(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_file.write(content)
+            temp_path = temp_file.name
+        os.replace(temp_path, path)
+    except OSError as exc:
+        raise RuntimeError(f"could not write memory file: {exc}") from exc
+    finally:
+        if temp_path:
+            try:
+                Path(temp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _append_to_section(memory: str, heading: str, bullet: str) -> str:

@@ -68,6 +68,12 @@ FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需�
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
 FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
+FOLIUM_MEMORY_MAINTENANCE_MODEL               Background memory model (default deepseek-v4-flash)
+FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance before scheduling (default 10)
+FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           Maximum maintenance model/tool rounds (default 5)
+FOLIUM_MEMORY_MAINTENANCE_CONTEXT_TURNS       Recent complete turns included in the snapshot (default 10)
+FOLIUM_MEMORY_MAINTENANCE_MAX_CONTEXT_TOKENS  Snapshot token limit (default 12000)
+FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (default 2000)
 ```
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
@@ -327,6 +333,16 @@ folium/
 - Artifact 记录，如报告、TeX、代码、图表、实验日志
 - 评估与反馈机制
 - Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
+
+## Background memory maintenance
+
+The Web server schedules a conservative, memory-only maintenance task after the
+response is fully sent. By default, it runs after 10 completed turns without
+memory maintenance, uses `deepseek-v4-flash`, and is limited to 5 model/tool
+rounds. It receives only recent user messages and final assistant responses,
+may choose `NO_CHANGE`, and records a `system_background_memory_maintenance`
+marker in its trace. Memory writes use version checks so a concurrent main-agent
+write wins; the background task rereads and retries once, then skips conflicts.
 
 ## 测试
 

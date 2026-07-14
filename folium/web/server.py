@@ -1,6 +1,7 @@
 """FastAPI server with SSE streaming for Folium."""
 
 import asyncio
+import copy
 import json
 import os
 import threading
@@ -14,6 +15,10 @@ from pydantic import BaseModel
 from ..agent import Agent
 from ..config import Config
 from ..llm import LLMProviderError
+from ..memory_maintenance import (
+    MemoryMaintenanceAgent,
+    MemoryMaintenanceScheduler,
+)
 from ..session import (
     calculate_session_stats,
     delete_session,
@@ -37,6 +42,7 @@ _state = {
     "config": None,
     "session_id": None,
     "dirty": False,
+    "memory_maintenance": None,
 }
 _chat_lock = asyncio.Lock()
 _pending_approvals = {}
@@ -125,6 +131,34 @@ def _auto_save():
         _state["dirty"] = False
 
 
+async def _after_chat_response(completion: dict | None = None):
+    """Persist the completed turn, then schedule maintenance without waiting for it."""
+    _auto_save()
+    scheduler = _state.get("memory_maintenance")
+    if not scheduler or not completion:
+        return
+    await scheduler.on_turn_completed(
+        session_id=completion["session_id"],
+        transcript=completion["transcript"],
+        main_agent_used_memory=completion["main_agent_used_memory"],
+    )
+
+
+def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryMaintenanceAgent:
+    llm_cls = type(agent.llm)
+    llm = llm_cls(
+        model=getattr(config, "memory_maintenance_model", "deepseek-v4-flash"),
+        api_key=getattr(config, "api_key", ""),
+        base_url=getattr(config, "base_url", None),
+        temperature=getattr(config, "temperature", 0.0),
+        max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
+    )
+    return MemoryMaintenanceAgent(
+        llm,
+        max_steps=getattr(config, "memory_maintenance_max_steps", 5),
+    )
+
+
 def _context_budget_payload() -> dict:
     agent = _state.get("agent")
     context = getattr(agent, "context", None)
@@ -182,6 +216,8 @@ async def chat(req: ChatRequest):
             )
         _state["agent"].session_id = _state["session_id"]
         _state["agent"].edit_approval_callback = on_edit_approval
+        chat_session_id = _state["session_id"]
+        transcript_start = len(_state["agent"].transcript)
         task = asyncio.create_task(
             asyncio.to_thread(
                 _state["agent"].chat,
@@ -198,7 +234,15 @@ async def chat(req: ChatRequest):
                 queue.put_nowait(_error_event(t.exception()))
             else:
                 _state["dirty"] = True
+                turn_transcript = _state["agent"].transcript[transcript_start:]
+                completion["transcript"] = copy.deepcopy(_state["agent"].transcript)
+                completion["session_id"] = chat_session_id
+                completion["main_agent_used_memory"] = any(
+                    message.get("role") == "tool" and message.get("name") == "memory"
+                    for message in turn_transcript
+                )
                 queue.put_nowait({"type": "done", "content": ""})
+        completion: dict = {}
         task.add_done_callback(_on_complete)
 
         async def event_stream():
@@ -209,12 +253,12 @@ async def chat(req: ChatRequest):
                 if event["type"] in ("done", "error"):
                     break
 
-        # use BackgroundTask to auto-save after response is sent
+        # Run after the final SSE event has been sent; this does not await maintenance.
         from starlette.background import BackgroundTask
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
-            background=BackgroundTask(_auto_save),
+            background=BackgroundTask(_after_chat_response, completion),
         )
 
 
@@ -443,6 +487,14 @@ def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 
     _state["config"] = config
     _state["session_id"] = None
     _state["dirty"] = False
+    _state["memory_maintenance"] = MemoryMaintenanceScheduler(
+        lambda: _new_memory_maintenance_runner(agent, config),
+        threshold=getattr(config, "memory_maintenance_turns", 10),
+        context_turns=getattr(config, "memory_maintenance_context_turns", 10),
+        max_context_tokens=getattr(
+            config, "memory_maintenance_max_context_tokens", 12_000
+        ),
+    )
     agent.session_id = None
 
     import uvicorn

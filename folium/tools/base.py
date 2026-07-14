@@ -76,6 +76,12 @@ class Tool(ABC):
             if not ok:
                 errors.append(f"field '{field}' must be {expected}, got {type(value).__name__}")
                 continue
+            allowed = field_schema.get("enum")
+            if allowed is not None and value not in allowed:
+                errors.append(
+                    f"field '{field}' must be one of: {', '.join(str(item) for item in allowed)}"
+                )
+                continue
             validated[field] = value
 
         if errors:
