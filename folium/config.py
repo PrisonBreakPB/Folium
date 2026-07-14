@@ -33,7 +33,7 @@ class Config:
     model: str = "gpt-4o"
     api_key: str = ""
     base_url: str | None = None
-    max_tokens: int = 4096
+    max_tokens: int = 32000
     temperature: float = 0.0
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
@@ -54,7 +54,7 @@ class Config:
             model=os.getenv("FOLIUM_MODEL", "gpt-4o"),
             api_key=api_key,
             base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("FOLIUM_BASE_URL"),
-            max_tokens=int(os.getenv("FOLIUM_MAX_TOKENS", "4096")),
+            max_tokens=int(os.getenv("FOLIUM_MAX_TOKENS", "32000")),
             temperature=float(os.getenv("FOLIUM_TEMPERATURE", "0")),
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),

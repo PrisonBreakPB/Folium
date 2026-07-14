@@ -51,7 +51,7 @@ def test_config_defaults(monkeypatch):
 
     c = Config.from_env()
     assert c.model == "gpt-4o"
-    assert c.max_tokens == 4096
+    assert c.max_tokens == 32000
     assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
     assert c.token_estimator == "deepseek"
