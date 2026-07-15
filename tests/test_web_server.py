@@ -88,6 +88,38 @@ class WebServerSessionTests(unittest.TestCase):
         self.assertEqual(runner.llm.api_key, "config-key")
         self.assertEqual(runner.llm.extra["max_tokens"], 2000)
 
+    def test_background_maintenance_receives_completed_turn_usage_snapshot(self):
+        class CapturingScheduler:
+            def __init__(self):
+                self.kwargs = None
+
+            async def on_turn_completed(self, **kwargs):
+                self.kwargs = kwargs
+
+        old_state = dict(server._state)
+        scheduler = CapturingScheduler()
+        completion = {
+            "session_id": "session_test",
+            "messages": [{"role": "system", "content": "system"}],
+            "visible_tools": [],
+            "main_agent_used_memory": False,
+            "main_prompt_tokens": 321,
+            "main_completion_tokens": 123,
+            "main_request_matches_memory_context": True,
+        }
+        try:
+            server._state["memory_maintenance"] = scheduler
+            with mock.patch("folium.web.server._auto_save"):
+                import asyncio
+
+                asyncio.run(server._after_chat_response(completion))
+            self.assertEqual(scheduler.kwargs["main_prompt_tokens"], 321)
+            self.assertEqual(scheduler.kwargs["main_completion_tokens"], 123)
+            self.assertTrue(scheduler.kwargs["main_request_matches_memory_context"])
+        finally:
+            server._state.clear()
+            server._state.update(old_state)
+
     def test_auto_save_only_updates_dirty_session(self):
         import tempfile
 

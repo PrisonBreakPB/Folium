@@ -142,6 +142,9 @@ async def _after_chat_response(completion: dict | None = None):
         messages=completion["messages"],
         visible_tools=completion["visible_tools"],
         main_agent_used_memory=completion["main_agent_used_memory"],
+        main_prompt_tokens=completion["main_prompt_tokens"],
+        main_completion_tokens=completion["main_completion_tokens"],
+        main_request_matches_memory_context=completion["main_request_matches_memory_context"],
     )
 
 
@@ -239,6 +242,21 @@ async def chat(req: ChatRequest):
                 completion["messages"] = copy.deepcopy(_state["agent"]._full_messages())
                 completion["visible_tools"] = copy.deepcopy(_state["agent"]._tool_schemas())
                 completion["session_id"] = chat_session_id
+                completion["main_prompt_tokens"] = getattr(
+                    _state["agent"].llm,
+                    "last_prompt_tokens",
+                    0,
+                )
+                completion["main_completion_tokens"] = getattr(
+                    _state["agent"].llm,
+                    "last_completion_tokens",
+                    0,
+                )
+                completion["main_request_matches_memory_context"] = getattr(
+                    _state["agent"],
+                    "last_llm_request_had_visible_tools",
+                    False,
+                )
                 completion["main_agent_used_memory"] = any(
                     message.get("role") == "tool" and message.get("name") == "memory"
                     for message in turn_transcript

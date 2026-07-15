@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from dataclasses import dataclass
 from typing import Callable
@@ -37,6 +38,11 @@ If append reports a conflict, read again and retry at most once. Do not force a 
 
 Finish with exactly one status token: NO_CHANGE, UPDATED, SKIPPED_CONFLICT, or FAILED."""
 
+MEMORY_MAINTENANCE_CONTEXT_RATIO = 0.80
+TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4_096
+TOOL_OUTPUT_TRIM_KEEP_CHARS = 1_536
+TOOL_OUTPUT_TRIM_MARKER = "[Tool output truncated for background memory context.]"
+
 
 @dataclass(frozen=True)
 class MemoryMaintenanceResult:
@@ -64,7 +70,10 @@ class MemoryAgent:
         messages: list[dict],
         visible_tools: list[dict],
         input_tokens: int,
-        skip_reason: str | None = None,
+        context_source: str = "estimated_messages",
+        context_usage_ratio: float = 0.0,
+        tool_output_trimmed_count: int = 0,
+        tool_output_trimmed_characters: int = 0,
     ) -> MemoryMaintenanceResult:
         metadata = {
             "kind": "system_background_memory_maintenance",
@@ -72,7 +81,11 @@ class MemoryAgent:
             "max_steps": self.max_steps,
             "context_source": "completed_main_agent_messages",
             "message_count": len(messages),
-            "approximate_input_tokens": input_tokens,
+            "initial_input_tokens": input_tokens,
+            "input_budget_source": context_source,
+            "initial_context_usage_ratio": context_usage_ratio,
+            "tool_output_trimmed_count": tool_output_trimmed_count,
+            "tool_output_trimmed_characters": tool_output_trimmed_characters,
             "visible_tool_count": len(visible_tools),
         }
         with observe_trace(
@@ -90,10 +103,6 @@ class MemoryAgent:
                     **metadata,
                 },
             )
-            if skip_reason:
-                result = MemoryMaintenanceResult(skip_reason, writes=0, steps=0)
-                self._record_completion(result, reason="context_limit")
-                return result
             record_event(
                 "memory_maintenance_started",
                 "memory_maintenance",
@@ -298,6 +307,9 @@ class MemoryMaintenanceScheduler:
         messages: list[dict],
         visible_tools: list[dict],
         main_agent_used_memory: bool,
+        main_prompt_tokens: int = 0,
+        main_completion_tokens: int = 0,
+        main_request_matches_memory_context: bool = False,
     ) -> bool:
         async with self._lock:
             state = self._states.setdefault(session_id, _SchedulerState())
@@ -309,10 +321,24 @@ class MemoryMaintenanceScheduler:
                 return False
 
             covered_turn = state.completed_turns
-            input_tokens = estimate_memory_maintenance_input_tokens(messages, visible_tools)
-            skip_reason = None
-            if input_tokens + self.max_output_tokens > self.max_context_tokens:
-                skip_reason = "SKIPPED_CONTEXT_LIMIT"
+            input_tokens, context_source = _initial_input_tokens(
+                messages,
+                visible_tools,
+                main_prompt_tokens=main_prompt_tokens,
+                main_completion_tokens=main_completion_tokens,
+                main_request_matches_memory_context=main_request_matches_memory_context,
+            )
+            context_usage_ratio = (
+                (input_tokens + self.max_output_tokens) / self.max_context_tokens
+            )
+            tool_output_trimmed_count = 0
+            tool_output_trimmed_characters = 0
+            if context_usage_ratio > MEMORY_MAINTENANCE_CONTEXT_RATIO:
+                (
+                    messages,
+                    tool_output_trimmed_count,
+                    tool_output_trimmed_characters,
+                ) = trim_memory_maintenance_tool_outputs(messages)
             state.running = True
             state.task = asyncio.create_task(
                 self._run(
@@ -321,7 +347,10 @@ class MemoryMaintenanceScheduler:
                     messages,
                     visible_tools,
                     input_tokens,
-                    skip_reason,
+                    context_source,
+                    context_usage_ratio,
+                    tool_output_trimmed_count,
+                    tool_output_trimmed_characters,
                 ),
                 name=f"memory-maintenance-{session_id}",
             )
@@ -341,7 +370,10 @@ class MemoryMaintenanceScheduler:
         messages: list[dict],
         visible_tools: list[dict],
         input_tokens: int,
-        skip_reason: str | None,
+        context_source: str,
+        context_usage_ratio: float,
+        tool_output_trimmed_count: int,
+        tool_output_trimmed_characters: int,
     ) -> None:
         result = MemoryMaintenanceResult("FAILED", writes=0, steps=0)
         try:
@@ -353,7 +385,10 @@ class MemoryMaintenanceScheduler:
                 messages=messages,
                 visible_tools=visible_tools,
                 input_tokens=input_tokens,
-                skip_reason=skip_reason,
+                context_source=context_source,
+                context_usage_ratio=context_usage_ratio,
+                tool_output_trimmed_count=tool_output_trimmed_count,
+                tool_output_trimmed_characters=tool_output_trimmed_characters,
             )
         finally:
             async with self._lock:
@@ -386,3 +421,53 @@ def estimate_memory_maintenance_input_tokens(
         + estimate_text_tokens(MEMORY_MAINTENANCE_USER_PROMPT)
         + estimate_text_tokens(tool_text)
     )
+
+
+def _initial_input_tokens(
+    messages: list[dict],
+    visible_tools: list[dict],
+    *,
+    main_prompt_tokens: int,
+    main_completion_tokens: int,
+    main_request_matches_memory_context: bool,
+) -> tuple[int, str]:
+    if (
+        main_request_matches_memory_context
+        and main_prompt_tokens > 0
+        and main_completion_tokens > 0
+    ):
+        return (
+            main_prompt_tokens
+            + main_completion_tokens
+            + estimate_text_tokens(MEMORY_MAINTENANCE_USER_PROMPT),
+            "main_api_usage",
+        )
+    return (
+        estimate_memory_maintenance_input_tokens(messages, visible_tools),
+        "estimated_messages",
+    )
+
+
+def trim_memory_maintenance_tool_outputs(
+    messages: list[dict],
+) -> tuple[list[dict], int, int]:
+    trimmed_messages = copy.deepcopy(messages)
+    trimmed_count = 0
+    trimmed_characters = 0
+    for message in reversed(trimmed_messages):
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or len(content) <= TOOL_OUTPUT_TRIM_THRESHOLD_CHARS:
+            continue
+        trimmed = (
+            content[:TOOL_OUTPUT_TRIM_KEEP_CHARS].rstrip()
+            + "\n"
+            + TOOL_OUTPUT_TRIM_MARKER
+            + "\n"
+            + content[-TOOL_OUTPUT_TRIM_KEEP_CHARS:].lstrip()
+        )
+        message["content"] = trimmed
+        trimmed_count += 1
+        trimmed_characters += len(content) - len(trimmed)
+    return trimmed_messages, trimmed_count, trimmed_characters

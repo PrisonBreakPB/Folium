@@ -143,6 +143,7 @@ class Agent:
         self.todo_manager = self.todo_tool.manager if self.todo_tool else None
         self.rounds_since_todo = 0
         self.edit_approval_callback = None
+        self.last_llm_request_had_visible_tools = False
 
         # Wire tools that need their owning agent's runtime state.
         for t in self.tools:
@@ -250,6 +251,7 @@ class Agent:
                     tool_schemas = None
                 else:
                     tool_schemas = self._tool_schemas()
+                self.last_llm_request_had_visible_tools = tool_schemas is not None
                 self._record_llm_request_snapshot(full_messages, tool_schemas, round_index)
                 resp = self.llm.chat(
                     messages=full_messages,

@@ -13,9 +13,13 @@ from folium.memory_maintenance import (
     MemoryAgent,
     MemoryMaintenanceResult,
     MemoryMaintenanceScheduler,
+    TOOL_OUTPUT_TRIM_KEEP_CHARS,
+    TOOL_OUTPUT_TRIM_MARKER,
+    estimate_memory_maintenance_input_tokens,
 )
 from folium.observability.config import ObservabilityConfig
 from folium.observability.context import Observer, _observer_var
+from folium.token_estimator import estimate_text_tokens
 from folium.tools.base import ToolValidationError
 from folium.tools.memory import MemoryTool
 
@@ -259,21 +263,6 @@ def test_memory_agent_stops_at_max_steps(tmp_path):
     assert llm.calls == 5
 
 
-def test_memory_agent_skips_context_limit_without_calling_the_model():
-    llm = NoChangeLLM()
-    result = MemoryAgent(llm).run(
-        session_id="session_context_limit",
-        turn_index=10,
-        messages=_messages(),
-        visible_tools=_visible_tools(),
-        input_tokens=100,
-        skip_reason="SKIPPED_CONTEXT_LIMIT",
-    )
-
-    assert result.status == "SKIPPED_CONTEXT_LIMIT"
-    assert llm.requests == []
-
-
 class BlockingRunner:
     def __init__(self, result):
         self.result = result
@@ -290,12 +279,24 @@ class BlockingRunner:
         return self.result
 
 
-async def _turn(scheduler, session_id, *, turns=1, used_memory=False):
+async def _turn(
+    scheduler,
+    session_id,
+    *,
+    turns=1,
+    used_memory=False,
+    main_prompt_tokens=0,
+    main_completion_tokens=0,
+    main_request_matches_memory_context=False,
+):
     return await scheduler.on_turn_completed(
         session_id=session_id,
         messages=_messages(turns),
         visible_tools=_visible_tools(),
         main_agent_used_memory=used_memory,
+        main_prompt_tokens=main_prompt_tokens,
+        main_completion_tokens=main_completion_tokens,
+        main_request_matches_memory_context=main_request_matches_memory_context,
     )
 
 
@@ -357,27 +358,141 @@ def test_scheduler_resets_checkpoint_for_main_memory_and_keeps_failures_pending(
     asyncio.run(scenario())
 
 
-def test_scheduler_marks_context_limit_skip_as_checked():
+def test_scheduler_uses_main_api_usage_without_recounting_visible_tools():
     async def scenario():
-        runner = BlockingRunner(MemoryMaintenanceResult("SKIPPED_CONTEXT_LIMIT", 0, 0))
+        runner = BlockingRunner(MemoryMaintenanceResult("NO_CHANGE", 0, 1))
         scheduler = MemoryMaintenanceScheduler(
             lambda: runner,
             threshold=1,
-            max_context_tokens=10,
-            max_output_tokens=2,
+            max_context_tokens=10_000,
+            max_output_tokens=200,
         )
+        messages = _messages()
+        visible_tools = _visible_tools()
         assert await scheduler.on_turn_completed(
-            session_id="session_context_limit",
-            messages=[{"role": "system", "content": "This message is deliberately too long."}],
-            visible_tools=_visible_tools(),
+            session_id="session_real_usage",
+            messages=messages,
+            visible_tools=visible_tools,
             main_agent_used_memory=False,
+            main_prompt_tokens=700,
+            main_completion_tokens=30,
+            main_request_matches_memory_context=True,
         )
         await asyncio.to_thread(runner.started.wait, 1)
-        assert runner.kwargs["skip_reason"] == "SKIPPED_CONTEXT_LIMIT"
-        assert runner.kwargs["input_tokens"] + 2 > 10
-        task = scheduler._states["session_context_limit"].task
+        assert runner.kwargs["input_tokens"] == (
+            700 + 30 + estimate_text_tokens(MEMORY_MAINTENANCE_USER_PROMPT)
+        )
+        assert runner.kwargs["context_source"] == "main_api_usage"
+        assert runner.kwargs["tool_output_trimmed_count"] == 0
+        assert runner.kwargs["messages"] == messages
+        task = scheduler._states["session_real_usage"].task
         runner.release.set()
         await task
-        assert await scheduler.pending_turns("session_context_limit") == 0
+        assert await scheduler.pending_turns("session_real_usage") == 0
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_falls_back_to_message_estimate_for_incompatible_main_request():
+    async def scenario():
+        runner = BlockingRunner(MemoryMaintenanceResult("NO_CHANGE", 0, 1))
+        scheduler = MemoryMaintenanceScheduler(
+            lambda: runner,
+            threshold=1,
+            max_context_tokens=100_000,
+        )
+        messages = _messages()
+        visible_tools = _visible_tools()
+        assert await scheduler.on_turn_completed(
+            session_id="session_fallback",
+            messages=messages,
+            visible_tools=visible_tools,
+            main_agent_used_memory=False,
+            main_prompt_tokens=99_999,
+            main_completion_tokens=99_999,
+            main_request_matches_memory_context=False,
+        )
+        await asyncio.to_thread(runner.started.wait, 1)
+        assert runner.kwargs["input_tokens"] == estimate_memory_maintenance_input_tokens(
+            messages,
+            visible_tools,
+        )
+        assert runner.kwargs["context_source"] == "estimated_messages"
+        task = scheduler._states["session_fallback"].task
+        runner.release.set()
+        await task
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_trims_all_large_tool_outputs_then_runs_without_rechecking_budget():
+    async def scenario():
+        runner = BlockingRunner(MemoryMaintenanceResult("NO_CHANGE", 0, 1))
+        scheduler = MemoryMaintenanceScheduler(
+            lambda: runner,
+            threshold=1,
+            max_context_tokens=1_000,
+            max_output_tokens=100,
+        )
+        messages = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "first user request"},
+            {
+                "role": "assistant",
+                "content": "first assistant output",
+                "tool_calls": [{"id": "old_call", "name": "bash", "arguments": "{}"}],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "old_call",
+                "name": "bash",
+                "content": "old-start-" + ("a" * 5_000) + "-old-end",
+            },
+            {"role": "user", "content": "latest user request"},
+            {
+                "role": "assistant",
+                "content": "latest assistant output",
+                "tool_calls": [{"id": "new_call", "name": "bash", "arguments": "{}"}],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "new_call",
+                "name": "bash",
+                "content": "new-start-" + ("b" * 5_000) + "-new-end",
+            },
+        ]
+        original_messages = copy.deepcopy(messages)
+        assert await scheduler.on_turn_completed(
+            session_id="session_trim",
+            messages=messages,
+            visible_tools=_visible_tools(),
+            main_agent_used_memory=False,
+            main_prompt_tokens=320,
+            main_completion_tokens=10,
+            main_request_matches_memory_context=True,
+        )
+        await asyncio.to_thread(runner.started.wait, 1)
+        scheduled_messages = runner.kwargs["messages"]
+        assert messages == original_messages
+        assert [
+            message for message in scheduled_messages if message["role"] != "tool"
+        ] == [
+            message for message in original_messages if message["role"] != "tool"
+        ]
+        tool_messages = [
+            message for message in scheduled_messages if message["role"] == "tool"
+        ]
+        assert len(tool_messages) == 2
+        assert runner.kwargs["tool_output_trimmed_count"] == 2
+        assert runner.kwargs["tool_output_trimmed_characters"] > 0
+        for message in tool_messages:
+            assert TOOL_OUTPUT_TRIM_MARKER in message["content"]
+            assert len(message["content"]) <= (
+                TOOL_OUTPUT_TRIM_KEEP_CHARS * 2 + len(TOOL_OUTPUT_TRIM_MARKER) + 2
+            )
+        task = scheduler._states["session_trim"].task
+        runner.release.set()
+        await task
+        assert await scheduler.pending_turns("session_trim") == 0
 
     asyncio.run(scenario())
