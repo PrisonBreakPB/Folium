@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import threading
 from unittest import mock
@@ -8,10 +9,10 @@ import pytest
 from folium.database import get_connection
 from folium.llm import LLMResponse, ToolCall
 from folium.memory_maintenance import (
-    MemoryMaintenanceAgent,
+    MEMORY_MAINTENANCE_USER_PROMPT,
+    MemoryAgent,
     MemoryMaintenanceResult,
     MemoryMaintenanceScheduler,
-    build_memory_maintenance_snapshot,
 )
 from folium.observability.config import ObservabilityConfig
 from folium.observability.context import Observer, _observer_var
@@ -23,8 +24,8 @@ def _version(read_output: str) -> str:
     return read_output.splitlines()[0].removeprefix("Memory version: ")
 
 
-def _transcript(turns: int) -> list[dict]:
-    messages = []
+def _messages(turns: int = 1) -> list[dict]:
+    messages = [{"role": "system", "content": "Main agent system prompt."}]
     for index in range(turns):
         messages.extend(
             [
@@ -33,6 +34,30 @@ def _transcript(turns: int) -> list[dict]:
             ]
         )
     return messages
+
+
+def _visible_tools() -> list[dict]:
+    return [
+        MemoryTool().schema(),
+        {
+            "type": "function",
+            "function": {
+                "name": "bash",
+                "description": "Run a shell command.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+    ]
+
+
+def _run_agent(agent, *, messages=None, visible_tools=None):
+    return agent.run(
+        session_id="session_test",
+        turn_index=10,
+        messages=messages or _messages(),
+        visible_tools=visible_tools or _visible_tools(),
+        input_tokens=100,
+    )
 
 
 def test_memory_tool_read_and_compare_and_swap_append(tmp_path):
@@ -66,35 +91,17 @@ def test_memory_tool_action_enum_is_validated():
         MemoryTool().validate_arguments({"action": "delete"})
 
 
-def test_snapshot_keeps_only_user_and_final_assistant_messages():
-    snapshot = build_memory_maintenance_snapshot(
-        [
-            {"role": "user", "content": "Remember the project constraint."},
-            {
-                "role": "assistant",
-                "content": "Calling a tool",
-                "tool_calls": [{"id": "call_1"}],
-            },
-            {"role": "tool", "name": "read_file", "content": "raw tool output"},
-            {"role": "assistant", "content": "The constraint is confirmed."},
-        ]
-    )
-
-    assert "Remember the project constraint." in snapshot.content
-    assert "The constraint is confirmed." in snapshot.content
-    assert "Calling a tool" not in snapshot.content
-    assert "raw tool output" not in snapshot.content
-
-
 class NoChangeLLM:
     model = "fake-memory-model"
 
     def __init__(self):
-        self.tools = []
+        self.requests = []
+        self.trace_inputs = []
 
-    def chat(self, messages, tools=None, on_token=None):
-        self.tools.append(tools)
-        return LLMResponse(content="NO_CHANGE")
+    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+        self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
+        self.trace_inputs.append(trace_input)
+        return LLMResponse(content="NO_CHANGE", cached_tokens=17)
 
 
 class ReadThenAppendLLM:
@@ -102,14 +109,15 @@ class ReadThenAppendLLM:
 
     def __init__(self):
         self.calls = 0
-        self.tools = []
+        self.requests = []
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True):
         self.calls += 1
-        self.tools.append(tools)
+        self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
         if self.calls == 1:
             return LLMResponse(
-                tool_calls=[ToolCall(id="read", name="memory", arguments={"action": "read"})]
+                tool_calls=[ToolCall(id="read", name="memory", arguments={"action": "read"})],
+                cached_tokens=3,
             )
         if self.calls == 2:
             return LLMResponse(
@@ -124,9 +132,27 @@ class ReadThenAppendLLM:
                             "expected_version": _version(messages[-1]["content"]),
                         },
                     )
-                ]
+                ],
+                cached_tokens=5,
             )
-        return LLMResponse(content="UPDATED")
+        return LLMResponse(content="UPDATED", cached_tokens=7)
+
+
+class NonMemoryToolLLM:
+    model = "fake-memory-model"
+
+    def __init__(self):
+        self.calls = 0
+        self.requests = []
+
+    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+        self.calls += 1
+        self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
+        if self.calls == 1:
+            return LLMResponse(
+                tool_calls=[ToolCall(id="bash", name="bash", arguments={"command": "touch no"})]
+            )
+        return LLMResponse(content="NO_CHANGE")
 
 
 class ReadForeverLLM:
@@ -135,51 +161,72 @@ class ReadForeverLLM:
     def __init__(self):
         self.calls = 0
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True):
         self.calls += 1
         return LLMResponse(
             tool_calls=[ToolCall(id=str(self.calls), name="memory", arguments={"action": "read"})]
         )
 
 
-def test_maintenance_agent_can_choose_no_change(tmp_path):
+def test_memory_agent_appends_final_prompt_and_preserves_full_visible_tools(tmp_path):
     llm = NoChangeLLM()
-    tool = MemoryTool()
-    snapshot = build_memory_maintenance_snapshot(_transcript(1))
+    messages = _messages()
+    original_messages = copy.deepcopy(messages)
+    visible_tools = _visible_tools()
+    original_tools = copy.deepcopy(visible_tools)
+
     with mock.patch("folium.tools.memory.MEMORY_FILE", tmp_path / "memory.md"):
-        result = MemoryMaintenanceAgent(llm, tool).run(
-            session_id="session_no_change",
-            turn_index=10,
-            snapshot=snapshot,
-        )
+        result = _run_agent(MemoryAgent(llm), messages=messages, visible_tools=visible_tools)
+
+    request_messages, request_tools = llm.requests[0]
+    assert result.status == "NO_CHANGE"
+    assert messages == original_messages
+    assert visible_tools == original_tools
+    assert request_messages[:-1] == original_messages
+    assert request_messages[-1] == {
+        "role": "user",
+        "content": MEMORY_MAINTENANCE_USER_PROMPT,
+    }
+    assert request_tools == original_tools
+    assert [item["function"]["name"] for item in request_tools] == ["memory", "bash"]
+    assert result.cached_tokens == 17
+    assert llm.trace_inputs == [False]
+
+
+def test_memory_agent_rejects_non_memory_tool_calls_without_side_effects(tmp_path):
+    llm = NonMemoryToolLLM()
+    memory_file = tmp_path / "memory.md"
+
+    with mock.patch("folium.tools.memory.MEMORY_FILE", memory_file):
+        result = _run_agent(MemoryAgent(llm))
 
     assert result.status == "NO_CHANGE"
-    assert result.writes == 0
-    assert len(llm.tools) == 1
-    assert [schema["function"]["name"] for schema in llm.tools[0]] == ["memory"]
+    assert result.rejected_tool_calls == 1
+    assert not memory_file.exists()
+    tool_result = llm.requests[1][0][-1]
+    assert tool_result["name"] == "bash"
+    assert "only 'memory' is permitted" in tool_result["content"]
 
 
-def test_maintenance_agent_reads_then_writes_and_records_trace(tmp_path):
+def test_memory_agent_reads_then_writes_and_records_trace(tmp_path):
     memory_file = tmp_path / "memory.md"
     db_path = tmp_path / "folium.db"
     observer = Observer(ObservabilityConfig(database_path=db_path))
     token = _observer_var.set(observer)
+    llm = ReadThenAppendLLM()
     try:
         with mock.patch("folium.tools.memory.MEMORY_FILE", memory_file):
-            result = MemoryMaintenanceAgent(ReadThenAppendLLM()).run(
-                session_id="session_trace",
-                turn_index=10,
-                snapshot=build_memory_maintenance_snapshot(_transcript(1)),
-            )
+            result = _run_agent(MemoryAgent(llm))
     finally:
         _observer_var.reset(token)
 
     assert result.status == "UPDATED"
+    assert result.cached_tokens == 15
     assert "Prefer concise Chinese responses." in memory_file.read_text(encoding="utf-8")
     with get_connection(db_path) as conn:
         trace = conn.execute(
             "SELECT trace_id, name FROM traces WHERE session_id = ?",
-            ("session_trace",),
+            ("session_test",),
         ).fetchone()
         events = conn.execute(
             "SELECT event_type, name, payload_json FROM trace_events WHERE trace_id = ?",
@@ -194,21 +241,37 @@ def test_maintenance_agent_reads_then_writes_and_records_trace(tmp_path):
         "memory_maintenance_completed",
     }.issubset({event["name"] for event in events})
     metadata = [json.loads(event["payload_json"] or "{}") for event in events]
+    scheduled = next(item for item in metadata if item.get("context_source"))
+    assert scheduled["context_source"] == "completed_main_agent_messages"
+    assert scheduled["message_count"] == 3
+    assert scheduled["visible_tool_count"] == 2
+    assert any(item.get("cached_tokens") == 15 for item in metadata)
     assert all("Folium Memory" not in json.dumps(item) for item in metadata)
 
 
-def test_maintenance_agent_stops_at_max_steps(tmp_path):
+def test_memory_agent_stops_at_max_steps(tmp_path):
     llm = ReadForeverLLM()
     with mock.patch("folium.tools.memory.MEMORY_FILE", tmp_path / "memory.md"):
-        result = MemoryMaintenanceAgent(llm, max_steps=5).run(
-            session_id="session_steps",
-            turn_index=10,
-            snapshot=build_memory_maintenance_snapshot(_transcript(1)),
-        )
+        result = _run_agent(MemoryAgent(llm, max_steps=5))
 
     assert result.status == "NO_CHANGE"
     assert result.steps == 5
     assert llm.calls == 5
+
+
+def test_memory_agent_skips_context_limit_without_calling_the_model():
+    llm = NoChangeLLM()
+    result = MemoryAgent(llm).run(
+        session_id="session_context_limit",
+        turn_index=10,
+        messages=_messages(),
+        visible_tools=_visible_tools(),
+        input_tokens=100,
+        skip_reason="SKIPPED_CONTEXT_LIMIT",
+    )
+
+    assert result.status == "SKIPPED_CONTEXT_LIMIT"
+    assert llm.requests == []
 
 
 class BlockingRunner:
@@ -217,34 +280,40 @@ class BlockingRunner:
         self.started = threading.Event()
         self.release = threading.Event()
         self.calls = 0
+        self.kwargs = None
 
     def run(self, **kwargs):
         self.calls += 1
+        self.kwargs = kwargs
         self.started.set()
         self.release.wait(timeout=2)
         return self.result
 
 
+async def _turn(scheduler, session_id, *, turns=1, used_memory=False):
+    return await scheduler.on_turn_completed(
+        session_id=session_id,
+        messages=_messages(turns),
+        visible_tools=_visible_tools(),
+        main_agent_used_memory=used_memory,
+    )
+
+
 def test_scheduler_keeps_turns_completed_while_maintenance_runs():
     async def scenario():
         runner = BlockingRunner(MemoryMaintenanceResult("NO_CHANGE", 0, 1))
-        scheduler = MemoryMaintenanceScheduler(lambda: runner, threshold=10)
-        transcript = _transcript(10)
+        scheduler = MemoryMaintenanceScheduler(
+            lambda: runner,
+            threshold=10,
+            max_context_tokens=100_000,
+        )
         for turn in range(10):
-            scheduled = await scheduler.on_turn_completed(
-                session_id="session_a",
-                transcript=transcript[: (turn + 1) * 2],
-                main_agent_used_memory=False,
-            )
+            scheduled = await _turn(scheduler, "session_a", turns=turn + 1)
         assert scheduled is True
         await asyncio.to_thread(runner.started.wait, 1)
         task = scheduler._states["session_a"].task
         for turn in range(2):
-            await scheduler.on_turn_completed(
-                session_id="session_a",
-                transcript=transcript + _transcript(turn + 1),
-                main_agent_used_memory=False,
-            )
+            await _turn(scheduler, "session_a", turns=11 + turn)
         runner.release.set()
         await task
         assert await scheduler.pending_turns("session_a") == 2
@@ -255,33 +324,60 @@ def test_scheduler_keeps_turns_completed_while_maintenance_runs():
 def test_scheduler_resets_checkpoint_for_main_memory_and_keeps_failures_pending():
     async def scenario():
         successful_runner = BlockingRunner(MemoryMaintenanceResult("NO_CHANGE", 0, 1))
-        scheduler = MemoryMaintenanceScheduler(lambda: successful_runner, threshold=3)
-        for _ in range(2):
-            await scheduler.on_turn_completed(
-                session_id="session_main_memory",
-                transcript=_transcript(2),
-                main_agent_used_memory=False,
-            )
+        scheduler = MemoryMaintenanceScheduler(
+            lambda: successful_runner,
+            threshold=3,
+            max_context_tokens=100_000,
+        )
+        for turn in range(2):
+            await _turn(scheduler, "session_main_memory", turns=turn + 1)
         assert await scheduler.pending_turns("session_main_memory") == 2
-        assert not await scheduler.on_turn_completed(
-            session_id="session_main_memory",
-            transcript=_transcript(3),
-            main_agent_used_memory=True,
+        assert not await _turn(
+            scheduler,
+            "session_main_memory",
+            turns=3,
+            used_memory=True,
         )
         assert await scheduler.pending_turns("session_main_memory") == 0
 
         failed_runner = BlockingRunner(MemoryMaintenanceResult("FAILED", 0, 0))
-        failed = MemoryMaintenanceScheduler(lambda: failed_runner, threshold=3)
-        for _ in range(3):
-            await failed.on_turn_completed(
-                session_id="session_failure",
-                transcript=_transcript(3),
-                main_agent_used_memory=False,
-            )
+        failed = MemoryMaintenanceScheduler(
+            lambda: failed_runner,
+            threshold=3,
+            max_context_tokens=100_000,
+        )
+        for turn in range(3):
+            await _turn(failed, "session_failure", turns=turn + 1)
         await asyncio.to_thread(failed_runner.started.wait, 1)
         task = failed._states["session_failure"].task
         failed_runner.release.set()
         await task
         assert await failed.pending_turns("session_failure") == 3
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_marks_context_limit_skip_as_checked():
+    async def scenario():
+        runner = BlockingRunner(MemoryMaintenanceResult("SKIPPED_CONTEXT_LIMIT", 0, 0))
+        scheduler = MemoryMaintenanceScheduler(
+            lambda: runner,
+            threshold=1,
+            max_context_tokens=10,
+            max_output_tokens=2,
+        )
+        assert await scheduler.on_turn_completed(
+            session_id="session_context_limit",
+            messages=[{"role": "system", "content": "This message is deliberately too long."}],
+            visible_tools=_visible_tools(),
+            main_agent_used_memory=False,
+        )
+        await asyncio.to_thread(runner.started.wait, 1)
+        assert runner.kwargs["skip_reason"] == "SKIPPED_CONTEXT_LIMIT"
+        assert runner.kwargs["input_tokens"] + 2 > 10
+        task = scheduler._states["session_context_limit"].task
+        runner.release.set()
+        await task
+        assert await scheduler.pending_turns("session_context_limit") == 0
 
     asyncio.run(scenario())

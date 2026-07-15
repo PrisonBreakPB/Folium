@@ -38,11 +38,8 @@ class Config:
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
     token_estimator: str = "deepseek"
-    memory_maintenance_model: str = "deepseek-v4-flash"
     memory_maintenance_turns: int = 10
     memory_maintenance_max_steps: int = 5
-    memory_maintenance_context_turns: int = 10
-    memory_maintenance_max_context_tokens: int = 12000
     memory_maintenance_max_tokens: int = 2000
 
     @classmethod
@@ -65,20 +62,11 @@ class Config:
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
-            memory_maintenance_model=os.getenv(
-                "FOLIUM_MEMORY_MAINTENANCE_MODEL", "deepseek-v4-flash"
-            ),
             memory_maintenance_turns=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")
             ),
             memory_maintenance_max_steps=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS", "5")
-            ),
-            memory_maintenance_context_turns=int(
-                os.getenv("FOLIUM_MEMORY_MAINTENANCE_CONTEXT_TURNS", "10")
-            ),
-            memory_maintenance_max_context_tokens=int(
-                os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_CONTEXT_TOKENS", "12000")
             ),
             memory_maintenance_max_tokens=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS", "2000")

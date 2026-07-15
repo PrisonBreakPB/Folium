@@ -16,7 +16,7 @@ from ..agent import Agent
 from ..config import Config
 from ..llm import LLMProviderError
 from ..memory_maintenance import (
-    MemoryMaintenanceAgent,
+    MemoryAgent,
     MemoryMaintenanceScheduler,
 )
 from ..session import (
@@ -139,21 +139,22 @@ async def _after_chat_response(completion: dict | None = None):
         return
     await scheduler.on_turn_completed(
         session_id=completion["session_id"],
-        transcript=completion["transcript"],
+        messages=completion["messages"],
+        visible_tools=completion["visible_tools"],
         main_agent_used_memory=completion["main_agent_used_memory"],
     )
 
 
-def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryMaintenanceAgent:
+def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryAgent:
     llm_cls = type(agent.llm)
     llm = llm_cls(
-        model=getattr(config, "memory_maintenance_model", "deepseek-v4-flash"),
+        model=agent.llm.model,
         api_key=getattr(config, "api_key", ""),
         base_url=getattr(config, "base_url", None),
         temperature=getattr(config, "temperature", 0.0),
         max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
     )
-    return MemoryMaintenanceAgent(
+    return MemoryAgent(
         llm,
         max_steps=getattr(config, "memory_maintenance_max_steps", 5),
     )
@@ -235,7 +236,8 @@ async def chat(req: ChatRequest):
             else:
                 _state["dirty"] = True
                 turn_transcript = _state["agent"].transcript[transcript_start:]
-                completion["transcript"] = copy.deepcopy(_state["agent"].transcript)
+                completion["messages"] = copy.deepcopy(_state["agent"]._full_messages())
+                completion["visible_tools"] = copy.deepcopy(_state["agent"]._tool_schemas())
                 completion["session_id"] = chat_session_id
                 completion["main_agent_used_memory"] = any(
                     message.get("role") == "tool" and message.get("name") == "memory"
@@ -490,10 +492,12 @@ def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 
     _state["memory_maintenance"] = MemoryMaintenanceScheduler(
         lambda: _new_memory_maintenance_runner(agent, config),
         threshold=getattr(config, "memory_maintenance_turns", 10),
-        context_turns=getattr(config, "memory_maintenance_context_turns", 10),
         max_context_tokens=getattr(
-            config, "memory_maintenance_max_context_tokens", 12_000
+            getattr(agent, "context", None),
+            "max_tokens",
+            getattr(config, "max_context_tokens", 1_000_000),
         ),
+        max_output_tokens=getattr(config, "memory_maintenance_max_tokens", 2_000),
     )
     agent.session_id = None
 

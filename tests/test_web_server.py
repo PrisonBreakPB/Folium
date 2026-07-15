@@ -63,7 +63,31 @@ class DummyLLM:
     last_completion_tokens = 0
 
 
+class RunnerLLM:
+    def __init__(self, model, api_key, base_url=None, **kwargs):
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
+        self.extra = kwargs
+
+
 class WebServerSessionTests(unittest.TestCase):
+    def test_memory_runner_uses_the_main_agent_model(self):
+        agent = SimpleNamespace(llm=RunnerLLM("deepseek-v4-pro", "main-key"))
+        config = SimpleNamespace(
+            api_key="config-key",
+            base_url="https://example.test/v1",
+            temperature=0.2,
+            memory_maintenance_max_tokens=2000,
+            memory_maintenance_max_steps=5,
+        )
+
+        runner = server._new_memory_maintenance_runner(agent, config)
+
+        self.assertEqual(runner.llm.model, "deepseek-v4-pro")
+        self.assertEqual(runner.llm.api_key, "config-key")
+        self.assertEqual(runner.llm.extra["max_tokens"], 2000)
+
     def test_auto_save_only_updates_dirty_session(self):
         import tempfile
 
