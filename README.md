@@ -1,11 +1,64 @@
-# Folium
+<div align="center">
+  <h1>Folium</h1>
+  <p>面向控制理论科研任务的 AI Agent</p>
+  <p>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
+    <img src="https://img.shields.io/badge/FastAPI-Web%20UI-009688?logo=fastapi&logoColor=white" alt="FastAPI Web UI">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3DA639" alt="MIT License"></a>
+  </p>
+</div>
 
-[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助你检索与阅读论文、检查控制理论中的关键推导、生成并运行仿真实验，以及沉淀可复盘的研究过程。项目同时建设工具调用、沙箱执行、记忆和可观测性等 Agent Harness 组件。
 
-Folium 面向科研任务的完整链路：从围绕研究主题检索和梳理文献、识别已有工作的条件与局限，到检查数学推导和控制理论中的关键结论，再到生成、运行和分析仿真实验，并辅助组织论文写作内容。项目也会同步建设支撑这些工作流的 Agent Harness 工程组件，包括工具调用与状态的可观测性、受控的沙箱执行、检索与记忆结合的 Agentic RAG，以及面向多步骤科研任务的上下文管理和可靠性机制。
+![Folium Web UI](docs/images/folium-web-ui.png)
 
-## 当前能力
+## 适用场景
+
+| 场景 | Folium 提供的支持 |
+| --- | --- |
+| 学术调研 | 检索论文、补全元数据、读取网页和 PDF 内容 |
+| 理论研究 | 面向控制理论的公式、假设、Lyapunov 推导与 LMI 检查能力建设 |
+| 实验验证 | 生成、执行和分析 Python 仿真实验 |
+| Agent 工程 | 工具参数校验、Docker 沙箱、上下文压缩、SQLite 持久化与 trace |
+
+## 面向的科研闭环
+
+```mermaid
+flowchart LR
+    A["研究课题"] --> B["文献检索<br/>paper_search / arxiv_search"]
+    B --> C["论文阅读<br/>PDF 与结构化笔记"]
+    C --> D["理论检查<br/>假设、推导、稳定性"]
+    D --> E["实验验证<br/>代码、运行、结果"]
+    E --> F["研究产物<br/>综述、报告、论文材料"]
+```
+
+> 其中学术检索、PDF 读取与工程 Harness 已具备基础能力；理论检查、结构化论文库和实验闭环仍在持续建设。
+
+## 快速开始
+
+```bash
+git clone https://github.com/PrisonBreakPB/Folium.git
+cd Folium
+pip install -e .
+```
+
+在项目根目录创建 `.env`：
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.deepseek.com
+FOLIUM_MODEL=deepseek-chat
+```
+
+启动 Web UI：
+
+```bash
+python -m folium
+```
+
+浏览器访问 <http://localhost:8000>。
+
+## 已实现能力
 
 - Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
@@ -15,6 +68,9 @@ Folium 面向科研任务的完整链路：从围绕研究主题检索和梳理�
 - 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
 - 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
+
+<details>
+<summary>完整安装、运行与环境配置</summary>
 
 ## 运行方式
 
@@ -80,6 +136,8 @@ OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
 FOLIUM_MODEL=qwen3:32b
 ```
+
+</details>
 
 ## Web 界面
 
