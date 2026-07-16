@@ -365,7 +365,7 @@ pytest
 
 ## 写入与审批
 
-Web UI 中，`write_file` 和 `edit_file` 会直接执行，并在对应工具卡片中展示完成后的统一 diff。看起来会写入挂载工作区的 `bash` 命令仍会在执行前展示命令预览并等待用户审批；审批不会自动超时。`general` 子 Agent 调用 `write_file` 或 `edit_file` 时也直接执行并返回 diff。
+Web UI 中，`write_file` 和 `edit_file` 修改 `.tex`、`.bib`、`.sty`、`.py`、`.m`、`.ipynb`、`.sh` 时，会先聚合同一轮的受保护文件变更并展示 diff，只有用户确认后才会写入工作区；拒绝后当前 Agent 任务会停止，不会自动重试。审批面板支持在多个文件之间切换，并可按需分段加载完整 diff；应用前会再次校验文件基线，避免覆盖审批期间的外部修改。非受保护文件仍直接执行并返回 diff。看起来会写入挂载工作区的 `bash` 命令仍会在执行前展示命令预览并等待用户审批；审批不会自动超时。`general` 子 Agent 会继承同一审批规则。
 
 ## License
 

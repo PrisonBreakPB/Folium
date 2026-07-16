@@ -68,8 +68,9 @@ class ApprovalDecisionRequest(BaseModel):
 
 
 class PendingApproval:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, proposal=None):
         self.payload = payload
+        self.proposal = proposal
         self.event = threading.Event()
         self.approved = False
 
@@ -91,18 +92,45 @@ def _make_bridge(queue: asyncio.Queue):
 
     def on_edit_approval(tc, proposal):
         approval_id = uuid.uuid4().hex
-        payload = {
-            "type": "approval_request",
-            "approval_id": approval_id,
-            "tool_call_id": tc.id,
-            "tool_name": tc.name,
-            "path": proposal.path,
-            "title": proposal.title,
-            "diff": proposal.diff,
-            "truncated": proposal.truncated,
-            "diff_chars": proposal.diff_chars,
-        }
-        pending = PendingApproval(payload)
+        if hasattr(proposal, "files"):
+            files = [
+                {
+                    "index": index,
+                    "tool_call_id": change.tool_call_id,
+                    "tool_name": change.tool_name,
+                    "path": change.path,
+                    "title": change.title,
+                    "diff": change.preview_diff,
+                    "truncated": change.truncated,
+                    "diff_chars": change.diff_chars,
+                    "additions": change.additions,
+                    "deletions": change.deletions,
+                }
+                for index, change in enumerate(proposal.files)
+            ]
+            payload = {
+                "type": "approval_request",
+                "approval_id": approval_id,
+                "tool_call_id": tc.id,
+                "tool_name": "change_set",
+                "title": proposal.title,
+                "files": files,
+                "additions": proposal.additions,
+                "deletions": proposal.deletions,
+            }
+        else:
+            payload = {
+                "type": "approval_request",
+                "approval_id": approval_id,
+                "tool_call_id": tc.id,
+                "tool_name": tc.name,
+                "path": proposal.path,
+                "title": proposal.title,
+                "diff": proposal.diff,
+                "truncated": proposal.truncated,
+                "diff_chars": proposal.diff_chars,
+            }
+        pending = PendingApproval(payload, proposal)
         _pending_approvals[approval_id] = pending
         queue.put_nowait(payload)
         pending.event.wait()
@@ -290,6 +318,35 @@ async def approval(req: ApprovalDecisionRequest):
     pending.approved = bool(req.approved)
     pending.event.set()
     return {"result": "ok"}
+
+
+@app.get("/approval/{approval_id}/diff")
+async def approval_diff(
+    approval_id: str,
+    file_index: int = 0,
+    offset: int = 0,
+    limit: int = 30_000,
+):
+    pending = _pending_approvals.get(approval_id)
+    if pending is None:
+        return JSONResponse({"error": "Approval request not found"}, status_code=404)
+
+    files = getattr(pending.proposal, "files", None)
+    if files is None or file_index < 0 or file_index >= len(files):
+        return JSONResponse({"error": "Approval file not found"}, status_code=404)
+
+    diff = files[file_index].diff
+    start = max(offset, 0)
+    size = max(limit, 1)
+    chunk = diff[start:start + size]
+    next_offset = start + len(chunk)
+    return {
+        "file_index": file_index,
+        "offset": start,
+        "diff": chunk,
+        "next_offset": next_offset if next_offset < len(diff) else None,
+        "total_chars": len(diff),
+    }
 
 
 @app.post("/new")

@@ -25,8 +25,9 @@ class CaptureLLM:
 class WriteOnceLLM:
     model = "fake-model"
 
-    def __init__(self):
+    def __init__(self, file_path="sub.txt"):
         self.calls = 0
+        self.file_path = file_path
 
     def chat(self, messages, tools=None, on_token=None):
         self.calls += 1
@@ -35,7 +36,7 @@ class WriteOnceLLM:
                 ToolCall(
                     id="write_1",
                     name="write_file",
-                    arguments={"file_path": "sub.txt", "content": "hello\n"},
+                    arguments={"file_path": self.file_path, "content": "hello\n"},
                 )
             ])
         return LLMResponse(content="sub done")
@@ -84,7 +85,7 @@ class AgentToolTests(unittest.TestCase):
 
         self.assertIn("only context='none' is supported", result)
 
-    def test_general_sub_agent_write_file_runs_without_approval(self):
+    def test_general_sub_agent_non_protected_write_file_runs_without_approval(self):
         old_workspace = os.environ.get("FOLIUM_HOST_WORKSPACE")
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["FOLIUM_HOST_WORKSPACE"] = tmp
@@ -110,6 +111,33 @@ class AgentToolTests(unittest.TestCase):
                     os.environ["FOLIUM_HOST_WORKSPACE"] = old_workspace
 
         self.assertIn("[Sub-agent completed: general]", result)
+
+    def test_general_sub_agent_protected_write_file_requires_approval(self):
+        old_workspace = os.environ.get("FOLIUM_HOST_WORKSPACE")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["FOLIUM_HOST_WORKSPACE"] = tmp
+            try:
+                llm = WriteOnceLLM("sub.py")
+                parent = Agent(llm=llm, tools=create_tools(), tool_timeout=60)
+                approvals = []
+
+                def reject(tc, proposal):
+                    approvals.append((tc.name, proposal.files[0].path))
+                    return False
+
+                parent.edit_approval_callback = reject
+                tool = next(t for t in parent.tools if isinstance(t, AgentTool))
+
+                result = tool.execute(task="write sub.py", agent_type="general", timeout=30)
+                self.assertEqual(approvals, [("write_file", str(Path(tmp) / "sub.py"))])
+                self.assertFalse((Path(tmp) / "sub.py").exists())
+            finally:
+                if old_workspace is None:
+                    os.environ.pop("FOLIUM_HOST_WORKSPACE", None)
+                else:
+                    os.environ["FOLIUM_HOST_WORKSPACE"] = old_workspace
+
+        self.assertIn("File changes were rejected by user", result)
 
 
 if __name__ == "__main__":

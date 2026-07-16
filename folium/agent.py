@@ -31,8 +31,17 @@ from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
 from .encoding import repair_mojibake_text
-from .edit_approval import build_edit_approval_proposal
+from .edit_approval import (
+    FileChangeProposal,
+    apply_change_set,
+    build_change_set_proposal,
+    build_edit_approval_proposal,
+    build_file_change_proposal,
+    change_result_summary,
+    is_protected_file_change,
+)
 from .sandbox.filesystem import resolve_tool_path
+from .tools.edit import _changed_files
 
 
 FINAL_ROUND_REMINDER = (
@@ -110,6 +119,12 @@ class ToolExecutionResult:
     diff: str = ""
     raw_content: str | None = None
     duration_ms: int | None = None
+
+
+@dataclass
+class _PreparedProtectedFileChange:
+    tool_call: object
+    proposal: FileChangeProposal
 
 
 class Agent:
@@ -288,14 +303,8 @@ class Agent:
                 tool_tokens = 0
                 used_todo = False
 
-                if len(resp.tool_calls) == 1:
-                    tc = resp.tool_calls[0]
-                    if on_tool:
-                        on_tool(tc.name, tc.arguments)
-                    self._emit_tool_start(on_event, tc)
-                    result = self._exec_tool(tc)
-                    if on_tool:
-                        on_tool(tc.name, tc.arguments, result.status)
+                results = self._exec_tool_batch(resp.tool_calls, on_tool=on_tool, on_event=on_event)
+                for tc, result in zip(resp.tool_calls, results):
                     self._emit_tool_result(on_event, tc, result)
                     self._append_message({
                         "role": "tool",
@@ -308,35 +317,15 @@ class Agent:
                     tool_tokens += _approx_tokens(result.content)
                     self._emit_context_update(on_event)
                     bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
-                else:
-                    # Keep bash and sub-agent calls serial; other tools can run together.
-                    if self._requires_serial_execution(resp.tool_calls) or not _should_parallelize_tool_batch(resp.tool_calls):
-                        results = []
-                        for tc in resp.tool_calls:
-                            if on_tool:
-                                on_tool(tc.name, tc.arguments)
-                            self._emit_tool_start(on_event, tc)
-                            result = self._exec_tool(tc)
-                            if on_tool:
-                                on_tool(tc.name, tc.arguments, result.status)
-                            results.append(result)
-                    else:
-                        for tc in resp.tool_calls:
-                            self._emit_tool_start(on_event, tc)
-                        results = self._exec_tools_parallel(resp.tool_calls, on_tool)
-                    for tc, result in zip(resp.tool_calls, results):
-                        self._emit_tool_result(on_event, tc, result)
-                        self._append_message({
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "name": tc.name,
-                            "content": result.content,
-                            "_raw_content": result.raw_content,
-                        })
-                        used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
-                        tool_tokens += _approx_tokens(result.content)
-                        self._emit_context_update(on_event)
-                        bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
+
+                if any(result.status == "rejected" for result in results):
+                    self._emit_event(
+                        on_event,
+                        "agent_status",
+                        message="File changes rejected; task stopped",
+                        status="rejected",
+                    )
+                    return "File changes were rejected by user; no files were modified."
 
                 self._update_todo_nag_state(used_todo, on_event)
 
@@ -391,6 +380,189 @@ class Agent:
                 duration_ms=duration_ms,
             )
 
+    def _exec_tool_batch(self, tool_calls, on_tool=None, on_event=None) -> list[ToolExecutionResult]:
+        """Execute one model tool-call batch, grouping protected file changes."""
+
+        prepared_changes = self._prepare_protected_file_changes(tool_calls)
+        if prepared_changes:
+            for tc in tool_calls:
+                if on_tool:
+                    on_tool(tc.name, tc.arguments)
+                self._emit_tool_start(on_event, tc)
+
+            approved_results = self._execute_protected_file_change_set(
+                prepared_changes,
+                record_results=True,
+            )
+            results = []
+            for tc in tool_calls:
+                result = approved_results.get(tc.id)
+                if result is None:
+                    result = self._exec_tool(tc)
+                results.append(result)
+                if on_tool:
+                    on_tool(tc.name, tc.arguments, result.status)
+            return results
+
+        if len(tool_calls) == 1:
+            tc = tool_calls[0]
+            if on_tool:
+                on_tool(tc.name, tc.arguments)
+            self._emit_tool_start(on_event, tc)
+            result = self._exec_tool(tc)
+            if on_tool:
+                on_tool(tc.name, tc.arguments, result.status)
+            return [result]
+
+        # Keep bash and sub-agent calls serial; other tools can run together.
+        if self._requires_serial_execution(tool_calls) or not _should_parallelize_tool_batch(tool_calls):
+            results = []
+            for tc in tool_calls:
+                if on_tool:
+                    on_tool(tc.name, tc.arguments)
+                self._emit_tool_start(on_event, tc)
+                result = self._exec_tool(tc)
+                if on_tool:
+                    on_tool(tc.name, tc.arguments, result.status)
+                results.append(result)
+            return results
+
+        for tc in tool_calls:
+            self._emit_tool_start(on_event, tc)
+        return self._exec_tools_parallel(tool_calls, on_tool)
+
+    def _prepare_protected_file_changes(self, tool_calls) -> list[_PreparedProtectedFileChange]:
+        if self.edit_approval_callback is None:
+            return []
+
+        prepared = []
+        for tc in tool_calls:
+            if not is_protected_file_change(tc.name, tc.arguments):
+                continue
+            tool = self._get_tool(tc.name)
+            if tool is None:
+                continue
+            try:
+                arguments = tool.validate_arguments(tc.arguments)
+            except ToolValidationError:
+                continue
+            proposal = build_file_change_proposal(tc.id, tc.name, arguments)
+            if proposal is not None:
+                prepared.append(_PreparedProtectedFileChange(tc, proposal))
+        paths = [prepared_change.proposal.path for prepared_change in prepared]
+        if len(paths) != len(set(paths)):
+            # Later edits must be reviewed against the result of earlier edits.
+            return []
+        return prepared
+
+    def _execute_protected_file_change_set(
+        self,
+        prepared_changes: list[_PreparedProtectedFileChange],
+        *,
+        record_results: bool = False,
+    ) -> dict[str, ToolExecutionResult]:
+        change_set = build_change_set_proposal([
+            prepared.proposal for prepared in prepared_changes
+        ])
+        if change_set is None:
+            return {}
+
+        started_at = time.perf_counter()
+        approved = bool(self.edit_approval_callback(prepared_changes[0].tool_call, change_set))
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        if not approved:
+            results = {
+                prepared.tool_call.id: ToolExecutionResult(
+                    "Change set rejected by user; no files were modified.",
+                    "rejected",
+                    preview="Change set rejected by user; no files were modified.",
+                    raw_content="Change set rejected by user; no files were modified.",
+                    duration_ms=duration_ms,
+                )
+                for prepared in prepared_changes
+            }
+        else:
+            try:
+                apply_change_set(change_set)
+            except RuntimeError as exc:
+                message = f"Error: {exc}; no files were modified."
+                results = {
+                    prepared.tool_call.id: ToolExecutionResult(
+                        message,
+                        "error",
+                        preview=_preview_text(message),
+                        raw_content=message,
+                        duration_ms=duration_ms,
+                    )
+                    for prepared in prepared_changes
+                }
+            except Exception as exc:
+                message = f"Error applying reviewed file changes: {exc}"
+                results = {
+                    prepared.tool_call.id: ToolExecutionResult(
+                        message,
+                        "error",
+                        preview=_preview_text(message),
+                        raw_content=message,
+                        duration_ms=duration_ms,
+                    )
+                    for prepared in prepared_changes
+                }
+            else:
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                results = {}
+                for prepared in prepared_changes:
+                    _changed_files.add(prepared.proposal.path)
+                    results[prepared.tool_call.id] = self._approved_file_change_result(
+                        prepared.proposal,
+                        duration_ms,
+                    )
+
+        if record_results:
+            for prepared in prepared_changes:
+                self._record_preapproved_tool_result(
+                    prepared.tool_call,
+                    results[prepared.tool_call.id],
+                )
+        return results
+
+    def _approved_file_change_result(
+        self,
+        change: FileChangeProposal,
+        duration_ms: int,
+    ) -> ToolExecutionResult:
+        summary = change_result_summary(change)
+        diff = _preview_text(change.diff, max_chars=3000)
+        content = f"{summary}\n{diff}" if diff else summary
+        return ToolExecutionResult(
+            content,
+            "ok",
+            preview=summary,
+            diff=diff,
+            raw_content=content,
+            duration_ms=duration_ms,
+        )
+
+    def _record_preapproved_tool_result(self, tc, result: ToolExecutionResult) -> None:
+        observer = active_observer()
+        cfg = observer.config
+        observer.record({
+            "event": "tool_result",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": tc.name,
+            "type": "tool",
+            "status": result.status,
+            "metadata": {
+                "result": compact_payload(
+                    result.content,
+                    include_full=cfg.full_tool_output,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                )
+            },
+        })
+
     def _exec_tool_impl(self, tc, timed_out: threading.Event | None = None) -> ToolExecutionResult:
         """Execute a single tool call."""
         tool = self._get_tool(tc.name)
@@ -419,6 +591,10 @@ class Agent:
                     and arguments["timeout"] > self.tool_timeout
                 ):
                     arguments["timeout"] = self.tool_timeout
+                protected_file_result = self._maybe_execute_protected_file_change(tc, arguments)
+                if protected_file_result is not None:
+                    self._record_preapproved_tool_result(tc, protected_file_result)
+                    return protected_file_result
                 approval_error = self._maybe_require_bash_approval(tc, arguments)
                 if approval_error:
                     result = approval_error
@@ -552,6 +728,21 @@ class Agent:
         if approved:
             return None
         return "Error: bash command rejected by user; workspace was not modified."
+
+    def _maybe_execute_protected_file_change(
+        self,
+        tc,
+        arguments: dict,
+    ) -> ToolExecutionResult | None:
+        if self.edit_approval_callback is None:
+            return None
+        proposal = build_file_change_proposal(tc.id, tc.name, arguments)
+        if proposal is None:
+            return None
+        results = self._execute_protected_file_change_set([
+            _PreparedProtectedFileChange(tc, proposal),
+        ])
+        return results[tc.id]
 
     def _emit_tool_start(self, on_event, tc):
         self._emit_event(
