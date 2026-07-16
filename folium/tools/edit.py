@@ -22,6 +22,7 @@ class EditFileTool(Tool):
         "old_string must appear exactly once; include enough surrounding context to make it unique. "
         "Use this tool for targeted edits to existing LaTeX (.tex) source files. "
         "Use this tool for local changes instead of rewriting a whole file. "
+        "Never use this tool to modify memory.md; use the memory tool to manage persistent long-term memory. "
         "Do not edit files through bash with sed or awk."
     )
     parameters = {
