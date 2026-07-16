@@ -777,6 +777,39 @@ body {
   background: #fbfcfa;
 }
 
+.approval-feedback {
+  display: grid;
+  gap: 6px;
+  padding: 12px 18px 0;
+  border-top: 1px solid var(--border);
+  background: #fbfcfa;
+}
+
+.approval-feedback label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.approval-feedback textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 140px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.approval-feedback textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .approval-note {
   margin-right: auto;
   color: var(--text-muted);
@@ -1121,9 +1154,14 @@ body {
       <button class="approval-load" id="approvalLoadDiff" type="button" hidden>加载更多 diff</button>
     </div>
   </div>
+  <div class="approval-feedback" id="approvalFeedbackWrap" hidden>
+    <label for="approvalFeedback">修改要求</label>
+    <textarea id="approvalFeedback" placeholder="说明希望如何调整这次变更"></textarea>
+  </div>
   <div class="approval-foot">
     <div class="approval-note" id="approvalNote">只有你同意后，文件才会被修改。</div>
     <button class="approval-btn danger" id="approvalDenyBtn" type="button">拒绝本次变更</button>
+    <button class="approval-btn" id="approvalReviseBtn" type="button" hidden>要求修改</button>
     <button class="approval-btn primary" id="approvalAllowBtn" type="button">确认应用全部变更</button>
   </div>
 </section>
@@ -1145,8 +1183,11 @@ const approvalFilesEl = document.getElementById('approvalFiles');
 const approvalDiffEl = document.getElementById('approvalDiff');
 const approvalLoadDiffBtn = document.getElementById('approvalLoadDiff');
 const approvalNoteEl = document.getElementById('approvalNote');
+const approvalFeedbackWrapEl = document.getElementById('approvalFeedbackWrap');
+const approvalFeedbackEl = document.getElementById('approvalFeedback');
 const approvalAllowBtn = document.getElementById('approvalAllowBtn');
 const approvalDenyBtn = document.getElementById('approvalDenyBtn');
+const approvalReviseBtn = document.getElementById('approvalReviseBtn');
 let busy = false;
 let activeApproval = null;
 const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
@@ -1579,6 +1620,11 @@ function showApproval(event) {
     : normalizeText(files[0].tool_name || event.tool_name || 'edit');
   approvalAllowBtn.disabled = false;
   approvalDenyBtn.disabled = false;
+  approvalReviseBtn.disabled = false;
+  approvalFeedbackEl.value = '';
+  const canRequestRevision = Array.isArray(event.files);
+  approvalFeedbackWrapEl.hidden = !canRequestRevision;
+  approvalReviseBtn.hidden = !canRequestRevision;
   renderApprovalFileList();
   renderApprovalDiff();
   approvalPanelEl.classList.add('visible');
@@ -1590,6 +1636,9 @@ function clearApproval() {
   approvalFilesEl.replaceChildren();
   approvalDiffEl.textContent = '';
   approvalLoadDiffBtn.hidden = true;
+  approvalFeedbackWrapEl.hidden = true;
+  approvalReviseBtn.hidden = true;
+  approvalFeedbackEl.value = '';
 }
 
 async function loadMoreApprovalDiff() {
@@ -1620,17 +1669,29 @@ async function loadMoreApprovalDiff() {
   }
 }
 
-async function submitApproval(approved) {
+async function submitApproval(decision) {
   if (!activeApproval) return;
+  const feedback = decision === 'revise' ? approvalFeedbackEl.value.trim() : '';
+  if (decision === 'revise' && !feedback) {
+    approvalNoteEl.textContent = '请填写修改要求后再提交。';
+    approvalFeedbackEl.focus();
+    return;
+  }
   const approvalId = activeApproval.approval_id;
   approvalAllowBtn.disabled = true;
   approvalDenyBtn.disabled = true;
-  approvalNoteEl.textContent = approved ? '正在同意修改...' : '正在拒绝修改...';
+  approvalReviseBtn.disabled = true;
+  const pendingText = {
+    approve: '正在同意修改...',
+    reject: '正在拒绝修改...',
+    revise: '正在提交修改要求...'
+  };
+  approvalNoteEl.textContent = pendingText[decision] || '正在提交审批...';
   try {
     const resp = await fetch('/approval', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({approval_id: approvalId, approved})
+      body: JSON.stringify({approval_id: approvalId, decision, feedback})
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -1640,6 +1701,7 @@ async function submitApproval(approved) {
       approvalNoteEl.textContent = message;
       approvalAllowBtn.disabled = false;
       approvalDenyBtn.disabled = false;
+      approvalReviseBtn.disabled = false;
       return;
     }
     clearApproval();
@@ -1647,11 +1709,13 @@ async function submitApproval(approved) {
     approvalNoteEl.textContent = `连接失败：${e.message}`;
     approvalAllowBtn.disabled = false;
     approvalDenyBtn.disabled = false;
+    approvalReviseBtn.disabled = false;
   }
 }
 
-approvalAllowBtn.addEventListener('click', () => submitApproval(true));
-approvalDenyBtn.addEventListener('click', () => submitApproval(false));
+approvalAllowBtn.addEventListener('click', () => submitApproval('approve'));
+approvalDenyBtn.addEventListener('click', () => submitApproval('reject'));
+approvalReviseBtn.addEventListener('click', () => submitApproval('revise'));
 approvalLoadDiffBtn.addEventListener('click', loadMoreApprovalDiff);
 
 function renderMarkdown(text) {

@@ -8,6 +8,7 @@ import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from .sandbox.filesystem import resolve_tool_path
 
@@ -23,6 +24,22 @@ PROTECTED_FILE_SUFFIXES = frozenset({
     ".sh",
 })
 _NON_FILE_FINGERPRINT = "<non-file>"
+
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    """A user's decision for a pending workspace change."""
+
+    action: Literal["approved", "rejected", "revision_requested"]
+    feedback: str = ""
+
+
+def normalize_approval_decision(value: object) -> ApprovalDecision:
+    """Keep existing boolean approval callbacks compatible."""
+
+    if isinstance(value, ApprovalDecision):
+        return value
+    return ApprovalDecision("approved" if bool(value) else "rejected")
 
 
 @dataclass

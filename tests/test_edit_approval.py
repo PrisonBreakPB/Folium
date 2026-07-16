@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from folium.agent import Agent
 from folium.edit_approval import (
+    ApprovalDecision,
     ChangeSetProposal,
     MAX_APPROVAL_DIFF_CHARS,
     build_file_change_proposal,
@@ -160,6 +161,29 @@ def test_multiple_protected_files_share_one_approval(tmp_path, monkeypatch):
     assert (tmp_path / "experiment.py").exists()
 
 
+def test_rejected_change_set_skips_other_tool_calls(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    agent.edit_approval_callback = lambda tc, proposal: False
+    calls = [
+        ToolCall(id="protected", name="write_file", arguments={
+            "file_path": "paper.tex",
+            "content": "\\title{Draft}\n",
+        }),
+        ToolCall(id="other", name="write_file", arguments={
+            "file_path": "notes.txt",
+            "content": "do not write\n",
+        }),
+    ]
+
+    results = agent._exec_tool_batch(calls)
+
+    assert [result.status for result in results] == ["rejected", "skipped"]
+    assert "skipped because the protected file change set was rejected" in results[1].content
+    assert not (tmp_path / "paper.tex").exists()
+    assert not (tmp_path / "notes.txt").exists()
+
+
 def test_rejected_change_set_stops_agent_without_a_retry(tmp_path, monkeypatch):
     class RejectingWriteLLM:
         model = "fake-model"
@@ -189,6 +213,67 @@ def test_rejected_change_set_stops_agent_without_a_retry(tmp_path, monkeypatch):
     assert result == "File changes were rejected by user; no files were modified."
     assert llm.calls == 1
     assert not (tmp_path / "paper.tex").exists()
+
+
+def test_revision_request_returns_feedback_to_agent_and_retries_approval(tmp_path, monkeypatch):
+    feedback = "Only keep the plotting code."
+
+    class RevisionLLM:
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, on_token=None):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(tool_calls=[
+                    ToolCall(
+                        id="write_1",
+                        name="write_file",
+                        arguments={
+                            "file_path": "experiment.py",
+                            "content": "run_experiment()\nplot_result()\n",
+                        },
+                    )
+                ])
+            if self.calls == 2:
+                assert any(
+                    message["role"] == "tool"
+                    and f"User feedback: {feedback}" in message["content"]
+                    for message in messages
+                )
+                return LLMResponse(tool_calls=[
+                    ToolCall(
+                        id="write_2",
+                        name="write_file",
+                        arguments={
+                            "file_path": "experiment.py",
+                            "content": "plot_result()\n",
+                        },
+                    )
+                ])
+            return LLMResponse(content="Updated the experiment code.")
+
+    approvals = []
+
+    def request_approval(tc, proposal):
+        approvals.append(proposal)
+        if len(approvals) == 1:
+            return ApprovalDecision("revision_requested", feedback)
+        return True
+
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    llm = RevisionLLM()
+    agent = Agent(llm=llm, tools=[WriteFileTool()])
+    agent.edit_approval_callback = request_approval
+
+    result = agent.chat("write an experiment script")
+
+    assert result == "Updated the experiment code."
+    assert llm.calls == 3
+    assert len(approvals) == 2
+    assert (tmp_path / "experiment.py").read_text(encoding="utf-8") == "plot_result()\n"
 
 
 def test_tool_result_event_includes_file_diff(tmp_path, monkeypatch):
@@ -274,6 +359,34 @@ def test_approval_endpoint_resolves_pending_request():
         server._pending_approvals.update(old)
 
 
+def test_approval_endpoint_accepts_revision_feedback():
+    client = TestClient(server.app)
+    approval_id = "revision_test"
+    pending = server.PendingApproval(
+        {"approval_id": approval_id},
+        proposal=SimpleNamespace(files=[]),
+    )
+    old = dict(server._pending_approvals)
+    try:
+        server._pending_approvals.clear()
+        server._pending_approvals[approval_id] = pending
+
+        resp = client.post("/approval", json={
+            "approval_id": approval_id,
+            "decision": "revise",
+            "feedback": "Keep the plotting section only.",
+        })
+
+        assert resp.status_code == 200
+        assert pending.event.is_set()
+        assert pending.decision == "revise"
+        assert pending.feedback == "Keep the plotting section only."
+        assert pending.approved is False
+    finally:
+        server._pending_approvals.clear()
+        server._pending_approvals.update(old)
+
+
 def test_web_bash_approval_callback_waits_for_decision():
     queue = SimpleQueue()
     _on_token, _on_tool, _on_event, on_edit_approval = server._make_bridge(queue)
@@ -302,7 +415,7 @@ def test_web_bash_approval_callback_waits_for_decision():
     pending.event.set()
     thread.join(timeout=1)
 
-    assert result["approved"] is True
+    assert result["approved"].action == "approved"
 
 
 def test_web_changeset_approval_exposes_preview_and_full_diff(tmp_path, monkeypatch):
@@ -349,14 +462,22 @@ def test_web_changeset_approval_exposes_preview_and_full_diff(tmp_path, monkeypa
         assert first.json()["diff"] == proposal.diff[:100]
         assert first.json()["next_offset"] == 100
         assert second.json()["diff"] == proposal.diff[100:200]
+
+        decision = client.post("/approval", json={
+            "approval_id": event["approval_id"],
+            "decision": "revise",
+            "feedback": "Please simplify the experiment.",
+        })
+        assert decision.status_code == 200
     finally:
         pending = server._pending_approvals.get(event["approval_id"])
         if pending:
-            pending.approved = False
+            pending.decision = "reject"
             pending.event.set()
         thread.join(timeout=1)
 
-    assert result["approved"] is False
+    assert result["approved"].action == "revision_requested"
+    assert result["approved"].feedback == "Please simplify the experiment."
 
 
 class SimpleQueue:

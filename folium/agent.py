@@ -39,6 +39,7 @@ from .edit_approval import (
     build_file_change_proposal,
     change_result_summary,
     is_protected_file_change,
+    normalize_approval_decision,
 )
 from .sandbox.filesystem import resolve_tool_path
 from .tools.edit import _changed_files
@@ -394,11 +395,20 @@ class Agent:
                 prepared_changes,
                 record_results=True,
             )
+            blocked_status = next((
+                result.status
+                for result in approved_results.values()
+                if result.status in {"rejected", "revision_requested"}
+            ), None)
             results = []
             for tc in tool_calls:
                 result = approved_results.get(tc.id)
                 if result is None:
-                    result = self._exec_tool(tc)
+                    if blocked_status:
+                        result = self._skipped_after_change_set_decision(blocked_status)
+                        self._record_preapproved_tool_result(tc, result)
+                    else:
+                        result = self._exec_tool(tc)
                 results.append(result)
                 if on_tool:
                     on_tool(tc.name, tc.arguments, result.status)
@@ -425,6 +435,14 @@ class Agent:
                 if on_tool:
                     on_tool(tc.name, tc.arguments, result.status)
                 results.append(result)
+                if result.status in {"rejected", "revision_requested"}:
+                    for skipped_tc in tool_calls[len(results):]:
+                        skipped = self._skipped_after_change_set_decision(result.status)
+                        self._record_preapproved_tool_result(skipped_tc, skipped)
+                        if on_tool:
+                            on_tool(skipped_tc.name, skipped_tc.arguments, skipped.status)
+                        results.append(skipped)
+                    break
             return results
 
         for tc in tool_calls:
@@ -468,15 +486,34 @@ class Agent:
             return {}
 
         started_at = time.perf_counter()
-        approved = bool(self.edit_approval_callback(prepared_changes[0].tool_call, change_set))
+        decision = normalize_approval_decision(
+            self.edit_approval_callback(prepared_changes[0].tool_call, change_set)
+        )
         duration_ms = int((time.perf_counter() - started_at) * 1000)
-        if not approved:
+        if decision.action == "rejected":
             results = {
                 prepared.tool_call.id: ToolExecutionResult(
                     "Change set rejected by user; no files were modified.",
                     "rejected",
                     preview="Change set rejected by user; no files were modified.",
                     raw_content="Change set rejected by user; no files were modified.",
+                    duration_ms=duration_ms,
+                )
+                for prepared in prepared_changes
+            }
+        elif decision.action == "revision_requested":
+            feedback = decision.feedback.strip() or "(No additional feedback was provided.)"
+            message = (
+                "User requested changes to this change set; no files were modified.\n"
+                f"User feedback: {feedback}\n"
+                "Revise the proposed file changes according to this feedback and request approval again."
+            )
+            results = {
+                prepared.tool_call.id: ToolExecutionResult(
+                    message,
+                    "revision_requested",
+                    preview="User requested changes; no files were modified.",
+                    raw_content=message,
                     duration_ms=duration_ms,
                 )
                 for prepared in prepared_changes
@@ -525,6 +562,20 @@ class Agent:
                     results[prepared.tool_call.id],
                 )
         return results
+
+    @staticmethod
+    def _skipped_after_change_set_decision(status: str) -> ToolExecutionResult:
+        if status == "revision_requested":
+            reason = "the protected file change set needs revision"
+        else:
+            reason = "the protected file change set was rejected"
+        message = f"Tool call skipped because {reason}; no tools from this batch were executed."
+        return ToolExecutionResult(
+            message,
+            "skipped",
+            preview=message,
+            raw_content=message,
+        )
 
     def _approved_file_change_result(
         self,
@@ -724,8 +775,8 @@ class Agent:
         proposal = build_edit_approval_proposal(tc.name, arguments)
         if proposal is None:
             return None
-        approved = bool(self.edit_approval_callback(tc, proposal))
-        if approved:
+        decision = normalize_approval_decision(self.edit_approval_callback(tc, proposal))
+        if decision.action == "approved":
             return None
         return "Error: bash command rejected by user; workspace was not modified."
 

@@ -7,6 +7,7 @@ import os
 import threading
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -30,6 +31,7 @@ from ..session import (
 )
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
+from ..edit_approval import ApprovalDecision
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
 from ..sandbox.session import reset_current_session
@@ -64,7 +66,9 @@ class SwitchRequest(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approval_id: str
-    approved: bool
+    decision: Literal["approve", "reject", "revise"] | None = None
+    feedback: str = ""
+    approved: bool | None = None
 
 
 class PendingApproval:
@@ -73,6 +77,8 @@ class PendingApproval:
         self.proposal = proposal
         self.event = threading.Event()
         self.approved = False
+        self.decision: str | None = None
+        self.feedback = ""
 
 
 # ── SSE bridge: sync callbacks → async queue ────────────────
@@ -135,7 +141,15 @@ def _make_bridge(queue: asyncio.Queue):
         queue.put_nowait(payload)
         pending.event.wait()
         _pending_approvals.pop(approval_id, None)
-        return pending.approved
+        decision = pending.decision or ("approve" if pending.approved else "reject")
+        return ApprovalDecision(
+            {
+                "approve": "approved",
+                "reject": "rejected",
+                "revise": "revision_requested",
+            }[decision],
+            pending.feedback,
+        )
 
     return on_token, on_tool, on_event, on_edit_approval
 
@@ -315,7 +329,20 @@ async def approval(req: ApprovalDecisionRequest):
     pending = _pending_approvals.get(req.approval_id)
     if pending is None:
         return JSONResponse({"error": "审批请求不存在或已失效"}, status_code=404)
-    pending.approved = bool(req.approved)
+    decision = req.decision
+    if decision is None:
+        if req.approved is None:
+            return JSONResponse({"error": "缺少审批决定"}, status_code=422)
+        decision = "approve" if req.approved else "reject"
+    feedback = req.feedback.strip()
+    if decision == "revise":
+        if not hasattr(pending.proposal, "files"):
+            return JSONResponse({"error": "仅受保护文件变更支持要求修改"}, status_code=400)
+        if not feedback:
+            return JSONResponse({"error": "请填写修改要求"}, status_code=422)
+    pending.decision = decision
+    pending.feedback = feedback
+    pending.approved = decision == "approve"
     pending.event.set()
     return {"result": "ok"}
 
