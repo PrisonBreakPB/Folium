@@ -367,6 +367,19 @@ class ToolValidationTests(unittest.TestCase):
         self.assertIsNot(sub_todo.manager, agent.todo_manager)
         self.assertEqual(sub_todo.manager.snapshot(), [])
 
+    def test_context_compression_preserves_system_addendum(self):
+        addendum = "You are the literature-searcher sub-agent."
+        agent = Agent(llm=None, tools=[], skills=[], system_addendum=addendum)
+        agent.context.maybe_compress = lambda messages, llm=None, real_tokens=None: {
+            "compressed": True,
+            "layers": [{"name": "test", "changed": True}],
+        }
+
+        agent._maybe_compress_observed("test")
+
+        self.assertIn("# Sub-agent Instructions", agent._system)
+        self.assertIn(addendum, agent._system)
+
     def test_agent_transcript_keeps_full_tool_output_after_context_compression(self):
         long_output = "x" * 9000
 

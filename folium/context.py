@@ -109,11 +109,16 @@ class ContextManager:
                  reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
                  protected_user_tokens: int = DEFAULT_PROTECTED_USER_TOKENS,
                  protected_initial_user_messages: int = DEFAULT_PROTECTED_INITIAL_USER_MESSAGES):
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than 0")
         self.max_tokens = max_tokens
-        self.reserved_output_tokens = max(0, reserved_output_tokens)
+        self.reserved_output_tokens = min(
+            max(0, reserved_output_tokens),
+            max_tokens // 4,
+        )
         self.protected_user_tokens = max(1, protected_user_tokens)
         self.protected_initial_user_messages = max(0, protected_initial_user_messages)
-        self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
+        self.input_budget_tokens = max_tokens - self.reserved_output_tokens
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._dedupe_at = int(self.input_budget_tokens * 0.50)  # 50% -> fold duplicate tool outputs
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs

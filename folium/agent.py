@@ -150,9 +150,10 @@ class Agent:
         self.tool_timeout = tool_timeout
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.skills = load_skills() if skills is None else skills
+        self._system_addendum = system_addendum.strip() if system_addendum else ""
         self._system = system_prompt(self.tools, self.skills)
-        if system_addendum:
-            self._system += "\n\n# Sub-agent Instructions\n" + system_addendum.strip()
+        if self._system_addendum:
+            self._system += "\n\n# Sub-agent Instructions\n" + self._system_addendum
         self.session_id: str | None = None
         self.turn_index = 0
         self.todo_tool = next((t for t in self.tools if isinstance(t, TodoTool)), None)
@@ -895,6 +896,8 @@ class Agent:
         """Rescan skills and regenerate the system prompt."""
         self.skills = load_skills()
         self._system = system_prompt(self.tools, self.skills)
+        if self._system_addendum:
+            self._system += "\n\n# Sub-agent Instructions\n" + self._system_addendum
 
     def reset(self):
         """Clear conversation history and reset LLM cumulative counters."""

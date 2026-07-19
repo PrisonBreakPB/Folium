@@ -4,6 +4,8 @@ import os
 import pathlib
 from unittest import mock
 
+import pytest
+
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
 from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
 from folium.context import (
@@ -273,6 +275,21 @@ def test_context_reserves_output_tokens():
     assert ctx._secondary_snip_at == 56_000
     assert ctx._prune_at == 64_000
     assert ctx._summarize_at == 72_000
+
+
+def test_context_scales_output_reservation_for_small_windows():
+    ctx = ContextManager(max_tokens=16_000)
+
+    assert ctx.reserved_output_tokens == 4_000
+    assert ctx.input_budget_tokens == 12_000
+    assert ctx._dedupe_at == 6_000
+    assert ctx._summarize_at == 10_800
+
+
+@pytest.mark.parametrize("max_tokens", [0, -1])
+def test_context_rejects_non_positive_window(max_tokens):
+    with pytest.raises(ValueError, match="max_tokens must be greater than 0"):
+        ContextManager(max_tokens=max_tokens)
 
 
 def test_context_compress():
