@@ -17,7 +17,6 @@ def _env_bool(name: str, default: bool) -> bool:
 @dataclass
 class ObservabilityConfig:
     enabled: bool = True
-    trace_mode: str = "all"
     database_path: Path | None = None
     full_user_input: bool = True
     full_llm_input: bool = False
@@ -32,7 +31,6 @@ class ObservabilityConfig:
     def from_env(cls) -> "ObservabilityConfig":
         return cls(
             enabled=_env_bool("FOLIUM_OBSERVABILITY", True),
-            trace_mode=os.getenv("FOLIUM_TRACE_MODE", "all"),
             database_path=(
                 Path(os.environ["FOLIUM_DB_PATH"])
                 if os.getenv("FOLIUM_DB_PATH")

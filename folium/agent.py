@@ -27,6 +27,7 @@ from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
 from .config import DEFAULT_MAX_CONTEXT_TOKENS
 from .skills import load_skills
+from .skills.parser import parse_skill_file
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
@@ -149,6 +150,11 @@ class Agent:
         self.max_bad_tool_calls = max_bad_tool_calls
         self.tool_timeout = tool_timeout
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        self._skill_sources = (
+            None
+            if skills is None
+            else tuple((skill.name, skill.skill_file) for skill in skills)
+        )
         self.skills = load_skills() if skills is None else skills
         self._system_addendum = system_addendum.strip() if system_addendum else ""
         self._system = system_prompt(self.tools, self.skills)
@@ -893,8 +899,16 @@ class Agent:
         return 0
 
     def _refresh_system_prompt(self) -> None:
-        """Rescan skills and regenerate the system prompt."""
-        self.skills = load_skills()
+        """Refresh default skills or the caller-provided skill scope."""
+        if self._skill_sources is None:
+            self.skills = load_skills()
+        else:
+            refreshed_skills = []
+            for name, skill_file in self._skill_sources:
+                skill = parse_skill_file(skill_file)
+                if skill is not None and skill.name == name:
+                    refreshed_skills.append(skill)
+            self.skills = refreshed_skills
         self._system = system_prompt(self.tools, self.skills)
         if self._system_addendum:
             self._system += "\n\n# Sub-agent Instructions\n" + self._system_addendum

@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest import mock
 
 from folium.agent import Agent
 from folium.database import get_connection
@@ -83,6 +85,13 @@ def _events(db_path, trace_id):
 
 
 class ObservabilityTests(unittest.TestCase):
+    def test_trace_mode_is_not_a_supported_configuration(self):
+        with mock.patch.dict(os.environ, {"FOLIUM_TRACE_MODE": "errors"}, clear=True):
+            config = ObservabilityConfig.from_env()
+
+        self.assertTrue(config.enabled)
+        self.assertFalse(hasattr(config, "trace_mode"))
+
     def test_compact_payload_redacts_secret(self):
         payload = compact_payload(
             "OPENAI_API_KEY=sk-secretsecretsecret",

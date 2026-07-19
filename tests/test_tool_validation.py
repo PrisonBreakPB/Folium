@@ -1,9 +1,13 @@
 import unittest
 import time
+from pathlib import Path
+from unittest import mock
 
 from folium.agent import FINAL_ROUND_REMINDER, Agent
 from folium.context import TOOL_OUTPUT_DEDUPE_PLACEHOLDER
 from folium.llm import LLMResponse, ToolCall
+from folium.skills import load_skills
+from folium.skills.types import Skill
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.agent import _sub_agent_tool
 from folium.tools.base import Tool, ToolValidationError
@@ -379,6 +383,50 @@ class ToolValidationTests(unittest.TestCase):
 
         self.assertIn("# Sub-agent Instructions", agent._system)
         self.assertIn(addendum, agent._system)
+        self.assertEqual(agent.skills, [])
+
+    def test_context_compression_preserves_explicit_skill_scope(self):
+        allowed_skill = next(
+            skill for skill in load_skills()
+            if skill.name == "control-literature-search"
+        )
+        agent = Agent(llm=None, tools=[], skills=[allowed_skill])
+        agent.context.maybe_compress = lambda messages, llm=None, real_tokens=None: {
+            "compressed": True,
+            "layers": [{"name": "test", "changed": True}],
+        }
+
+        agent._maybe_compress_observed("test")
+
+        self.assertEqual(
+            [skill.name for skill in agent.skills],
+            ["control-literature-search"],
+        )
+
+    def test_context_compression_rescans_default_skill_directory(self):
+        initial = Skill(
+            "initial",
+            "Initial skill.",
+            Path("skills/initial"),
+            Path("skills/initial/SKILL.md"),
+        )
+        refreshed = Skill(
+            "refreshed",
+            "Refreshed skill.",
+            Path("skills/refreshed"),
+            Path("skills/refreshed/SKILL.md"),
+        )
+
+        with mock.patch("folium.agent.load_skills", side_effect=[[initial], [refreshed]]):
+            agent = Agent(llm=None, tools=[])
+            agent.context.maybe_compress = lambda messages, llm=None, real_tokens=None: {
+                "compressed": True,
+                "layers": [{"name": "test", "changed": True}],
+            }
+
+            agent._maybe_compress_observed("test")
+
+        self.assertEqual([skill.name for skill in agent.skills], ["refreshed"])
 
     def test_agent_transcript_keeps_full_tool_output_after_context_compression(self):
         long_output = "x" * 9000
