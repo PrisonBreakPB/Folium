@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 from .config import ObservabilityConfig
 from .ids import new_span_id, new_trace_id
-from .recorder import JSONLRecorder, NullRecorder
+from .recorder import NullRecorder, SQLiteRecorder
 
 _trace_id_var = contextvars.ContextVar("folium_trace_id", default=None)
 _span_stack_var = contextvars.ContextVar("folium_span_stack", default=())
@@ -22,7 +22,7 @@ class Observer:
     def __init__(self, config: ObservabilityConfig | None = None):
         self.config = config or ObservabilityConfig.from_env()
         self.recorder = (
-            JSONLRecorder(self.config.trace_dir)
+            SQLiteRecorder(self.config.database_path)
             if self.config.enabled
             else NullRecorder()
         )
@@ -84,6 +84,7 @@ def observe_trace(
         ) as span_id:
             yield span_id
     finally:
+        observer.recorder.flush(tid)
         _span_stack_var.reset(token_stack)
         _trace_id_var.reset(token_trace)
 

@@ -4,7 +4,13 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from folium.agent import Agent
-from folium.llm import ToolCall
+from folium.edit_approval import (
+    ApprovalDecision,
+    ChangeSetProposal,
+    MAX_APPROVAL_DIFF_CHARS,
+    build_file_change_proposal,
+)
+from folium.llm import LLMResponse, ToolCall
 from folium.tools.bash import BashTool
 from folium.tools.edit import EditFileTool
 from folium.tools.write import WriteFileTool
@@ -14,7 +20,8 @@ from folium.web import server
 def test_write_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     agent = Agent(llm=None, tools=[WriteFileTool()])
-    agent.edit_approval_callback = lambda tc, proposal: False
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append((tc, proposal)) or False
 
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
     result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
@@ -24,15 +31,18 @@ def test_write_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch
 
     assert result.status == "ok"
     assert target.read_text(encoding="utf-8") == "hello\n"
-    assert result.file_change is not None
-    assert "+hello" in result.file_change.diff
+    assert approvals == []
+    assert result.preview == "Wrote 1 lines to note.txt"
+    assert result.diff.startswith("--- /dev/null")
+    assert "+hello" in result.diff
 
 
 def test_edit_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch):
     target = tmp_path / "note.txt"
     target.write_text("old\n", encoding="utf-8")
     agent = Agent(llm=None, tools=[EditFileTool()])
-    agent.edit_approval_callback = lambda tc, proposal: False
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append((tc, proposal)) or False
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
 
     result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
@@ -43,83 +53,243 @@ def test_edit_file_runs_without_approval_and_returns_diff(tmp_path, monkeypatch)
 
     assert result.status == "ok"
     assert target.read_text(encoding="utf-8") == "new\n"
-    assert result.file_change is not None
-    assert "-old" in result.file_change.diff
-    assert "+new" in result.file_change.diff
+    assert approvals == []
+    assert result.preview == "Edited note.txt"
+    assert "-old" in result.diff
+    assert "+new" in result.diff
 
 
-def test_file_change_is_included_in_tool_result_event(tmp_path, monkeypatch):
+def test_protected_write_file_is_not_applied_when_rejected(tmp_path, monkeypatch):
+    target = tmp_path / "paper.tex"
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append(proposal) or False
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "paper.tex",
+        "content": "\\section{Introduction}\n",
+    }))
+
+    assert result.status == "rejected"
+    assert not target.exists()
+    assert len(approvals) == 1
+    assert isinstance(approvals[0], ChangeSetProposal)
+    assert approvals[0].files[0].path == str(target)
+    assert "+\\section{Introduction}" in approvals[0].files[0].diff
+
+
+def test_protected_write_file_is_applied_after_approval(tmp_path, monkeypatch):
+    target = tmp_path / "experiment.py"
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    agent.edit_approval_callback = lambda tc, proposal: True
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "experiment.py",
+        "content": "print('ok')\n",
+    }))
+
+    assert result.status == "ok"
+    assert target.read_text(encoding="utf-8") == "print('ok')\n"
+    assert result.preview == "Wrote 1 lines to experiment.py"
+
+
+def test_protected_edit_file_is_not_applied_when_rejected(tmp_path, monkeypatch):
+    target = tmp_path / "experiment.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    agent = Agent(llm=None, tools=[EditFileTool()])
+    agent.edit_approval_callback = lambda tc, proposal: False
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
+        "file_path": "experiment.py",
+        "old_string": "value = 1",
+        "new_string": "value = 2",
+    }))
+
+    assert result.status == "rejected"
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
+def test_protected_file_change_rechecks_the_reviewed_baseline(tmp_path, monkeypatch):
+    target = tmp_path / "experiment.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+
+    def approve_after_external_change(tc, proposal):
+        target.write_text("value = 99\n", encoding="utf-8")
+        return True
+
+    agent.edit_approval_callback = approve_after_external_change
+    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
+        "file_path": "experiment.py",
+        "content": "value = 2\n",
+    }))
+
+    assert result.status == "error"
+    assert "reviewed file changed" in result.content
+    assert target.read_text(encoding="utf-8") == "value = 99\n"
+
+
+def test_multiple_protected_files_share_one_approval(tmp_path, monkeypatch):
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    approvals = []
+    agent.edit_approval_callback = lambda tc, proposal: approvals.append(proposal) or True
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    calls = [
+        ToolCall(id="tex", name="write_file", arguments={
+            "file_path": "paper.tex",
+            "content": "\\title{Demo}\n",
+        }),
+        ToolCall(id="code", name="write_file", arguments={
+            "file_path": "experiment.py",
+            "content": "print('demo')\n",
+        }),
+    ]
+
+    results = agent._exec_tool_batch(calls)
+
+    assert [result.status for result in results] == ["ok", "ok"]
+    assert len(approvals) == 1
+    assert [change.requested_path for change in approvals[0].files] == [
+        "paper.tex",
+        "experiment.py",
+    ]
+    assert (tmp_path / "paper.tex").exists()
+    assert (tmp_path / "experiment.py").exists()
+
+
+def test_rejected_change_set_skips_other_tool_calls(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    agent = Agent(llm=None, tools=[WriteFileTool()])
+    agent.edit_approval_callback = lambda tc, proposal: False
+    calls = [
+        ToolCall(id="protected", name="write_file", arguments={
+            "file_path": "paper.tex",
+            "content": "\\title{Draft}\n",
+        }),
+        ToolCall(id="other", name="write_file", arguments={
+            "file_path": "notes.txt",
+            "content": "do not write\n",
+        }),
+    ]
+
+    results = agent._exec_tool_batch(calls)
+
+    assert [result.status for result in results] == ["rejected", "skipped"]
+    assert "skipped because the protected file change set was rejected" in results[1].content
+    assert not (tmp_path / "paper.tex").exists()
+    assert not (tmp_path / "notes.txt").exists()
+
+
+def test_rejected_change_set_stops_agent_without_a_retry(tmp_path, monkeypatch):
+    class RejectingWriteLLM:
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, on_token=None):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(tool_calls=[
+                    ToolCall(
+                        id="write_1",
+                        name="write_file",
+                        arguments={"file_path": "paper.tex", "content": "draft\n"},
+                    )
+                ])
+            return LLMResponse(content="this round should not run")
+
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    llm = RejectingWriteLLM()
+    agent = Agent(llm=llm, tools=[WriteFileTool()])
+    agent.edit_approval_callback = lambda tc, proposal: False
+
+    result = agent.chat("write a paper draft")
+
+    assert result == "File changes were rejected by user; no files were modified."
+    assert llm.calls == 1
+    assert not (tmp_path / "paper.tex").exists()
+
+
+def test_revision_request_returns_feedback_to_agent_and_retries_approval(tmp_path, monkeypatch):
+    feedback = "Only keep the plotting code."
+
+    class RevisionLLM:
+        model = "fake-model"
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, on_token=None):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(tool_calls=[
+                    ToolCall(
+                        id="write_1",
+                        name="write_file",
+                        arguments={
+                            "file_path": "experiment.py",
+                            "content": "run_experiment()\nplot_result()\n",
+                        },
+                    )
+                ])
+            if self.calls == 2:
+                assert any(
+                    message["role"] == "tool"
+                    and f"User feedback: {feedback}" in message["content"]
+                    for message in messages
+                )
+                return LLMResponse(tool_calls=[
+                    ToolCall(
+                        id="write_2",
+                        name="write_file",
+                        arguments={
+                            "file_path": "experiment.py",
+                            "content": "plot_result()\n",
+                        },
+                    )
+                ])
+            return LLMResponse(content="Updated the experiment code.")
+
+    approvals = []
+
+    def request_approval(tc, proposal):
+        approvals.append(proposal)
+        if len(approvals) == 1:
+            return ApprovalDecision("revision_requested", feedback)
+        return True
+
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    llm = RevisionLLM()
+    agent = Agent(llm=llm, tools=[WriteFileTool()])
+    agent.edit_approval_callback = request_approval
+
+    result = agent.chat("write an experiment script")
+
+    assert result == "Updated the experiment code."
+    assert llm.calls == 3
+    assert len(approvals) == 2
+    assert (tmp_path / "experiment.py").read_text(encoding="utf-8") == "plot_result()\n"
+
+
+def test_tool_result_event_includes_file_diff(tmp_path, monkeypatch):
     agent = Agent(llm=None, tools=[WriteFileTool()])
     monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
     tc = ToolCall(id="t1", name="write_file", arguments={
         "file_path": "note.txt",
         "content": "hello\n",
     })
-
     result = agent._exec_tool(tc)
     events = []
+
     agent._emit_tool_result(events.append, tc, result)
 
-    assert events[0]["type"] == "tool_result"
-    assert events[0]["file_change"]["path"].endswith("note.txt")
-    assert "+hello" in events[0]["file_change"]["diff"]
-
-    agent._append_tool_message(tc, result)
-    assert "file_change" not in agent.messages[-1]
-    assert "file_change" not in agent.transcript[-1]
-
-
-def test_file_change_uses_content_written_to_disk(tmp_path, monkeypatch):
-    target = tmp_path / "note.txt"
-    tool = WriteFileTool()
-    agent = Agent(llm=None, tools=[tool])
-    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
-
-    def write_actual_content(**_kwargs):
-        target.write_text("actual\n", encoding="utf-8")
-        return "Wrote 1 lines to note.txt"
-
-    monkeypatch.setattr(tool, "execute", write_actual_content)
-    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
-        "file_path": "note.txt",
-        "content": "planned\n",
-    }))
-
-    assert result.status == "ok"
-    assert result.file_change is not None
-    assert "+actual" in result.file_change.diff
-    assert "+planned" not in result.file_change.diff
-
-
-def test_empty_file_creation_has_a_visible_diff(tmp_path, monkeypatch):
-    agent = Agent(llm=None, tools=[WriteFileTool()])
-    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
-
-    result = agent._exec_tool(ToolCall(id="t1", name="write_file", arguments={
-        "file_path": "empty.txt",
-        "content": "",
-    }))
-
-    assert result.status == "ok"
-    assert result.file_change is not None
-    assert "--- /dev/null" in result.file_change.diff
-    assert "+++ b/" in result.file_change.diff
-
-
-def test_failed_file_edit_does_not_return_diff(tmp_path, monkeypatch):
-    target = tmp_path / "note.txt"
-    target.write_text("old\n", encoding="utf-8")
-    agent = Agent(llm=None, tools=[EditFileTool()])
-    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
-
-    result = agent._exec_tool(ToolCall(id="t1", name="edit_file", arguments={
-        "file_path": "note.txt",
-        "old_string": "missing",
-        "new_string": "new",
-    }))
-
-    assert result.status == "error"
-    assert result.file_change is None
+    assert events[0]["preview"] == "Wrote 1 lines to note.txt"
+    assert events[0]["diff"] == result.diff.strip()
 
 
 class RecordingExecutor:
@@ -159,6 +329,17 @@ def test_bash_read_only_command_does_not_require_approval():
     assert executor.commands == ["pwd && ls -la"]
 
 
+def test_blocked_bash_command_has_error_status():
+    agent = Agent(llm=None, tools=[BashTool()])
+
+    result = agent._exec_tool(ToolCall(id="t1", name="bash", arguments={
+        "command": "rm -rf /",
+    }))
+
+    assert result.status == "error"
+    assert result.content.startswith("[Warning] Blocked:")
+
+
 def test_approval_endpoint_resolves_pending_request():
     client = TestClient(server.app)
     approval_id = "approval_test"
@@ -173,6 +354,34 @@ def test_approval_endpoint_resolves_pending_request():
         assert resp.status_code == 200
         assert pending.event.is_set()
         assert pending.approved is True
+    finally:
+        server._pending_approvals.clear()
+        server._pending_approvals.update(old)
+
+
+def test_approval_endpoint_accepts_revision_feedback():
+    client = TestClient(server.app)
+    approval_id = "revision_test"
+    pending = server.PendingApproval(
+        {"approval_id": approval_id},
+        proposal=SimpleNamespace(files=[]),
+    )
+    old = dict(server._pending_approvals)
+    try:
+        server._pending_approvals.clear()
+        server._pending_approvals[approval_id] = pending
+
+        resp = client.post("/approval", json={
+            "approval_id": approval_id,
+            "decision": "revise",
+            "feedback": "Keep the plotting section only.",
+        })
+
+        assert resp.status_code == 200
+        assert pending.event.is_set()
+        assert pending.decision == "revise"
+        assert pending.feedback == "Keep the plotting section only."
+        assert pending.approved is False
     finally:
         server._pending_approvals.clear()
         server._pending_approvals.update(old)
@@ -206,7 +415,69 @@ def test_web_bash_approval_callback_waits_for_decision():
     pending.event.set()
     thread.join(timeout=1)
 
-    assert result["approved"] is True
+    assert result["approved"].action == "approved"
+
+
+def test_web_changeset_approval_exposes_preview_and_full_diff(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOLIUM_HOST_WORKSPACE", str(tmp_path))
+    proposal = build_file_change_proposal(
+        "tool_1",
+        "write_file",
+        {
+            "file_path": "experiment.py",
+            "content": "x = '" + ("a" * (MAX_APPROVAL_DIFF_CHARS + 100)) + "'\n",
+        },
+    )
+    assert proposal is not None
+    change_set = ChangeSetProposal([proposal])
+    queue = SimpleQueue()
+    _on_token, _on_tool, _on_event, on_edit_approval = server._make_bridge(queue)
+    tc = SimpleNamespace(id="tool_1", name="write_file")
+    result = {}
+
+    thread = threading.Thread(
+        target=lambda: result.setdefault("approved", on_edit_approval(tc, change_set)),
+        daemon=True,
+    )
+    thread.start()
+    event = queue.get(timeout=1)
+
+    try:
+        assert event["type"] == "approval_request"
+        assert event["tool_name"] == "change_set"
+        assert event["files"][0]["truncated"] is True
+        assert len(event["files"][0]["diff"]) < proposal.diff_chars
+
+        client = TestClient(server.app)
+        first = client.get(
+            f"/approval/{event['approval_id']}/diff",
+            params={"file_index": 0, "offset": 0, "limit": 100},
+        )
+        second = client.get(
+            f"/approval/{event['approval_id']}/diff",
+            params={"file_index": 0, "offset": 100, "limit": 100},
+        )
+
+        assert first.status_code == 200
+        assert first.json()["diff"] == proposal.diff[:100]
+        assert first.json()["next_offset"] == 100
+        assert second.json()["diff"] == proposal.diff[100:200]
+
+        decision = client.post("/approval", json={
+            "approval_id": event["approval_id"],
+            "decision": "revise",
+            "feedback": "Please simplify the experiment.",
+        })
+        assert decision.status_code == 200
+    finally:
+        pending = server._pending_approvals.get(event["approval_id"])
+        if pending:
+            pending.decision = "reject"
+            pending.event.set()
+        thread.join(timeout=1)
+
+    assert result["approved"].action == "revision_requested"
+    assert result["approved"].feedback == "Please simplify the experiment."
 
 
 class SimpleQueue:

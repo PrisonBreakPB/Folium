@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .base import Tool
+from .base import Tool, ToolOutput
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -126,7 +126,7 @@ class WebFetchTool(Tool):
         "required": ["url"],
     }
 
-    def execute(self, url: str, max_chars: int = DEFAULT_FETCH_CHARS) -> str:
+    def execute(self, url: str, max_chars: int = DEFAULT_FETCH_CHARS) -> str | ToolOutput:
         url = url.strip()
         if not url:
             return "Error: url required"
@@ -183,7 +183,17 @@ class WebFetchTool(Tool):
                 + (f", read first {MAX_FETCH_BYTES} bytes" if truncated_bytes else "")
                 + ") ..."
             )
-        return "\n".join(lines)
+        model_content = "\n".join(lines)
+        if not truncated_chars:
+            return model_content
+
+        raw_lines = [f"Fetched: {url}"]
+        if title:
+            raw_lines.append(f"Title: {title}")
+        raw_lines.extend(["", cleaned])
+        if truncated_bytes:
+            raw_lines.append(f"\n... source truncated after {MAX_FETCH_BYTES} bytes ...")
+        return ToolOutput(content=model_content, raw_content="\n".join(raw_lines))
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):

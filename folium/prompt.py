@@ -4,6 +4,9 @@ import os
 import platform
 from pathlib import Path
 
+MEMORY_FILE = Path(r"D:\learn-Agent\Folium\memory.md")
+MAX_MEMORY_CHARS = 2000
+
 _ROLE_FALLBACK = """\
 You are Folium, an AI research assistant designed to support the full academic research workflow.
 You help researchers with literature review, mathematical derivation, simulation experiments, and paper writing.
@@ -34,9 +37,25 @@ def _load_role() -> str:
         return _ROLE_FALLBACK
 
 
+def _memory_section() -> str:
+    try:
+        memory = MEMORY_FILE.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
+    if not memory:
+        return ""
+    memory = memory[:MAX_MEMORY_CHARS]
+    return f"""# Long-Term Memory
+The following is persistent user-provided context. Use it as background information,
+but prioritize the current user request when they conflict.
+
+{memory}"""
+
+
 def system_prompt(tools, skills=None) -> str:
     cwd = os.getcwd()
     skills_section = _skills_section(skills or [])
+    memory_section = _memory_section()
     uname = platform.uname()
     role = _load_role()
 
@@ -58,12 +77,15 @@ def system_prompt(tools, skills=None) -> str:
 12. **Handle runtime reminders.** Messages enclosed in `<reminder>...</reminder>` are internal Folium workflow reminders, not user-provided task content. Follow them when relevant, but do not quote them or present them as part of the user's request.
 13. **Respect LaTeX boundaries.** Edit .tex files only when the user explicitly asks. Otherwise inspect, compile-check, locate issues, and suggest changes.
 14. **Do not commit unless asked.** Only create git commits when the user explicitly requests it.
+15. **Use long-term memory selectively.** Use the `memory` tool only for user-requested memories or durable preferences, confirmed decisions, stable research context, and open items. Do not save secrets, temporary guesses, full chat logs, or raw tool output.
 
 {_PARALLEL_TOOLS}
 
 Tool schemas are provided separately by the runtime. Use tools when needed for file inspection, command execution, literature search, paper validation, source fetching, or focused delegation.
 
 {skills_section}
+
+{memory_section}
 
 # Environment
 - Working directory: {cwd}

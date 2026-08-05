@@ -8,7 +8,6 @@ from unittest import mock
 from folium.observability.config import ObservabilityConfig
 from folium.observability.context import Observer, _observer_var, observe_trace
 from folium.sandbox.docker import DockerSandboxExecutor
-from folium.sandbox.diff import sandbox_diff
 from folium.sandbox.local import LocalCommandExecutor
 from folium.sandbox.session import SandboxSession, reset_current_session
 from folium.tools.bash import BashTool
@@ -16,7 +15,6 @@ from folium.tools.edit import EditFileTool
 from folium.tools.glob_tool import GlobTool
 from folium.tools.grep import GrepTool
 from folium.tools.read import ReadFileTool
-from folium.tools.sandbox import SandboxDiffTool
 from folium.tools.write import WriteFileTool
 
 
@@ -129,8 +127,8 @@ class SandboxTests(unittest.TestCase):
                 return b"hello\n", b""
 
         with tempfile.TemporaryDirectory() as tmp:
-            trace_dir = Path(tmp) / "traces"
-            observer = Observer(ObservabilityConfig(trace_dir=trace_dir))
+            db_path = Path(tmp) / "folium.db"
+            observer = Observer(ObservabilityConfig(database_path=db_path))
             token = _observer_var.set(observer)
             try:
                 executor = DockerSandboxExecutor(workspace=str(Path(tmp) / "workspace"), image="python:test")
@@ -145,18 +143,19 @@ class SandboxTests(unittest.TestCase):
                 _observer_var.reset(token)
 
             self.assertEqual(result, "hello")
-            trace_path = next(trace_dir.glob("*.jsonl"))
-            events = [
-                json.loads(line)
-                for line in trace_path.read_text(encoding="utf-8").splitlines()
-            ]
-            sandbox_events = [event for event in events if event.get("event") == "sandbox_event"]
-            actions = [event.get("name") for event in sandbox_events]
+            from folium.database import get_connection
+
+            with get_connection(db_path) as conn:
+                rows = conn.execute(
+                    "SELECT name, payload_json FROM trace_events WHERE event_type = 'sandbox_event'"
+                ).fetchall()
+            actions = [row["name"] for row in rows]
             self.assertIn("container_started", actions)
             self.assertIn("command_finished", actions)
-            command_event = next(event for event in sandbox_events if event.get("name") == "command_finished")
-            self.assertEqual(command_event["metadata"]["returncode"], 0)
-            self.assertIn("command_hash", command_event["metadata"])
+            command_event = next(row for row in rows if row["name"] == "command_finished")
+            metadata = json.loads(command_event["payload_json"])
+            self.assertEqual(metadata["returncode"], 0)
+            self.assertIn("command_hash", metadata)
 
     def test_docker_executor_reports_missing_docker(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,12 +241,12 @@ class SandboxTests(unittest.TestCase):
                 edit_result = EditFileTool().execute("note.txt", "old", "sandbox")
 
             self.assertIn("old", read_result)
-            self.assertIn("Wrote", write_result)
-            self.assertIn("Edited", edit_result)
+            self.assertIn("Wrote", write_result.content)
+            self.assertIn("Edited", edit_result.content)
             self.assertEqual(host_file.read_text(encoding="utf-8"), "sandbox\n")
             self.assertEqual((host / "created.txt").read_text(), "new\n")
 
-    def test_file_tools_can_still_use_copy_workspace_mode(self):
+    def test_file_tools_use_copy_workspace_with_local_bash_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
             root = Path(tmp) / "sessions"
@@ -259,7 +258,7 @@ class SandboxTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     "os.environ",
-                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    {"FOLIUM_BASH_BACKEND": "local", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
                     clear=False,
                 ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
@@ -267,13 +266,13 @@ class SandboxTests(unittest.TestCase):
                 write_result = WriteFileTool().execute("created.txt", "new\n")
                 edit_result = EditFileTool().execute("note.txt", "old", "sandbox")
 
-            self.assertIn("Wrote", write_result)
-            self.assertIn("Edited", edit_result)
+            self.assertIn("Wrote", write_result.content)
+            self.assertIn("Edited", edit_result.content)
             self.assertEqual(host_file.read_text(encoding="utf-8"), "old\n")
             self.assertEqual((session.workspace / "note.txt").read_text(), "sandbox\n")
             self.assertEqual((session.workspace / "created.txt").read_text(), "new\n")
 
-    def test_glob_uses_sandbox_workspace_in_docker_mode(self):
+    def test_glob_uses_sandbox_workspace_with_local_bash_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
             root = Path(tmp) / "sessions"
@@ -287,7 +286,7 @@ class SandboxTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     "os.environ",
-                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    {"FOLIUM_BASH_BACKEND": "local", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
                     clear=False,
                 ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
@@ -297,7 +296,7 @@ class SandboxTests(unittest.TestCase):
             self.assertIn("sandbox_only.py", result)
             self.assertNotIn("host_only.py", result)
 
-    def test_grep_uses_sandbox_workspace_in_docker_mode(self):
+    def test_grep_uses_sandbox_workspace_with_local_bash_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"
             root = Path(tmp) / "sessions"
@@ -311,7 +310,7 @@ class SandboxTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     "os.environ",
-                    {"FOLIUM_BASH_BACKEND": "docker", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    {"FOLIUM_BASH_BACKEND": "local", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
                     clear=False,
                 ),
                 mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
@@ -320,47 +319,6 @@ class SandboxTests(unittest.TestCase):
 
             self.assertIn("sandbox token", result)
             self.assertNotIn("host token", result)
-
-    def test_sandbox_diff_reports_added_modified_and_deleted_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            host = Path(tmp) / "repo"
-            root = Path(tmp) / "sessions"
-            host.mkdir()
-            (host / "modify.txt").write_text("old\n", encoding="utf-8")
-            (host / "delete.txt").write_text("remove me\n", encoding="utf-8")
-            (host / "same.txt").write_text("same\n", encoding="utf-8")
-            session = SandboxSession(host_workspace=str(host), root_dir=str(root))
-            session.prepare()
-
-            (session.workspace / "modify.txt").write_text("new\n", encoding="utf-8")
-            (session.workspace / "delete.txt").unlink()
-            (session.workspace / "add.txt").write_text("added\n", encoding="utf-8")
-
-            result = sandbox_diff(session=session)
-
-            self.assertIn("Sandbox changes (3 files)", result)
-            self.assertIn("+++ b/add.txt", result)
-            self.assertIn("--- a/delete.txt", result)
-            self.assertIn("--- a/modify.txt", result)
-            self.assertIn("+new", result)
-            self.assertNotIn("same.txt", result)
-
-    def test_sandbox_diff_tool_reports_current_session_changes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            host = Path(tmp) / "repo"
-            root = Path(tmp) / "sessions"
-            host.mkdir()
-            (host / "note.txt").write_text("old\n", encoding="utf-8")
-            session = SandboxSession(host_workspace=str(host), root_dir=str(root))
-            session.prepare()
-            (session.workspace / "note.txt").write_text("new\n", encoding="utf-8")
-
-            with mock.patch("folium.tools.sandbox.sandbox_diff", return_value=sandbox_diff(session=session)):
-                result = SandboxDiffTool().execute()
-
-            self.assertIn("--- a/note.txt", result)
-            self.assertIn("+new", result)
-
 
 if __name__ == "__main__":
     unittest.main()

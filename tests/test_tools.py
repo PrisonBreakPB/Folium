@@ -24,7 +24,7 @@ def local_bash_backend(monkeypatch):
 
 
 def test_tool_count():
-    assert len(ALL_TOOLS) == 15
+    assert len(ALL_TOOLS) == 16
 
 
 def test_all_tools_have_valid_schema():
@@ -129,7 +129,7 @@ def test_write_file():
     write = WriteFileTool()
     path = tempfile.mktemp(suffix=".txt")
     r = write.execute(file_path=path, content="hello world\n")
-    assert "Wrote" in r
+    assert "Wrote" in r.content
     assert Path(path).read_text() == "hello world\n"
     os.unlink(path)
 
@@ -139,7 +139,7 @@ def test_write_file_creates_dirs():
     path = tempfile.mktemp(suffix=".txt")
     nested = os.path.join(os.path.dirname(path), "sub", "dir", "file.txt")
     r = write.execute(file_path=nested, content="nested\n")
-    assert "Wrote" in r
+    assert "Wrote" in r.content
     assert Path(nested).read_text() == "nested\n"
     import shutil
     shutil.rmtree(os.path.join(os.path.dirname(path), "sub"))
@@ -152,8 +152,8 @@ def test_edit_file_basic(tmp_path):
     path = tmp_path / "sample.py"
     path.write_text("def foo():\n    return 42\n")
     r = edit.execute(file_path=str(path), old_string="return 42", new_string="return 99")
-    assert "Edited" in r
-    assert "---" in r  # unified diff
+    assert "Edited" in r.content
+    assert "---" in r.diff  # unified diff
     content = path.read_text()
     assert "return 99" in content
     assert "return 42" not in content

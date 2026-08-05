@@ -78,6 +78,17 @@ class LLMErrorInfo:
         }
 
 
+def _trace_input_payload(messages: list[dict], cfg, trace_input: bool) -> dict:
+    if not trace_input:
+        return {"redacted": True, "message_count": len(messages)}
+    return compact_payload(
+        messages,
+        include_full=cfg.full_llm_input,
+        max_preview_chars=cfg.max_preview_chars,
+        redact=cfg.redact_secrets,
+    )
+
+
 class LLMProviderError(RuntimeError):
     def __init__(self, info: LLMErrorInfo):
         self.info = info
@@ -173,13 +184,19 @@ class LLM:
     @property
     def estimated_cost(self) -> float | None:
         """Rough cost estimate in USD. Returns None if model not in pricing table."""
-        return estimate_cost(self.model, self.total_prompt_tokens, self.total_completion_tokens, self.total_cached_tokens)
+        return estimate_cost(
+            self.model,
+            self.total_prompt_tokens,
+            self.total_completion_tokens,
+            getattr(self, "total_cached_tokens", 0),
+        )
 
     def chat(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
         on_token=None,
+        trace_input: bool = True,
     ) -> LLMResponse:
         """Send messages, stream back response, handle tool calls."""
         observer = active_observer()
@@ -192,12 +209,7 @@ class LLM:
                 k: v for k, v in self.extra.items()
                 if k in {"temperature", "max_tokens", "top_p"}
             },
-            "input": compact_payload(
-                messages,
-                include_full=cfg.full_llm_input,
-                max_preview_chars=cfg.max_preview_chars,
-                redact=cfg.redact_secrets,
-            ),
+            "input": _trace_input_payload(messages, cfg, trace_input),
         }
         with span("chat.completions", "llm", metadata=llm_metadata):
             return self._chat_observed(messages, tools, on_token)
@@ -400,6 +412,7 @@ class LiteLLM(LLM):
         messages: list[dict],
         tools: list[dict] | None = None,
         on_token=None,
+        trace_input: bool = True,
     ) -> LLMResponse:
         """Send messages via litellm, stream back response, handle tool calls."""
         observer = active_observer()
@@ -413,12 +426,7 @@ class LiteLLM(LLM):
                 k: v for k, v in self.extra.items()
                 if k in {"temperature", "max_tokens", "top_p"}
             },
-            "input": compact_payload(
-                messages,
-                include_full=cfg.full_llm_input,
-                max_preview_chars=cfg.max_preview_chars,
-                redact=cfg.redact_secrets,
-            ),
+            "input": _trace_input_payload(messages, cfg, trace_input),
         }
         with span("litellm.completion", "llm", metadata=llm_metadata):
             return self._chat_observed(messages, tools, on_token)

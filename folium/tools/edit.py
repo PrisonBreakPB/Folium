@@ -8,7 +8,7 @@ and makes edits safe and reviewable.
 
 import difflib
 
-from .base import Tool
+from .base import Tool, ToolOutput
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # track files changed this session for /diff
@@ -20,7 +20,9 @@ class EditFileTool(Tool):
     description = (
         "Make a targeted edit to an existing file by replacing one exact string with another. "
         "old_string must appear exactly once; include enough surrounding context to make it unique. "
+        "Use this tool for targeted edits to existing LaTeX (.tex) source files. "
         "Use this tool for local changes instead of rewriting a whole file. "
+        "Never use this tool to modify memory.md; use the memory tool to manage persistent long-term memory. "
         "Do not edit files through bash with sed or awk."
     )
     parameters = {
@@ -42,13 +44,13 @@ class EditFileTool(Tool):
         "required": ["file_path", "old_string", "new_string"],
     }
 
-    def execute(self, file_path: str, old_string: str, new_string: str) -> str:
+    def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput:
         try:
             p = resolve_tool_path(file_path)
             if not p.exists():
                 return f"Error: {file_path} not found"
 
-            content = p.read_text()
+            content = p.read_text(encoding="utf-8")
             occurrences = content.count(old_string)
 
             if occurrences == 0:
@@ -64,25 +66,36 @@ class EditFileTool(Tool):
                 )
 
             new_content = content.replace(old_string, new_string, 1)
-            p.write_text(new_content)
+            p.write_text(new_content, encoding="utf-8")
             _changed_files.add(str(p))
 
             # generate a unified diff so the user/LLM can see exactly what changed
             diff = _unified_diff(content, new_content, str(p))
-            return f"Edited {file_path}\n{diff}"
+            summary = f"Edited {file_path}"
+            return ToolOutput(
+                content=f"{summary}\n{diff}",
+                preview=summary,
+                diff=diff,
+            )
         except SandboxPathError as e:
             return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"
 
 
-def _unified_diff(old: str, new: str, filename: str, context: int = 3) -> str:
+def _unified_diff(
+    old: str,
+    new: str,
+    filename: str,
+    context: int = 3,
+    old_exists: bool = True,
+) -> str:
     """Generate a compact unified diff between old and new file content."""
     old_lines = old.splitlines(keepends=True)
     new_lines = new.splitlines(keepends=True)
     diff = difflib.unified_diff(
         old_lines, new_lines,
-        fromfile=f"a/{filename}", tofile=f"b/{filename}",
+        fromfile=f"a/{filename}" if old_exists else "/dev/null", tofile=f"b/{filename}",
         n=context,
     )
     result = "".join(diff)

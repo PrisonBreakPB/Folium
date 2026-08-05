@@ -4,7 +4,7 @@ import io
 import urllib.error
 import urllib.request
 
-from .base import Tool
+from .base import Tool, ToolOutput
 from .web import _validate_public_http_url, _SafeRedirectHandler
 
 MAX_PDF_BYTES = 20_000_000  # 20 MB
@@ -33,7 +33,7 @@ class PdfFetchTool(Tool):
         "required": ["url"],
     }
 
-    def execute(self, url: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    def execute(self, url: str, max_chars: int = DEFAULT_MAX_CHARS) -> str | ToolOutput:
         url = url.strip()
         if not url:
             return "Error: url required"
@@ -52,10 +52,11 @@ class PdfFetchTool(Tool):
         if not text:
             return "Error: no readable text found in PDF (may be a scanned document)"
 
-        if len(text) > limit:
-            text = text[:limit] + f"\n\n... truncated ({len(text)} chars total) ..."
+        if len(text) <= limit:
+            return text
 
-        return text
+        model_content = text[:limit] + f"\n\n... truncated ({len(text)} chars total) ..."
+        return ToolOutput(content=model_content, raw_content=text)
 
 
 def _download_pdf(url: str) -> bytes | str:

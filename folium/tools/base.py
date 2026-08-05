@@ -16,6 +16,15 @@ class ToolValidationError(Exception):
         return f"bad arguments for {self.tool_name}: " + "; ".join(self.errors)
 
 
+@dataclass
+class ToolOutput:
+    """Structured tool output with optional full text for persistence."""
+
+    content: str
+    preview: str = ""
+    diff: str = ""
+    raw_content: str | None = None
+
 class Tool(ABC):
     """Minimal tool interface. Subclass this to add new capabilities."""
 
@@ -24,7 +33,7 @@ class Tool(ABC):
     parameters: dict  # JSON Schema for the function args
 
     @abstractmethod
-    def execute(self, **kwargs) -> str:
+    def execute(self, **kwargs) -> str | ToolOutput:
         """Run the tool and return a text result."""
         ...
 
@@ -66,6 +75,12 @@ class Tool(ABC):
             ok, expected = _matches_schema_type(value, field_schema.get("type"))
             if not ok:
                 errors.append(f"field '{field}' must be {expected}, got {type(value).__name__}")
+                continue
+            allowed = field_schema.get("enum")
+            if allowed is not None and value not in allowed:
+                errors.append(
+                    f"field '{field}' must be one of: {', '.join(str(item) for item in allowed)}"
+                )
                 continue
             validated[field] = value
 

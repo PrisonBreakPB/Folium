@@ -12,11 +12,13 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .folium_history
+.folium/
 .DS_Store
 dist/
 .pytest_cache/
 .tmp/
 conversations/
+data/
 decode*.py
 decode*.txt
 output*.txt

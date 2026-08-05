@@ -4,6 +4,8 @@ import os
 import pathlib
 from unittest import mock
 
+import pytest
+
 from folium import Agent, LLM, Config, ALL_TOOLS, __version__
 from folium.config import DEFAULT_MAX_CONTEXT_TOKENS
 from folium.context import (
@@ -34,31 +36,27 @@ def test_public_api_exports():
     assert Agent is not None
     assert LLM is not None
     assert Config is not None
-    assert len(ALL_TOOLS) == 15
+    assert len(ALL_TOOLS) == 16
 
 
-def test_config_from_env():
-    os.environ["FOLIUM_MODEL"] = "test-model"
+def test_config_from_env(monkeypatch):
+    monkeypatch.setenv("FOLIUM_MODEL", "test-model")
     c = Config.from_env()
     assert c.model == "test-model"
-    del os.environ["FOLIUM_MODEL"]
 
 
-def test_config_defaults():
+def test_config_defaults(monkeypatch):
     # temporarily clear relevant env vars
-    saved = {}
     for k in ["FOLIUM_MODEL", "FOLIUM_MAX_TOKENS"]:
-        if k in os.environ:
-            saved[k] = os.environ.pop(k)
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("folium.config._load_dotenv", lambda: None)
 
     c = Config.from_env()
     assert c.model == "gpt-4o"
-    assert c.max_tokens == 4096
+    assert c.max_tokens == 32000
     assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
     assert c.token_estimator == "deepseek"
-
-    os.environ.update(saved)
 
 
 # --- Context ---
@@ -279,6 +277,21 @@ def test_context_reserves_output_tokens():
     assert ctx._summarize_at == 72_000
 
 
+def test_context_scales_output_reservation_for_small_windows():
+    ctx = ContextManager(max_tokens=16_000)
+
+    assert ctx.reserved_output_tokens == 4_000
+    assert ctx.input_budget_tokens == 12_000
+    assert ctx._dedupe_at == 6_000
+    assert ctx._summarize_at == 10_800
+
+
+@pytest.mark.parametrize("max_tokens", [0, -1])
+def test_context_rejects_non_positive_window(max_tokens):
+    with pytest.raises(ValueError, match="max_tokens must be greater than 0"):
+        ContextManager(max_tokens=max_tokens)
+
+
 def test_context_compress():
     ctx = ContextManager(max_tokens=2000)
     msgs = []
@@ -380,7 +393,11 @@ def test_context_summarize_report_marks_fallback():
 
 
 def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
-    ctx = ContextManager(max_tokens=1000, protected_user_tokens=5)
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=5,
+        protected_initial_user_messages=0,
+    )
     msgs = [
         {"role": "user", "content": "older"},
         {"role": "assistant", "content": "assistant"},
@@ -395,28 +412,96 @@ def test_context_protected_users_use_token_budget_and_keep_latest_oversized():
     assert protected[0]["_protected"] is True
 
 
+def test_context_protects_initial_and_recent_user_messages():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "assistant"},
+        {"role": "user", "content": "middle"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch(
+        "folium.context.estimate_text_tokens",
+        side_effect=lambda text: 10 if text in {"first", "second"} else 1,
+    ):
+        protected = ctx._collect_protected_user_messages(msgs)
+
+    assert [message["content"] for message in protected] == ["first", "second", "latest"]
+    assert all(message["_protected"] is True for message in protected)
+
+
+def test_context_summary_keeps_initial_and_recent_user_messages():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "assistant detail"},
+        {"role": "user", "content": "middle"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch("folium.context.estimate_text_tokens", return_value=1):
+        report = ctx._summarize_old(msgs, FakeLLM())
+
+    assert report["protected_user_count"] == 3
+    assert [message["content"] for message in msgs[:-1]] == ["first", "second", "latest"]
+    assert msgs[-1]["content"].startswith(f"{SUMMARY_PREFIX}\nsummary")
+
+
+def test_context_initial_user_messages_ignore_token_budget():
+    ctx = ContextManager(
+        max_tokens=1000,
+        protected_user_tokens=1,
+        protected_initial_user_messages=2,
+    )
+    msgs = [
+        {"role": "user", "content": "first"},
+        {"role": "user", "content": "second"},
+        {"role": "user", "content": "latest"},
+    ]
+
+    with mock.patch(
+        "folium.context.estimate_text_tokens",
+        side_effect=lambda text: 10 if text in {"first", "second"} else 1,
+    ):
+        protected = ctx._collect_protected_user_messages(msgs)
+
+    assert [message["content"] for message in protected] == ["first", "second", "latest"]
+
+
 # --- Session ---
 
-def test_session_save_load():
+def test_session_save_load(tmp_path, monkeypatch):
+    from folium import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "folium.db")
     msgs = [{"role": "user", "content": "test message"}]
     sid = save_session(msgs, "test-model", "pytest_test_session")
     loaded = load_session("pytest_test_session")
     assert loaded is not None
     assert loaded[0] == msgs
     assert loaded[1] == "test-model"
-    # cleanup
-    pathlib.Path.home().joinpath(".folium/sessions/pytest_test_session.json").unlink()
 
 
-def test_session_name_is_sanitized():
+def test_session_name_is_sanitized(tmp_path, monkeypatch):
+    from folium import database
+
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "folium.db")
     msgs = [{"role": "user", "content": "test message"}]
     sid = save_session(msgs, "test-model", "../Research Notes!")
 
     assert sid == "Research-Notes"
-    path = pathlib.Path.home().joinpath(".folium/sessions/Research-Notes.json")
-    assert path.exists()
     assert load_session("../Research Notes!") is not None
-    path.unlink()
 
 
 def test_session_not_found():

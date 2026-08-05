@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 DEFAULT_RESERVED_OUTPUT_TOKENS = 20_000
 DEFAULT_PROTECTED_USER_TOKENS = 20_000
+DEFAULT_PROTECTED_INITIAL_USER_MESSAGES = 2
 TOOL_OUTPUT_TRIM_THRESHOLD_CHARS = 4096
 TOOL_OUTPUT_TRIM_KEEP_CHARS = 1536
 TOOL_OUTPUT_TRIM_MARKER = "trimmed to save context"
@@ -106,11 +107,18 @@ def _summarize_report(changed: bool, delta_message_count: int,
 class ContextManager:
     def __init__(self, max_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
                  reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
-                 protected_user_tokens: int = DEFAULT_PROTECTED_USER_TOKENS):
+                 protected_user_tokens: int = DEFAULT_PROTECTED_USER_TOKENS,
+                 protected_initial_user_messages: int = DEFAULT_PROTECTED_INITIAL_USER_MESSAGES):
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be greater than 0")
         self.max_tokens = max_tokens
-        self.reserved_output_tokens = max(0, reserved_output_tokens)
+        self.reserved_output_tokens = min(
+            max(0, reserved_output_tokens),
+            max_tokens // 4,
+        )
         self.protected_user_tokens = max(1, protected_user_tokens)
-        self.input_budget_tokens = max(1, max_tokens - self.reserved_output_tokens)
+        self.protected_initial_user_messages = max(0, protected_initial_user_messages)
+        self.input_budget_tokens = max_tokens - self.reserved_output_tokens
         # layer thresholds (fraction of input budget after reserving output tokens)
         self._dedupe_at = int(self.input_budget_tokens * 0.50)  # 50% -> fold duplicate tool outputs
         self._snip_at = int(self.input_budget_tokens * 0.60)    # 60% -> snip tool outputs
@@ -337,24 +345,35 @@ class ContextManager:
         ]
 
     def _collect_protected_user_messages(self, messages: list[dict]) -> list[dict]:
-        selected: list[dict] = []
-        used = 0
+        user_messages = [
+            (index, message)
+            for index, message in enumerate(messages)
+            if message.get("role") == "user" and not self._is_summary_message(message)
+        ]
+        selected_indexes: set[int] = set()
 
-        for message in reversed(messages):
-            if message.get("role") != "user" or self._is_summary_message(message):
-                continue
+        for index, _ in user_messages[:self.protected_initial_user_messages]:
+            selected_indexes.add(index)
+
+        recent_used = 0
+        recent_indexes: set[int] = set()
+        for index, message in reversed(user_messages):
             content = message.get("content") or ""
             tokens = estimate_text_tokens(str(content))
-            if used + tokens <= self.protected_user_tokens:
-                selected.append({"role": "user", "content": content, "_protected": True})
-                used += tokens
+            if recent_used + tokens <= self.protected_user_tokens:
+                recent_indexes.add(index)
+                recent_used += tokens
                 continue
-            if not selected:
-                selected.append({"role": "user", "content": content, "_protected": True})
+            if not recent_indexes:
+                recent_indexes.add(index)
             break
 
-        selected.reverse()
-        return selected
+        selected_indexes.update(recent_indexes)
+        return [
+            {"role": "user", "content": message.get("content") or "", "_protected": True}
+            for index, message in user_messages
+            if index in selected_indexes
+        ]
 
     def _get_incremental_summary(self, existing_summary: str, delta_messages: list[dict],
                                  llm: LLM | None) -> tuple[str, bool, bool]:

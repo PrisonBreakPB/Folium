@@ -1,10 +1,13 @@
 """FastAPI server with SSE streaming for Folium."""
 
 import asyncio
+import copy
 import json
+import os
 import threading
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -13,12 +16,25 @@ from pydantic import BaseModel
 from ..agent import Agent
 from ..config import Config
 from ..llm import LLMProviderError
-from ..session import save_session, load_session, list_sessions, delete_session, new_session_id, calculate_session_stats
-from ..session_prompts import save_prompt
+from ..memory_maintenance import (
+    MemoryAgent,
+    MemoryMaintenanceScheduler,
+)
+from ..session import (
+    calculate_session_stats,
+    delete_session,
+    ensure_session,
+    list_sessions,
+    load_session,
+    new_session_id,
+    save_session,
+)
 from ..context import estimate_tokens
 from ..encoding import repair_mojibake_payload
+from ..edit_approval import ApprovalDecision
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
+from ..sandbox.session import reset_current_session
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -28,6 +44,7 @@ _state = {
     "config": None,
     "session_id": None,
     "dirty": False,
+    "memory_maintenance": None,
 }
 _chat_lock = asyncio.Lock()
 _pending_approvals = {}
@@ -49,14 +66,19 @@ class SwitchRequest(BaseModel):
 
 class ApprovalDecisionRequest(BaseModel):
     approval_id: str
-    approved: bool
+    decision: Literal["approve", "reject", "revise"] | None = None
+    feedback: str = ""
+    approved: bool | None = None
 
 
 class PendingApproval:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, proposal=None):
         self.payload = payload
+        self.proposal = proposal
         self.event = threading.Event()
         self.approved = False
+        self.decision: str | None = None
+        self.feedback = ""
 
 
 # ── SSE bridge: sync callbacks → async queue ────────────────
@@ -76,23 +98,58 @@ def _make_bridge(queue: asyncio.Queue):
 
     def on_edit_approval(tc, proposal):
         approval_id = uuid.uuid4().hex
-        payload = {
-            "type": "approval_request",
-            "approval_id": approval_id,
-            "tool_call_id": tc.id,
-            "tool_name": tc.name,
-            "path": proposal.path,
-            "title": proposal.title,
-            "diff": proposal.diff,
-            "truncated": proposal.truncated,
-            "diff_chars": proposal.diff_chars,
-        }
-        pending = PendingApproval(payload)
+        if hasattr(proposal, "files"):
+            files = [
+                {
+                    "index": index,
+                    "tool_call_id": change.tool_call_id,
+                    "tool_name": change.tool_name,
+                    "path": change.path,
+                    "title": change.title,
+                    "diff": change.preview_diff,
+                    "truncated": change.truncated,
+                    "diff_chars": change.diff_chars,
+                    "additions": change.additions,
+                    "deletions": change.deletions,
+                }
+                for index, change in enumerate(proposal.files)
+            ]
+            payload = {
+                "type": "approval_request",
+                "approval_id": approval_id,
+                "tool_call_id": tc.id,
+                "tool_name": "change_set",
+                "title": proposal.title,
+                "files": files,
+                "additions": proposal.additions,
+                "deletions": proposal.deletions,
+            }
+        else:
+            payload = {
+                "type": "approval_request",
+                "approval_id": approval_id,
+                "tool_call_id": tc.id,
+                "tool_name": tc.name,
+                "path": proposal.path,
+                "title": proposal.title,
+                "diff": proposal.diff,
+                "truncated": proposal.truncated,
+                "diff_chars": proposal.diff_chars,
+            }
+        pending = PendingApproval(payload, proposal)
         _pending_approvals[approval_id] = pending
         queue.put_nowait(payload)
         pending.event.wait()
         _pending_approvals.pop(approval_id, None)
-        return pending.approved
+        decision = pending.decision or ("approve" if pending.approved else "reject")
+        return ApprovalDecision(
+            {
+                "approve": "approved",
+                "reject": "rejected",
+                "revise": "revision_requested",
+            }[decision],
+            pending.feedback,
+        )
 
     return on_token, on_tool, on_event, on_edit_approval
 
@@ -114,6 +171,38 @@ def _auto_save():
         _state["session_id"] = sid
         agent.session_id = sid
         _state["dirty"] = False
+
+
+async def _after_chat_response(completion: dict | None = None):
+    """Persist the completed turn, then schedule maintenance without waiting for it."""
+    _auto_save()
+    scheduler = _state.get("memory_maintenance")
+    if not scheduler or not completion:
+        return
+    await scheduler.on_turn_completed(
+        session_id=completion["session_id"],
+        messages=completion["messages"],
+        visible_tools=completion["visible_tools"],
+        main_agent_used_memory=completion["main_agent_used_memory"],
+        main_prompt_tokens=completion["main_prompt_tokens"],
+        main_completion_tokens=completion["main_completion_tokens"],
+        main_request_matches_memory_context=completion["main_request_matches_memory_context"],
+    )
+
+
+def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryAgent:
+    llm_cls = type(agent.llm)
+    llm = llm_cls(
+        model=agent.llm.model,
+        api_key=getattr(config, "api_key", ""),
+        base_url=getattr(config, "base_url", None),
+        temperature=getattr(config, "temperature", 0.0),
+        max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
+    )
+    return MemoryAgent(
+        llm,
+        max_steps=getattr(config, "memory_maintenance_max_steps", 5),
+    )
 
 
 def _context_budget_payload() -> dict:
@@ -166,10 +255,15 @@ async def chat(req: ChatRequest):
     async with _chat_lock:
         if _state["session_id"] is None:
             _state["session_id"] = new_session_id()
-            # Save current system prompt to DB for new session
-            save_prompt(_state["session_id"], _state["agent"]._system)
+            ensure_session(
+                _state["session_id"],
+                _state["config"].model,
+                _state["agent"]._system,
+            )
         _state["agent"].session_id = _state["session_id"]
         _state["agent"].edit_approval_callback = on_edit_approval
+        chat_session_id = _state["session_id"]
+        transcript_start = len(_state["agent"].transcript)
         task = asyncio.create_task(
             asyncio.to_thread(
                 _state["agent"].chat,
@@ -186,7 +280,31 @@ async def chat(req: ChatRequest):
                 queue.put_nowait(_error_event(t.exception()))
             else:
                 _state["dirty"] = True
+                turn_transcript = _state["agent"].transcript[transcript_start:]
+                completion["messages"] = copy.deepcopy(_state["agent"]._full_messages())
+                completion["visible_tools"] = copy.deepcopy(_state["agent"]._tool_schemas())
+                completion["session_id"] = chat_session_id
+                completion["main_prompt_tokens"] = getattr(
+                    _state["agent"].llm,
+                    "last_prompt_tokens",
+                    0,
+                )
+                completion["main_completion_tokens"] = getattr(
+                    _state["agent"].llm,
+                    "last_completion_tokens",
+                    0,
+                )
+                completion["main_request_matches_memory_context"] = getattr(
+                    _state["agent"],
+                    "last_llm_request_had_visible_tools",
+                    False,
+                )
+                completion["main_agent_used_memory"] = any(
+                    message.get("role") == "tool" and message.get("name") == "memory"
+                    for message in turn_transcript
+                )
                 queue.put_nowait({"type": "done", "content": ""})
+        completion: dict = {}
         task.add_done_callback(_on_complete)
 
         async def event_stream():
@@ -197,12 +315,12 @@ async def chat(req: ChatRequest):
                 if event["type"] in ("done", "error"):
                     break
 
-        # use BackgroundTask to auto-save after response is sent
+        # Run after the final SSE event has been sent; this does not await maintenance.
         from starlette.background import BackgroundTask
         return StreamingResponse(
             event_stream(),
             media_type="text/event-stream",
-            background=BackgroundTask(_auto_save),
+            background=BackgroundTask(_after_chat_response, completion),
         )
 
 
@@ -211,9 +329,51 @@ async def approval(req: ApprovalDecisionRequest):
     pending = _pending_approvals.get(req.approval_id)
     if pending is None:
         return JSONResponse({"error": "审批请求不存在或已失效"}, status_code=404)
-    pending.approved = bool(req.approved)
+    decision = req.decision
+    if decision is None:
+        if req.approved is None:
+            return JSONResponse({"error": "缺少审批决定"}, status_code=422)
+        decision = "approve" if req.approved else "reject"
+    feedback = req.feedback.strip()
+    if decision == "revise":
+        if not hasattr(pending.proposal, "files"):
+            return JSONResponse({"error": "仅受保护文件变更支持要求修改"}, status_code=400)
+        if not feedback:
+            return JSONResponse({"error": "请填写修改要求"}, status_code=422)
+    pending.decision = decision
+    pending.feedback = feedback
+    pending.approved = decision == "approve"
     pending.event.set()
     return {"result": "ok"}
+
+
+@app.get("/approval/{approval_id}/diff")
+async def approval_diff(
+    approval_id: str,
+    file_index: int = 0,
+    offset: int = 0,
+    limit: int = 30_000,
+):
+    pending = _pending_approvals.get(approval_id)
+    if pending is None:
+        return JSONResponse({"error": "Approval request not found"}, status_code=404)
+
+    files = getattr(pending.proposal, "files", None)
+    if files is None or file_index < 0 or file_index >= len(files):
+        return JSONResponse({"error": "Approval file not found"}, status_code=404)
+
+    diff = files[file_index].diff
+    start = max(offset, 0)
+    size = max(limit, 1)
+    chunk = diff[start:start + size]
+    next_offset = start + len(chunk)
+    return {
+        "file_index": file_index,
+        "offset": start,
+        "diff": chunk,
+        "next_offset": next_offset if next_offset < len(diff) else None,
+        "total_chars": len(diff),
+    }
 
 
 @app.post("/new")
@@ -226,6 +386,7 @@ async def new_conversation():
     _state["session_id"] = None
     _state["agent"].session_id = None
     _state["dirty"] = False
+    reset_current_session()
     return {"result": "New conversation started.", "session_id": _state["session_id"]}
 
 
@@ -267,28 +428,23 @@ async def switch_conversation(req: SwitchRequest):
     _state["session_id"] = req.session_id
     _state["agent"].session_id = req.session_id
     _state["dirty"] = False
+    reset_current_session()
 
     # Restore system prompt from DB if available
     if system_prompt is not None:
         _state["agent"]._system = system_prompt
 
-    # restore cumulative token counts from _usage in messages
+    # Restore cumulative token counts from persisted LLM trace events.
     llm = _state["agent"].llm
     llm.total_prompt_tokens = 0
     llm.total_completion_tokens = 0
     llm.total_cached_tokens = 0
     llm.last_prompt_tokens = 0
     llm.last_completion_tokens = 0
-    for msg in messages:
-        usage = msg.get("_usage")
-        if usage:
-            llm.total_prompt_tokens += usage.get("prompt_tokens", 0)
-            llm.total_completion_tokens += usage.get("completion_tokens", 0)
-            llm.total_cached_tokens += usage.get("cached_tokens", 0)
-            llm.last_prompt_tokens = usage.get("prompt_tokens", 0)
-            llm.last_completion_tokens = usage.get("completion_tokens", 0)
-
-    stats = calculate_session_stats(messages)
+    stats = calculate_session_stats(req.session_id)
+    llm.total_prompt_tokens = stats["prompt_tokens"]
+    llm.total_completion_tokens = stats["completion_tokens"]
+    llm.total_cached_tokens = stats["cached_tokens"]
     return {
         "result": f"Switched to {req.session_id}",
         "session_id": _state["session_id"],
@@ -303,12 +459,14 @@ async def delete_conversation(req: SwitchRequest):
     deleted_current = req.session_id == _state["session_id"]
     deleted = delete_session(req.session_id)
     if deleted:
-        deleted_traces = delete_traces_for_session(req.session_id)
+        # Session foreign-key cascade already removed related traces.
+        deleted_traces = 0
         if deleted_current:
             _state["agent"].reset()
             _state["session_id"] = None
             _state["agent"].session_id = None
             _state["dirty"] = False
+            reset_current_session()
         return {
             "result": f"Deleted {req.session_id}",
             "deleted_traces": deleted_traces,
@@ -328,6 +486,7 @@ async def command(req: CommandRequest):
         _state["session_id"] = None
         agent.session_id = None
         _state["dirty"] = False
+        reset_current_session()
         return {"result": "Conversation reset."}
 
     if cmd in ("/tokens", "tokens"):
@@ -426,10 +585,22 @@ async def command(req: CommandRequest):
 # ── server runner ───────────────────────────────────────────
 
 def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 8000):
+    os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
+    reset_current_session()
     _state["agent"] = agent
     _state["config"] = config
     _state["session_id"] = None
     _state["dirty"] = False
+    _state["memory_maintenance"] = MemoryMaintenanceScheduler(
+        lambda: _new_memory_maintenance_runner(agent, config),
+        threshold=getattr(config, "memory_maintenance_turns", 10),
+        max_context_tokens=getattr(
+            getattr(agent, "context", None),
+            "max_tokens",
+            getattr(config, "max_context_tokens", 1_000_000),
+        ),
+        max_output_tokens=getattr(config, "memory_maintenance_max_tokens", 2_000),
+    )
     agent.session_id = None
 
     import uvicorn

@@ -686,11 +686,85 @@ body {
   color: #243128;
   border: 0;
   overflow: auto;
-  max-height: 470px;
+  min-height: 220px;
+  height: 100%;
   white-space: pre;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.approval-content {
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  min-height: 300px;
+  max-height: 470px;
+}
+
+.approval-files {
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.approval-file {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px 8px;
+  font-size: 12px;
+}
+
+.approval-file:hover {
+  background: #f2f6f0;
+}
+
+.approval-file.active {
+  border-color: #bdd7c4;
+  background: #eef7f0;
+}
+
+.approval-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.approval-file-count {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.approval-diff-wrap {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.approval-load {
+  align-self: flex-start;
+  margin: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.approval-load:hover {
+  border-color: var(--border-strong);
 }
 
 .approval-foot {
@@ -701,6 +775,39 @@ body {
   padding: 13px 18px;
   border-top: 1px solid var(--border);
   background: #fbfcfa;
+}
+
+.approval-feedback {
+  display: grid;
+  gap: 6px;
+  padding: 12px 18px 0;
+  border-top: 1px solid var(--border);
+  background: #fbfcfa;
+}
+
+.approval-feedback label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.approval-feedback textarea {
+  width: 100%;
+  min-height: 72px;
+  max-height: 140px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.approval-feedback textarea:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .approval-note {
@@ -924,6 +1031,19 @@ body {
     bottom: 12px;
     width: calc(100vw - 20px);
   }
+  .approval-content {
+    grid-template-columns: 1fr;
+    max-height: 52vh;
+  }
+  .approval-files {
+    display: flex;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .approval-file {
+    flex: 0 0 180px;
+  }
   .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cmd-bar button { padding: 6px 8px; }
 }
@@ -1022,16 +1142,27 @@ body {
 <section class="approval-panel" id="approvalPanel" aria-live="polite">
   <div class="approval-head">
     <div>
-      <div class="approval-title" id="approvalTitle">审查写入命令</div>
+      <div class="approval-title" id="approvalTitle">审查文件改动</div>
       <div class="approval-path" id="approvalPath"></div>
     </div>
     <div class="approval-tag" id="approvalTool">write_file</div>
   </div>
-  <pre class="approval-diff" id="approvalDiff"></pre>
+  <div class="approval-content">
+    <div class="approval-files" id="approvalFiles"></div>
+    <div class="approval-diff-wrap">
+      <pre class="approval-diff" id="approvalDiff"></pre>
+      <button class="approval-load" id="approvalLoadDiff" type="button" hidden>加载更多 diff</button>
+    </div>
+  </div>
+  <div class="approval-feedback" id="approvalFeedbackWrap" hidden>
+    <label for="approvalFeedback">修改要求</label>
+    <textarea id="approvalFeedback" placeholder="说明希望如何调整这次变更"></textarea>
+  </div>
   <div class="approval-foot">
-    <div class="approval-note" id="approvalNote">只有你同意后，命令才会执行。</div>
-    <button class="approval-btn danger" id="approvalDenyBtn" type="button">拒绝</button>
-    <button class="approval-btn primary" id="approvalAllowBtn" type="button">同意修改</button>
+    <div class="approval-note" id="approvalNote">只有你同意后，文件才会被修改。</div>
+    <button class="approval-btn danger" id="approvalDenyBtn" type="button">拒绝本次变更</button>
+    <button class="approval-btn" id="approvalReviseBtn" type="button" hidden>要求修改</button>
+    <button class="approval-btn primary" id="approvalAllowBtn" type="button">确认应用全部变更</button>
   </div>
 </section>
 
@@ -1048,10 +1179,15 @@ const approvalPanelEl = document.getElementById('approvalPanel');
 const approvalTitleEl = document.getElementById('approvalTitle');
 const approvalPathEl = document.getElementById('approvalPath');
 const approvalToolEl = document.getElementById('approvalTool');
+const approvalFilesEl = document.getElementById('approvalFiles');
 const approvalDiffEl = document.getElementById('approvalDiff');
+const approvalLoadDiffBtn = document.getElementById('approvalLoadDiff');
 const approvalNoteEl = document.getElementById('approvalNote');
+const approvalFeedbackWrapEl = document.getElementById('approvalFeedbackWrap');
+const approvalFeedbackEl = document.getElementById('approvalFeedback');
 const approvalAllowBtn = document.getElementById('approvalAllowBtn');
 const approvalDenyBtn = document.getElementById('approvalDenyBtn');
+const approvalReviseBtn = document.getElementById('approvalReviseBtn');
 let busy = false;
 let activeApproval = null;
 const DEFAULT_MAX_CONTEXT_TOKENS = 1000000;
@@ -1377,38 +1513,185 @@ function appendMsg(role, text) {
   return div;
 }
 
+function approvalFilesFromEvent(event) {
+  if (Array.isArray(event.files) && event.files.length) {
+    return event.files;
+  }
+  return [{
+    index: 0,
+    tool_call_id: event.tool_call_id,
+    tool_name: event.tool_name,
+    path: event.path || '',
+    title: event.title || '审查文件改动',
+    diff: event.diff || '',
+    truncated: Boolean(event.truncated),
+    diff_chars: event.diff_chars || 0,
+    additions: event.additions || 0,
+    deletions: event.deletions || 0
+  }];
+}
+
+function approvalFileName(path) {
+  const parts = String(path || '').split(/[\\/]/);
+  return parts[parts.length - 1] || path || '未命名文件';
+}
+
+function currentApprovalFile() {
+  if (!activeApproval) return null;
+  return activeApproval.files[activeApproval.selectedFileIndex] || null;
+}
+
+function approvalDiffState(index) {
+  const file = activeApproval.files[index];
+  if (!activeApproval.diffStates[index]) {
+    activeApproval.diffStates[index] = {
+      text: file.diff || '',
+      nextOffset: activeApproval.canLoadFull && file.truncated ? 0 : null
+    };
+  }
+  return activeApproval.diffStates[index];
+}
+
+function renderApprovalFileList() {
+  approvalFilesEl.replaceChildren();
+  if (!activeApproval) return;
+  activeApproval.files.forEach((file, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'approval-file' + (index === activeApproval.selectedFileIndex ? ' active' : '');
+    button.title = normalizeText(file.path || '');
+
+    const name = document.createElement('span');
+    name.className = 'approval-file-name';
+    name.textContent = normalizeText(approvalFileName(file.path));
+
+    const count = document.createElement('span');
+    count.className = 'approval-file-count';
+    count.textContent = `+${file.additions || 0} -${file.deletions || 0}`;
+
+    button.appendChild(name);
+    button.appendChild(count);
+    button.addEventListener('click', () => {
+      activeApproval.selectedFileIndex = index;
+      renderApprovalFileList();
+      renderApprovalDiff();
+    });
+    approvalFilesEl.appendChild(button);
+  });
+}
+
+function renderApprovalDiff() {
+  const file = currentApprovalFile();
+  if (!file) {
+    approvalDiffEl.textContent = '';
+    approvalLoadDiffBtn.hidden = true;
+    return;
+  }
+
+  const state = approvalDiffState(activeApproval.selectedFileIndex);
+  approvalPathEl.textContent = normalizeText(file.path || '');
+  approvalPathEl.title = normalizeText(file.path || '');
+  approvalDiffEl.textContent = normalizeToolText(state.text || '没有可显示的 diff');
+  approvalLoadDiffBtn.hidden = state.nextOffset === null;
+  approvalLoadDiffBtn.disabled = false;
+  approvalLoadDiffBtn.textContent = state.nextOffset === 0 ? '加载完整 diff' : '加载更多 diff';
+
+  if (file.truncated && state.nextOffset !== null) {
+    approvalNoteEl.textContent = `当前显示 ${approvalFileName(file.path)} 的 diff 预览（共 ${file.diff_chars || 0} 个字符）。`;
+  } else {
+    approvalNoteEl.textContent = `确认后将一次性应用 ${activeApproval.files.length} 个文件的变更。`;
+  }
+}
+
 function showApproval(event) {
-  activeApproval = event;
-  approvalTitleEl.textContent = normalizeText(event.title || '审查写入命令');
-  approvalPathEl.textContent = normalizeText(event.path || '');
-  approvalPathEl.title = normalizeText(event.path || '');
-  approvalToolEl.textContent = normalizeText(event.tool_name || 'edit');
-  approvalDiffEl.textContent = normalizeToolText(event.diff || '没有可显示的 diff');
-  approvalNoteEl.textContent = event.truncated
-    ? `diff 较长，已截断显示（共 ${event.diff_chars || 0} 个字符）。请确认关键改动后再同意。`
-    : '只有你同意后，命令才会执行。';
+  const files = approvalFilesFromEvent(event);
+  activeApproval = {
+    ...event,
+    files,
+    selectedFileIndex: 0,
+    diffStates: {},
+    canLoadFull: Array.isArray(event.files)
+  };
+  approvalTitleEl.textContent = files.length > 1
+    ? `审查 ${files.length} 个受保护文件的变更`
+    : normalizeText(event.title || files[0].title || '审查文件改动');
+  approvalToolEl.textContent = files.length > 1
+    ? 'change set'
+    : normalizeText(files[0].tool_name || event.tool_name || 'edit');
   approvalAllowBtn.disabled = false;
   approvalDenyBtn.disabled = false;
+  approvalReviseBtn.disabled = false;
+  approvalFeedbackEl.value = '';
+  const canRequestRevision = Array.isArray(event.files);
+  approvalFeedbackWrapEl.hidden = !canRequestRevision;
+  approvalReviseBtn.hidden = !canRequestRevision;
+  renderApprovalFileList();
+  renderApprovalDiff();
   approvalPanelEl.classList.add('visible');
 }
 
 function clearApproval() {
   activeApproval = null;
   approvalPanelEl.classList.remove('visible');
+  approvalFilesEl.replaceChildren();
   approvalDiffEl.textContent = '';
+  approvalLoadDiffBtn.hidden = true;
+  approvalFeedbackWrapEl.hidden = true;
+  approvalReviseBtn.hidden = true;
+  approvalFeedbackEl.value = '';
 }
 
-async function submitApproval(approved) {
+async function loadMoreApprovalDiff() {
+  if (!activeApproval || !activeApproval.canLoadFull) return;
+  const index = activeApproval.selectedFileIndex;
+  const state = approvalDiffState(index);
+  if (state.nextOffset === null) return;
+
+  approvalLoadDiffBtn.disabled = true;
+  try {
+    const params = new URLSearchParams({
+      file_index: String(index),
+      offset: String(state.nextOffset),
+      limit: '30000'
+    });
+    const resp = await fetch(`/approval/${encodeURIComponent(activeApproval.approval_id)}/diff?${params}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || '加载完整 diff 失败');
+    }
+    const data = await resp.json();
+    state.text = state.nextOffset === 0 ? (data.diff || '') : state.text + (data.diff || '');
+    state.nextOffset = data.next_offset;
+    renderApprovalDiff();
+  } catch (e) {
+    approvalNoteEl.textContent = `加载 diff 失败：${e.message}`;
+    approvalLoadDiffBtn.disabled = false;
+  }
+}
+
+async function submitApproval(decision) {
   if (!activeApproval) return;
+  const feedback = decision === 'revise' ? approvalFeedbackEl.value.trim() : '';
+  if (decision === 'revise' && !feedback) {
+    approvalNoteEl.textContent = '请填写修改要求后再提交。';
+    approvalFeedbackEl.focus();
+    return;
+  }
   const approvalId = activeApproval.approval_id;
   approvalAllowBtn.disabled = true;
   approvalDenyBtn.disabled = true;
-  approvalNoteEl.textContent = approved ? '正在同意修改...' : '正在拒绝修改...';
+  approvalReviseBtn.disabled = true;
+  const pendingText = {
+    approve: '正在同意修改...',
+    reject: '正在拒绝修改...',
+    revise: '正在提交修改要求...'
+  };
+  approvalNoteEl.textContent = pendingText[decision] || '正在提交审批...';
   try {
     const resp = await fetch('/approval', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({approval_id: approvalId, approved})
+      body: JSON.stringify({approval_id: approvalId, decision, feedback})
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -1418,6 +1701,7 @@ async function submitApproval(approved) {
       approvalNoteEl.textContent = message;
       approvalAllowBtn.disabled = false;
       approvalDenyBtn.disabled = false;
+      approvalReviseBtn.disabled = false;
       return;
     }
     clearApproval();
@@ -1425,11 +1709,14 @@ async function submitApproval(approved) {
     approvalNoteEl.textContent = `连接失败：${e.message}`;
     approvalAllowBtn.disabled = false;
     approvalDenyBtn.disabled = false;
+    approvalReviseBtn.disabled = false;
   }
 }
 
-approvalAllowBtn.addEventListener('click', () => submitApproval(true));
-approvalDenyBtn.addEventListener('click', () => submitApproval(false));
+approvalAllowBtn.addEventListener('click', () => submitApproval('approve'));
+approvalDenyBtn.addEventListener('click', () => submitApproval('reject'));
+approvalReviseBtn.addEventListener('click', () => submitApproval('revise'));
+approvalLoadDiffBtn.addEventListener('click', loadMoreApprovalDiff);
 
 function renderMarkdown(text) {
   if (!text) return '';
@@ -1591,18 +1878,17 @@ function appendToolEntry(container, event) {
 
   const previewText = normalizeToolText(event.preview || '');
   const contentText = normalizeToolText(event.content || '');
+  const diffText = normalizeToolText(event.diff || '');
   const outputText = previewText || contentText;
   if (outputText) {
     appendToolBlock(div, isError ? '错误' : '结果', outputText);
   }
 
-  const fileChange = event.file_change;
-  if (fileChange && fileChange.diff) {
-    const label = fileChange.truncated ? '文件变更（已截断）' : '文件变更';
-    appendToolBlock(div, label, normalizeToolText(fileChange.diff));
+  if (diffText) {
+    appendToolBlock(div, '\u53d8\u66f4', diffText);
   }
 
-  if (contentText && contentText !== previewText) {
+  if (!diffText && contentText && contentText !== previewText) {
     const full = createPreview(contentText);
     full.style.display = 'none';
 

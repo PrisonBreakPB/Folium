@@ -23,7 +23,7 @@ def _load_dotenv():
                     env_path = candidate
                     break
                 cur = cur.parent
-        load_dotenv(env_path, override=True)
+        load_dotenv(env_path, override=False)
     except ImportError:
         pass  # python-dotenv not installed, silently skip
 
@@ -33,11 +33,14 @@ class Config:
     model: str = "gpt-4o"
     api_key: str = ""
     base_url: str | None = None
-    max_tokens: int = 4096
+    max_tokens: int = 32000
     temperature: float = 0.0
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
     token_estimator: str = "deepseek"
+    memory_maintenance_turns: int = 10
+    memory_maintenance_max_steps: int = 5
+    memory_maintenance_max_tokens: int = 2000
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -54,9 +57,18 @@ class Config:
             model=os.getenv("FOLIUM_MODEL", "gpt-4o"),
             api_key=api_key,
             base_url=os.getenv("OPENAI_BASE_URL") or os.getenv("FOLIUM_BASE_URL"),
-            max_tokens=int(os.getenv("FOLIUM_MAX_TOKENS", "4096")),
+            max_tokens=int(os.getenv("FOLIUM_MAX_TOKENS", "32000")),
             temperature=float(os.getenv("FOLIUM_TEMPERATURE", "0")),
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
+            memory_maintenance_turns=int(
+                os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")
+            ),
+            memory_maintenance_max_steps=int(
+                os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS", "5")
+            ),
+            memory_maintenance_max_tokens=int(
+                os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS", "2000")
+            ),
         )

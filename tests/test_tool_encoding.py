@@ -5,7 +5,9 @@ from pathlib import Path
 from unittest import mock
 
 from folium.tools.bash import BashTool
+from folium.tools.edit import EditFileTool
 from folium.tools.read import ReadFileTool
+from folium.tools.write import WriteFileTool
 
 
 class ToolEncodingTests(unittest.TestCase):
@@ -47,6 +49,22 @@ class ToolEncodingTests(unittest.TestCase):
         result = BashTool().execute(command=command)
 
         self.assertIn("中文输出", result)
+
+    def test_write_and_edit_file_use_utf8(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pid.tex"
+            content = "PID 控制器原理\n"
+
+            WriteFileTool().execute(file_path=str(path), content=content)
+            written = path.read_bytes().decode("utf-8")
+            self.assertEqual(written.replace("\r\n", "\n"), content)
+
+            EditFileTool().execute(
+                file_path=str(path),
+                old_string="控制器",
+                new_string="调节器",
+            )
+            self.assertEqual(path.read_text(encoding="utf-8"), "PID 调节器原理\n")
 
 
 if __name__ == "__main__":

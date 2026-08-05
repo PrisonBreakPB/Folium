@@ -1,21 +1,76 @@
-# Folium
+<div align="center">
+  <h1>Folium</h1>
+  <p>面向控制理论科研任务的 AI Agent</p>
+  <p>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
+    <img src="https://img.shields.io/badge/FastAPI-Web%20UI-009688?logo=fastapi&logoColor=white" alt="FastAPI Web UI">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3DA639" alt="MIT License"></a>
+  </p>
+</div>
 
-[![Python](https://img.shields.io/badge/python-3.10+-blue)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助你检索与阅读论文、检查控制理论中的关键推导、生成并运行仿真实验，以及沉淀可复盘的研究过程。项目同时建设工具调用、沙箱执行、记忆和可观测性等 Agent Harness 组件。
 
-Folium 当前目标是在一个极简 AI 编程 Agent 的基础上，逐步改造成面向科研场景的智能体系统。项目会围绕文献综述、数学推导、仿真实验、论文写作，以及 Agent Harness 工程组件持续扩展。
+![Folium Web UI](docs/images/folium-web-ui.png)
 
-## 当前能力
+## 适用场景
+
+| 场景 | Folium 提供的支持 |
+| --- | --- |
+| 学术调研 | 检索论文、补全元数据、读取网页和 PDF 内容 |
+| 理论研究 | 面向控制理论的公式、假设、Lyapunov 推导与 LMI 检查能力建设 |
+| 实验验证 | 生成、执行和分析 Python 仿真实验 |
+| Agent 工程 | 工具参数校验、Docker 沙箱、上下文压缩、SQLite 持久化与 trace |
+
+## 面向的科研闭环
+
+```mermaid
+flowchart LR
+    A["研究课题"] --> B["文献检索<br/>paper_search / arxiv_search"]
+    B --> C["论文阅读<br/>PDF 与结构化笔记"]
+    C --> D["理论检查<br/>假设、推导、稳定性"]
+    D --> E["实验验证<br/>代码、运行、结果"]
+    E --> F["研究产物<br/>综述、报告、论文材料"]
+```
+
+> 其中学术检索、PDF 读取与工程 Harness 已具备基础能力；理论检查、结构化论文库和实验闭环仍在持续建设。
+
+## 快速开始
+
+```bash
+git clone https://github.com/PrisonBreakPB/Folium.git
+cd Folium
+pip install -e .
+```
+
+在项目根目录创建 `.env`：
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.deepseek.com
+FOLIUM_MODEL=deepseek-chat
+```
+
+启动 Web UI：
+
+```bash
+python -m folium
+```
+
+浏览器访问 <http://localhost:8000>。
+
+## 已实现能力
 
 - Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
-- CLI 入口：支持交互式对话、单次 prompt、会话恢复和内置命令
 - OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
 - Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
 - 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
-- 会话持久化：对话内容保存到项目内 `conversations/`
+- 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
 - 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
 - Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
 - 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
+
+<details>
+<summary>完整安装、运行与环境配置</summary>
 
 ## 运行方式
 
@@ -45,18 +100,6 @@ python -m folium
 http://localhost:8000
 ```
 
-启动 CLI：
-
-```bash
-python -m folium --cli
-```
-
-单次任务：
-
-```bash
-python -m folium --cli -p "读一下 README.md，总结当前项目能力"
-```
-
 ## 配置
 
 常用环境变量：
@@ -74,13 +117,16 @@ FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
 FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
 FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
-FOLIUM_HOST_WORKSPACE       Docker 默认挂载的真实项目目录，默认当前进程工作目录
-FOLIUM_SANDBOX_WORKSPACE_MODE Docker 工作区模式：host 或 copy，默认 host；copy 会复制项目到 .folium/sandbox/sessions
+FOLIUM_HOST_WORKSPACE       真实项目目录，默认当前进程工作目录
+FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host 或 copy；Web 默认 copy。copy 会在每个 Web 会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目
 FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
 FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需禁止 bash 容器联网可设为 none
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
 FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
+FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance before scheduling (default 10)
+FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           Maximum maintenance model/tool rounds (default 5)
+FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (default 2000)
 ```
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
@@ -90,6 +136,8 @@ OPENAI_API_KEY=ollama
 OPENAI_BASE_URL=http://localhost:11434/v1
 FOLIUM_MODEL=qwen3:32b
 ```
+
+</details>
 
 ## Web 界面
 
@@ -110,26 +158,9 @@ Web 入口提供：
 
 - 点击“新建对话”会进入一个空白对话状态
 - 空白对话不会立刻持久化
-- 发送第一条消息后，对话才会保存到 `conversations/`
+- 发送第一条消息后，对话才会保存到 `data/folium.db`
 - 切换到其他对话前，当前已有内容的对话会自动保存
-- 会话文件同时保存压缩后的模型上下文 `messages` 和完整历史 `transcript`；Web 历史展示优先使用 `transcript`
-
-## CLI 命令
-
-```text
-/help           查看帮助
-/model          查看当前模型
-/model <名称>   切换模型
-/tokens         查看累计 token 用量和费用估算
-/compact        手动压缩上下文
-/diff           查看当前会话修改过的文件
-/save           手动保存会话
-/sessions       列出已保存会话
-/traces         列出最近执行 trace
-/trace <id>     查看某个 trace 摘要
-/reset          清空当前对话历史
-quit            退出
-```
+- 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
 
 ## 工具
 
@@ -137,11 +168,12 @@ quit            退出
 
 ```text
 read_file       读取文件，支持 offset/limit
-write_file      创建或覆盖文件
-edit_file       基于唯一字符串匹配的安全编辑，返回 diff
+write_file      创建或覆盖文件（包括完整 LaTeX .tex 源文件）
+edit_file       基于唯一字符串匹配的安全编辑（包括已有 LaTeX .tex 源文件），返回 diff
 glob            按 glob 模式查找文件
 grep            按正则搜索文件内容
 bash            执行 shell 命令，支持 local/docker 后端、危险命令拦截、超时终止和输出截断
+session_history 查询当前会话已持久化的完整历史；支持关键词搜索和按 message_id 分段读取
 agent           启动子 Agent 处理独立子任务
 todo            更新结构化任务列表，跟踪 pending / in_progress / completed
 web_search      使用 Brave Search API 返回轻量 Web 搜索结果
@@ -149,7 +181,6 @@ web_fetch       读取单个 HTTP(S) URL，返回清洗后的 title 和正文片
 pdf_fetch       读取 PDF 正文文本
 paper_search    通过 OpenAlex 搜索论文，返回结构化 JSON 证据
 paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial / unverified / mismatch
-sandbox_diff    查看 copy 模式 Docker 沙箱工作区相对真实项目的文件差异；默认 host 模式请用 git diff
 ```
 
 `web_search` 是轻量搜索工具，只返回候选网页的 title、URL 和 snippet，不抓取全文、不做 RAG。需要设置 `BRAVE_SEARCH_API_KEY`；缺少 key 时工具会返回明确错误。
@@ -269,15 +300,24 @@ Token 计算：
 
 ## 本地可观测性
 
-Folium 已经加入本地 JSONL trace 记录。一次用户输入会生成一个 trace，一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
+Folium 将会话与可观测性数据统一保存到本地 SQLite。一次用户输入会生成一个 trace；一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
 
 默认保存位置：
 
 ```text
-conversations/traces/
+data/folium.db
 ```
 
-当前记录内容包括：
+数据库包含四张业务表：
+
+- `sessions`：会话 ID、模型、system prompt、创建时间和更新时间
+- `messages`：完整对话历史、模型实际使用的压缩上下文，以及工具调用关联信息
+- `traces`：每次 Agent 执行的摘要，如会话、轮次、状态和耗时
+- `trace_events`：trace 内的细粒度事件、span、快照、工具元数据和错误信息
+
+其中 `messages` 保存会话内容，`traces` / `trace_events` 保存执行过程；两者用途不同，不会重复保存一份完整工具输出。工具输出的完整原文保存在 `messages.content`，trace 默认只保存脱敏后的预览、长度和 hash。
+
+当前 trace 事件包括：
 
 - `user_task`：一次用户输入触发的完整 Agent 执行
 - `agent_round`：每轮 Agent 循环
@@ -295,7 +335,7 @@ conversations/traces/
 
 ```text
 FOLIUM_OBSERVABILITY=1
-FOLIUM_TRACE_MODE=all
+FOLIUM_DB_PATH=data/folium.db
 FOLIUM_TRACE_FULL_USER_INPUT=1
 FOLIUM_TRACE_FULL_LLM_INPUT=0
 FOLIUM_TRACE_FULL_LLM_OUTPUT=0
@@ -306,7 +346,7 @@ FOLIUM_TRACE_REDACT_SECRETS=1
 FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 ```
 
-默认 trace 只保存快照 preview、长度和 hash；打开 `FOLIUM_TRACE_FULL_LLM_INPUT`、`FOLIUM_TRACE_FULL_LLM_OUTPUT` 或 `FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS` 后，会把对应完整内容写入本地 trace 文件，适合调试但会显著增加文件体积。
+默认 trace 只保存快照 preview、长度和 hash；打开 `FOLIUM_TRACE_FULL_LLM_INPUT`、`FOLIUM_TRACE_FULL_LLM_OUTPUT` 或 `FOLIUM_TRACE_FULL_CONTEXT_SNAPSHOTS` 后，会把对应完整内容写入 `trace_events`，适合调试但会显著增加数据库体积。
 
 查看 trace：
 
@@ -319,8 +359,7 @@ FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 
 ```text
 folium/
-├── __main__.py              Web/CLI 入口分发
-├── cli.py                   CLI REPL 和命令
+├── __main__.py              Web 入口
 ├── agent.py                 Agent 主循环、工具调用和观测插桩
 ├── llm.py                   OpenAI 兼容 LLM 客户端和 LiteLLM 后端
 ├── context.py               上下文估算与压缩
@@ -349,6 +388,24 @@ folium/
 - 评估与反馈机制
 - Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
 
+## Background memory maintenance
+
+The Web server schedules a conservative background memory pass after the response is
+fully sent. By default, it runs after 10 completed turns without main-agent memory use,
+uses the same model as the main agent, and is limited to 5 model/tool rounds with a
+2,000-token output budget. It receives a copy of the completed main-agent messages and
+the same visible tool schemas, then appends a final English memory-maintenance user
+prompt. Runtime execution remains memory-only: calls to any other visible tool are
+rejected without side effects.
+
+The pass may choose `NO_CHANGE`. It skips rather than truncates context when the copied
+request plus its output budget would exceed the model context limit, and treats that
+pass as checked. Its trace records the copied-context source, message and visible-tool
+counts, approximate input tokens, rejected tool calls, final status, and cache-hit
+tokens, without recording memory contents. Memory writes use version checks so a
+concurrent main-agent write wins; the background task rereads and retries once, then
+skips conflicts.
+
 ## 测试
 
 当前可用的 unittest：
@@ -363,9 +420,9 @@ python -m unittest tests.test_tool_validation tests.test_tool_encoding tests.tes
 pytest
 ```
 
-## 写入与审查
+## 写入与审批
 
-Web UI 中，`write_file` 和 `edit_file` 会直接执行，并在成功后显示文件 diff。看起来会写入挂载工作区的 `bash` 命令仍会先展示命令预览并等待用户审批；审批不会自动超时。general 子 Agent 调用 `bash` 时也会走同一套审批路径。
+Web UI 中，`write_file` 和 `edit_file` 修改 `.tex`、`.bib`、`.sty`、`.py`、`.m`、`.ipynb`、`.sh` 时，会先聚合同一轮的受保护文件变更并展示 diff。用户可以确认应用全部变更、要求修改或拒绝并结束：要求修改不会写入文件，反馈会作为工具结果交给 Agent 生成新的变更，并再次等待审批；拒绝后当前 Agent 任务会停止，不会自动重试。同一批次在拒绝或要求修改后，其他尚未执行的工具调用会被跳过。审批面板支持在多个文件之间切换，并可按需分段加载完整 diff；应用前会再次校验文件基线，避免覆盖审批期间的外部修改。非受保护文件仍直接执行并返回 diff。看起来会写入挂载工作区的 `bash` 命令仍会在执行前展示命令预览并等待用户审批；审批不会自动超时。`general` 子 Agent 会继承同一审批规则。
 
 ## License
 

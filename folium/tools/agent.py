@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from typing import Literal
 
-from .base import Tool
+from .base import Tool, ToolOutput
 from .todo import TodoTool
 
 
@@ -142,7 +142,7 @@ class AgentTool(Tool):
         output_format: str = "text",
         context: str = "none",
         timeout: int | None = None,
-    ) -> str:
+    ) -> str | ToolOutput:
         if self._parent_agent is None:
             return "Error: agent tool not initialized (no parent agent)"
         if agent_type not in SUBAGENT_SPECS:
@@ -171,9 +171,14 @@ class AgentTool(Tool):
 
         try:
             result = _run_with_timeout(sub.chat, _format_task(task, output_format), timeout_seconds)
+            raw_result = result
             # trim long results to avoid blowing up parent's context
             if len(result) > 5000:
                 result = result[:4500] + "\n... (sub-agent output truncated)"
+                return ToolOutput(
+                    content=f"[Sub-agent completed: {agent_type}]\n{result}",
+                    raw_content=f"[Sub-agent completed: {agent_type}]\n{raw_result}",
+                )
             return f"[Sub-agent completed: {agent_type}]\n{result}"
         except TimeoutError:
             return f"Sub-agent error: timed out after {timeout_seconds}s"
@@ -191,7 +196,7 @@ def _sub_agent_tools(tools: list[Tool], spec: SubAgentSpec) -> list[Tool]:
     return [
         _sub_agent_tool(t)
         for t in tools
-        if t.name != "agent" and (allowed is None or t.name in allowed)
+        if t.name not in {"agent", "session_history"} and (allowed is None or t.name in allowed)
     ]
 
 
