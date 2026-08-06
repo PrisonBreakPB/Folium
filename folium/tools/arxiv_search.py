@@ -7,6 +7,9 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from .base import Tool
 
@@ -14,6 +17,14 @@ ARXIV_API = "http://export.arxiv.org/api/query"
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 20
 NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+
+class ArxivSearchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str
+    max_results: int = DEFAULT_RESULTS
+    sort: Literal["relevance", "date"] = "relevance"
 
 
 class ArxivSearchTool(Tool):
@@ -42,6 +53,7 @@ class ArxivSearchTool(Tool):
         },
         "required": ["query"],
     }
+    args_model = ArxivSearchArgs
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
                 year_from: int = None, year_to: int = None) -> str:

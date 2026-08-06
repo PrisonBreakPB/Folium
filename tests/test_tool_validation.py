@@ -105,6 +105,60 @@ class ToolValidationTests(unittest.TestCase):
 
         self.assertIn("field 'timeout' must be integer", str(ctx.exception))
 
+    def test_pydantic_tool_preserves_omitted_defaults(self):
+        tool = get_tool("read_file")
+
+        self.assertEqual(
+            tool.validate_arguments({"file_path": "README.md"}),
+            {"file_path": "README.md"},
+        )
+
+    def test_pydantic_tool_rejects_unknown_field(self):
+        tool = get_tool("read_file")
+
+        with self.assertRaises(ToolValidationError) as ctx:
+            tool.validate_arguments({"file_path": "README.md", "extra": True})
+
+        self.assertIn("unknown field 'extra'", str(ctx.exception))
+
+    def test_pydantic_tool_rejects_strict_type(self):
+        tool = get_tool("read_file")
+
+        with self.assertRaises(ToolValidationError) as ctx:
+            tool.validate_arguments({"file_path": "README.md", "offset": "2"})
+
+        self.assertIn("field 'offset'", str(ctx.exception))
+
+    def test_agent_surfaces_pydantic_validation_error(self):
+        agent = Agent(llm=None)
+        tc = ToolCall(id="call_1", name="read_file", arguments={"offset": "2"})
+
+        result = agent._exec_tool(tc)
+
+        self.assertEqual(result.status, "bad_arguments")
+        self.assertIn("bad arguments for read_file", result.content)
+        self.assertIn("field 'file_path'", result.content)
+        self.assertIn("field 'offset'", result.content)
+
+    def test_pydantic_tool_rejects_invalid_enum(self):
+        tool = get_tool("arxiv_search")
+
+        with self.assertRaises(ToolValidationError) as ctx:
+            tool.validate_arguments({"query": "control", "sort": "citations"})
+
+        self.assertIn("field 'sort'", str(ctx.exception))
+
+    def test_pydantic_tool_surfaces_malformed_json_error(self):
+        tool = get_tool("read_file")
+
+        with self.assertRaises(ToolValidationError) as ctx:
+            tool.validate_arguments({
+                "__malformed_arguments__": '{"file_path":',
+                "__parse_error__": "Expecting value",
+            })
+
+        self.assertIn("arguments JSON could not be parsed", str(ctx.exception))
+
     def test_agent_tool_execution_rejects_bad_arguments_before_execute(self):
         agent = Agent(llm=None)
         tc = ToolCall(id="call_1", name="bash", arguments={"timeout": 1})

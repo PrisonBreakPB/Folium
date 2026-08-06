@@ -1,6 +1,8 @@
 """File reading with line numbers."""
 
 from pathlib import Path
+from pydantic import BaseModel, ConfigDict
+
 from .base import Tool
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
@@ -10,6 +12,14 @@ def _read_text_prefer_utf8(path: Path) -> str:
         return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         return path.read_text(errors="replace")
+
+
+class ReadFileArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    file_path: str
+    offset: int = 1
+    limit: int = 2000
 
 
 class ReadFileTool(Tool):
@@ -37,6 +47,7 @@ class ReadFileTool(Tool):
         },
         "required": ["file_path"],
     }
+    args_model = ReadFileArgs
 
     def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
         try:

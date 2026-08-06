@@ -2,7 +2,9 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ValidationError
 
 
 @dataclass
@@ -31,6 +33,7 @@ class Tool(ABC):
     name: str
     description: str
     parameters: dict  # JSON Schema for the function args
+    args_model: ClassVar[type[BaseModel] | None] = None
 
     @abstractmethod
     def execute(self, **kwargs) -> str | ToolOutput:
@@ -50,6 +53,16 @@ class Tool(ABC):
                 f"arguments JSON could not be parsed: {arguments['__parse_error__']}",
                 f"raw argument text was: {arguments['__malformed_arguments__'][:500]}",
             ])
+
+        if self.args_model is not None:
+            try:
+                validated = self.args_model.model_validate(arguments)
+            except ValidationError as exc:
+                raise ToolValidationError(
+                    self.name,
+                    _format_pydantic_errors(exc),
+                ) from exc
+            return validated.model_dump(exclude_unset=True)
 
         schema = self.parameters
         if schema.get("type") != "object":
@@ -125,3 +138,17 @@ def _matches_schema_type(value: Any, schema_type: Any) -> tuple[bool, str]:
 
 def _format_expected(types: list[str]) -> str:
     return " or ".join(types)
+
+
+def _format_pydantic_errors(exc: ValidationError) -> list[str]:
+    errors = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ())) or "<root>"
+        error_type = error.get("type")
+        if error_type == "missing":
+            errors.append(f"missing required field '{location}'")
+        elif error_type == "extra_forbidden":
+            errors.append(f"unknown field '{location}'")
+        else:
+            errors.append(f"field '{location}': {error.get('msg', 'invalid value')}")
+    return errors or ["invalid arguments"]
