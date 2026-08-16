@@ -2,11 +2,22 @@
 
 import re
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # skip these dirs to avoid noise
 _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", "dist", "build"}
+
+
+class GrepArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    pattern: str = Field(description="Regex pattern to search for")
+    path: str = Field(default=".", description="File or directory to search (default: cwd)")
+    include: str | None = Field(default=None, description="Only search files matching this glob (e.g. '*.py')")
 
 
 class GrepTool(Tool):
@@ -15,24 +26,7 @@ class GrepTool(Tool):
         "Search file contents with regex. "
         "Returns matching lines with file path and line number."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "Regex pattern to search for",
-            },
-            "path": {
-                "type": "string",
-                "description": "File or directory to search (default: cwd)",
-            },
-            "include": {
-                "type": "string",
-                "description": "Only search files matching this glob (e.g. '*.py')",
-            },
-        },
-        "required": ["pattern"],
-    }
+    args_model = GrepArgs
 
     def execute(self, pattern: str, path: str = ".", include: str | None = None) -> str:
         try:

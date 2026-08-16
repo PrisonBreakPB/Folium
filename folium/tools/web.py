@@ -9,6 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 
 
@@ -18,6 +20,13 @@ DEFAULT_FETCH_CHARS = 12_000
 HTML_SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "header", "footer", "aside"}
 
 
+class WebSearchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(description="Search query")
+    max_results: int = Field(default=5, description="Maximum number of results to return, default 5")
+
+
 class WebSearchTool(Tool):
     name = "web_search"
     description = (
@@ -25,20 +34,7 @@ class WebSearchTool(Tool):
         "non-academic content. Returns title, URL, and content snippet. "
         "Do NOT use this for academic paper searches — use paper_search instead."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query",
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "Maximum number of results to return, default 5",
-            },
-        },
-        "required": ["query"],
-    }
+    args_model = WebSearchArgs
 
     def execute(self, query: str, max_results: int = 5) -> str:
         query = query.strip()
@@ -105,26 +101,20 @@ class WebSearchTool(Tool):
         return "\n".join(lines)
 
 
+class WebFetchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    url: str = Field(description="HTTP or HTTPS URL to fetch")
+    max_chars: int = Field(default=DEFAULT_FETCH_CHARS, description="Maximum characters of cleaned text to return, default 12000")
+
+
 class WebFetchTool(Tool):
     name = "web_fetch"
     description = (
         "Fetch a single HTTP(S) URL and return cleaned title and text excerpt. "
         "Use this after web_search when a specific result needs to be read."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "HTTP or HTTPS URL to fetch",
-            },
-            "max_chars": {
-                "type": "integer",
-                "description": "Maximum characters of cleaned text to return, default 12000",
-            },
-        },
-        "required": ["url"],
-    }
+    args_model = WebFetchArgs
 
     def execute(self, url: str, max_chars: int = DEFAULT_FETCH_CHARS) -> str | ToolOutput:
         url = url.strip()

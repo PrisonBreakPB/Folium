@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from .llm import parse_arguments_lenient
 from .sandbox.filesystem import resolve_tool_path
 
 
@@ -90,10 +91,10 @@ class ChangeSetProposal:
         return sum(change.deletions for change in self.files)
 
 
-def is_protected_file_change(tool_name: str, arguments: dict) -> bool:
+def is_protected_file_change(tool_name: str, arguments: str | dict) -> bool:
     if tool_name not in {"write_file", "edit_file"}:
         return False
-    file_path = arguments.get("file_path")
+    file_path = parse_arguments_lenient(arguments).get("file_path")
     if not isinstance(file_path, str) or not file_path:
         return False
     try:

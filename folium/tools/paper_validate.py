@@ -7,11 +7,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool
 from .paper_search import OPENALEX_API
 
 
 MAX_PAPERS = 20
+
+
+class PaperValidateArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    papers: list[dict] = Field(description="Candidate papers to validate. Each item may include title, doi, year, and venue.")
 
 
 class PaperValidateTool(Tool):
@@ -22,19 +30,7 @@ class PaperValidateTool(Tool):
         "literature results. Returns JSON with confirmed, partial, unverified, "
         "or mismatch status for each candidate."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "papers": {
-                "type": "array",
-                "description": (
-                    "Candidate papers to validate. Each item may include title, "
-                    "doi, year, and venue."
-                ),
-            },
-        },
-        "required": ["papers"],
-    }
+    args_model = PaperValidateArgs
 
     def execute(self, papers: list) -> str:
         if not isinstance(papers, list):

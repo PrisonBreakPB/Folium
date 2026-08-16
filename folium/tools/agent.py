@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 from .todo import TodoTool
 
@@ -96,6 +98,16 @@ Use null or an empty string for unavailable scalar fields. Do not include markdo
 }
 
 
+class AgentArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    task: str = Field(description="What the sub-agent should accomplish")
+    agent_type: Literal["general", "literature-searcher"] = Field(default="general", description="Sub-agent type: general or literature-searcher")
+    output_format: OutputFormat = Field(default="text", description="Expected final output style: text, papers, paper_note, or review")
+    context: str = Field(default="none", description="Context inheritance mode. Only 'none' is supported in this first version.")
+    timeout: int | None = Field(default=None, description="Maximum seconds to wait for the sub-agent. Clamped to the parent tool timeout.")
+
+
 class AgentTool(Tool):
     name = "agent"
     description = (
@@ -105,32 +117,7 @@ class AgentTool(Tool):
         "Do not use it for simple questions, single tool calls, quick lookups, "
         "or work the main agent can complete directly without losing focus."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "task": {
-                "type": "string",
-                "description": "What the sub-agent should accomplish",
-            },
-            "agent_type": {
-                "type": "string",
-                "description": "Sub-agent type: general or literature-searcher",
-            },
-            "output_format": {
-                "type": "string",
-                "description": "Expected final output style: text, papers, paper_note, or review",
-            },
-            "context": {
-                "type": "string",
-                "description": "Context inheritance mode. Only 'none' is supported in this first version.",
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "Maximum seconds to wait for the sub-agent. Clamped to the parent tool timeout.",
-            },
-        },
-        "required": ["task"],
-    }
+    args_model = AgentArgs
 
     # set by Agent.__init__ after construction
     _parent_agent = None

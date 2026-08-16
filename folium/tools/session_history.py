@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 from ..database import get_connection
 
@@ -12,6 +16,17 @@ _DEFAULT_READ_CHARS = 6000
 _MAX_READ_CHARS = 12000
 
 
+class SessionHistoryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action: Literal["search", "read"] = Field(description="Operation: 'search' for matching history or 'read' for one message")
+    query: str | None = Field(default=None, description="Optional keyword for search; omit it to list recent messages")
+    message_id: int | None = Field(default=None, description="Message ID returned by search; required for action='read'")
+    limit: int | None = Field(default=None, description="Maximum search results, from 1 to 20; defaults to 10")
+    offset: int | None = Field(default=None, description="Character offset for action='read'; defaults to 0")
+    max_chars: int | None = Field(default=None, description="Maximum characters returned by action='read', up to 12000")
+
+
 class SessionHistoryTool(Tool):
     name = "session_history"
     description = (
@@ -20,36 +35,7 @@ class SessionHistoryTool(Tool):
         "Use action='search' to find relevant message IDs, then action='read' to retrieve one "
         "message in full or in chunks. This tool can read only the current session."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "description": "Operation: 'search' for matching history or 'read' for one message",
-            },
-            "query": {
-                "type": "string",
-                "description": "Optional keyword for search; omit it to list recent messages",
-            },
-            "message_id": {
-                "type": "integer",
-                "description": "Message ID returned by search; required for action='read'",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Maximum search results, from 1 to 20; defaults to 10",
-            },
-            "offset": {
-                "type": "integer",
-                "description": "Character offset for action='read'; defaults to 0",
-            },
-            "max_chars": {
-                "type": "integer",
-                "description": "Maximum characters returned by action='read', up to 12000",
-            },
-        },
-        "required": ["action"],
-    }
+    args_model = SessionHistoryArgs
 
     _parent_agent = None
 

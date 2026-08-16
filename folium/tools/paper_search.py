@@ -6,6 +6,9 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool
 
@@ -46,6 +49,19 @@ _CONTROL_JOURNALS = {
 }
 
 
+class PaperSearchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    query: str = Field(description="Search query or topic")
+    max_results: int = Field(default=DEFAULT_RESULTS, description="Maximum number of results to return, default 5, max 20")
+    sort: Literal["relevance", "citations", "date"] = Field(default="relevance", description="Sort order: relevance (default), citations (高引用), date (最新)")
+    year_from: int | None = Field(default=None, description="Filter papers published from this year (inclusive), e.g., 2023")
+    year_to: int | None = Field(default=None, description="Filter papers published up to this year (inclusive), e.g., 2025")
+    publication_type: Literal["journal", "conference", "repository", "book-series", "platform"] | None = Field(default=None, description="Filter by source type (default: journal)")
+    journal: str = Field(default="core", description="Limit to one journal by slug, or core (default) for all configured core control journals")
+    language: Literal["en", "zh", "de", "fr", "ja"] | None = Field(default=None, description="Filter by language (default: en, English only)")
+
+
 class PaperSearchTool(Tool):
     name = "paper_search"
     description = (
@@ -54,48 +70,7 @@ class PaperSearchTool(Tool):
         "Use for literature search, finding papers, or research questions. "
         "Do NOT use for general web searches."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query or topic",
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "Maximum number of results to return, default 5, max 20",
-            },
-            "sort": {
-                "type": "string",
-                "enum": ["relevance", "citations", "date"],
-                "description": "Sort order: relevance (default), citations (高引用), date (最新)",
-            },
-            "year_from": {
-                "type": "integer",
-                "description": "Filter papers published from this year (inclusive), e.g., 2023",
-            },
-            "year_to": {
-                "type": "integer",
-                "description": "Filter papers published up to this year (inclusive), e.g., 2025",
-            },
-            "publication_type": {
-                "type": "string",
-                "enum": ["journal", "conference", "repository", "book-series", "platform"],
-                "description": "Filter by source type (default: journal, only期刊论文)",
-            },
-            "journal": {
-                "type": "string",
-                "enum": ["core", *_CONTROL_JOURNALS.keys()],
-                "description": "Limit to one journal by slug, or core (default) for all configured core control journals",
-            },
-            "language": {
-                "type": "string",
-                "enum": ["en", "zh", "de", "fr", "ja"],
-                "description": "Filter by language (default: en, English only)",
-            },
-        },
-        "required": ["query"],
-    }
+    args_model = PaperSearchArgs
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
                 year_from: int = None, year_to: int = None, publication_type: str = None,

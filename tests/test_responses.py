@@ -78,20 +78,18 @@ def test_tools_to_responses_flattens():
 def test_parse_function_call_item():
     item = SimpleNamespace(call_id="c1", name="bash", arguments='{"cmd": "ls"}')
     assert _parse_function_call_item(item) == ToolCall(
-        id="c1", name="bash", arguments={"cmd": "ls"}
+        id="c1", name="bash", arguments='{"cmd": "ls"}'
     )
 
 
 def test_parse_function_call_item_empty_args():
     item = SimpleNamespace(call_id="c2", name="bash", arguments="")
-    assert _parse_function_call_item(item).arguments == {}
+    assert _parse_function_call_item(item).arguments == ""
 
 
-def test_parse_function_call_item_malformed():
+def test_parse_function_call_item_preserves_raw_arguments():
     item = SimpleNamespace(call_id="c3", name="bash", arguments='{"cmd": ')
-    tc = _parse_function_call_item(item)
-    assert "__malformed_arguments__" in tc.arguments
-    assert "__parse_error__" in tc.arguments
+    assert _parse_function_call_item(item).arguments == '{"cmd": '
 
 
 # --- responses streaming path --------------------------------------------
@@ -155,7 +153,7 @@ def test_chat_observed_responses_parses_events_and_params():
     assert resp.content == "Hello world"
     assert tokens == ["Hello", " world"]
     assert resp.tool_calls == [ToolCall(id="c1", name="read_file",
-                                        arguments={"file_path": "a"})]
+                                        arguments='{"file_path":"a"}')]
     assert resp.prompt_tokens == 100
     assert resp.completion_tokens == 50
     assert resp.cached_tokens == 30

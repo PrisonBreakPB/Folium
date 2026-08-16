@@ -7,6 +7,9 @@ import os
 import tempfile
 import threading
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool
 from ..prompt import MAX_MEMORY_CHARS, MEMORY_FILE
@@ -22,6 +25,15 @@ _SECTIONS = {
 }
 
 
+class MemoryArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action: Literal["read", "append"] = Field(default="append", description="read returns memory and its version; append adds one entry.")
+    section: str | None = Field(default=None, description="Memory category: user_preferences, long_term_context, confirmed_decisions, or open_items.")
+    content: str | None = Field(default=None, description="One concise, durable fact to append.")
+    expected_version: str | None = Field(default=None, description="Version returned by read. Use for conflict-safe background appends.")
+
+
 class MemoryTool(Tool):
     name = "memory"
     description = (
@@ -29,32 +41,7 @@ class MemoryTool(Tool):
         "research context, confirmed decisions, or open items; never store secrets, full "
         "chat transcripts, temporary guesses, or raw tool output."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["read", "append"],
-                "description": "read returns memory and its version; append adds one entry.",
-            },
-            "section": {
-                "type": "string",
-                "description": (
-                    "Memory category: user_preferences, long_term_context, "
-                    "confirmed_decisions, or open_items."
-                ),
-            },
-            "content": {
-                "type": "string",
-                "description": "One concise, durable fact to append.",
-            },
-            "expected_version": {
-                "type": "string",
-                "description": "Version returned by read. Use for conflict-safe background appends.",
-            },
-        },
-        "required": [],
-    }
+    args_model = MemoryArgs
 
     def execute(
         self,

@@ -4,11 +4,20 @@ import io
 import urllib.error
 import urllib.request
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 from .web import _validate_public_http_url, _SafeRedirectHandler
 
 MAX_PDF_BYTES = 20_000_000  # 20 MB
 DEFAULT_MAX_CHARS = 50_000
+
+
+class PdfFetchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    url: str = Field(description="HTTP or HTTPS URL of the PDF file")
+    max_chars: int = Field(default=DEFAULT_MAX_CHARS, description="Maximum characters to return, default 50000")
 
 
 class PdfFetchTool(Tool):
@@ -18,20 +27,7 @@ class PdfFetchTool(Tool):
         "Handles two-column layouts common in academic papers. "
         "Returns cleaned text with page markers."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "HTTP or HTTPS URL of the PDF file",
-            },
-            "max_chars": {
-                "type": "integer",
-                "description": "Maximum characters to return, default 50000",
-            },
-        },
-        "required": ["url"],
-    }
+    args_model = PdfFetchArgs
 
     def execute(self, url: str, max_chars: int = DEFAULT_MAX_CHARS) -> str | ToolOutput:
         url = url.strip()

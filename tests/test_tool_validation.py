@@ -3,25 +3,27 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from folium.agent import FINAL_ROUND_REMINDER, Agent
+from folium.agent import FINAL_ROUND_REMINDER, Agent, TOOL_PARAMETER_WARN, TOOL_EXECUTION_WARN, ToolExecutionResult
 from folium.context import TOOL_OUTPUT_DEDUPE_PLACEHOLDER
 from folium.llm import LLMResponse, ToolCall
 from folium.skills import load_skills
 from folium.skills.types import Skill
 from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.agent import _sub_agent_tool
+from pydantic import BaseModel, ConfigDict
+
 from folium.tools.base import Tool, ToolValidationError
 from folium.tools.todo import TodoTool
+
+
+class _AnyArgs(BaseModel):
+    model_config = ConfigDict(extra="allow")
 
 
 class BlockingTool(Tool):
     name = "blocking"
     description = "Block longer than the agent tool timeout."
-    parameters = {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }
+    args_model = _AnyArgs
 
     def execute(self):
         time.sleep(2)
@@ -31,13 +33,7 @@ class BlockingTool(Tool):
 class TimeoutEchoTool(Tool):
     name = "timeout_echo"
     description = "Echo the timeout value."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "timeout": {"type": "integer"},
-        },
-        "required": ["timeout"],
-    }
+    args_model = _AnyArgs
 
     def execute(self, timeout: int):
         return f"timeout={timeout}"
@@ -46,11 +42,7 @@ class TimeoutEchoTool(Tool):
 class EchoTool(Tool):
     name = "echo_tool"
     description = "Return a short result."
-    parameters = {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }
+    args_model = _AnyArgs
 
     def execute(self):
         return "ok"
@@ -103,7 +95,7 @@ class ToolValidationTests(unittest.TestCase):
         with self.assertRaises(ToolValidationError) as ctx:
             tool.validate_arguments({"command": "echo hello", "timeout": "slow"})
 
-        self.assertIn("field 'timeout' must be integer", str(ctx.exception))
+        self.assertIn("field 'timeout'", str(ctx.exception))
 
     def test_pydantic_tool_preserves_omitted_defaults(self):
         tool = get_tool("read_file")
@@ -152,10 +144,7 @@ class ToolValidationTests(unittest.TestCase):
         tool = get_tool("read_file")
 
         with self.assertRaises(ToolValidationError) as ctx:
-            tool.validate_arguments({
-                "__malformed_arguments__": '{"file_path":',
-                "__parse_error__": "Expecting value",
-            })
+            tool.validate_arguments('{"file_path":')
 
         self.assertIn("arguments JSON could not be parsed", str(ctx.exception))
 
@@ -211,11 +200,60 @@ class ToolValidationTests(unittest.TestCase):
 
         result = agent.chat("write a tex file")
 
-        self.assertEqual(result, "Consecutive 5 tool call failures, current task stopped.")
+        self.assertIn("I stopped retrying write_file", result)
+        self.assertIn("parameter_validation_failure", result)
         self.assertEqual(agent.llm.calls, 5)
         self.assertEqual(len([m for m in agent.messages if m["role"] == "tool"]), 5)
         self.assertEqual(agent.messages[-1]["name"], "write_file")
         self.assertIn("missing required field 'file_path'", agent.messages[-1]["content"])
+        # N1 warning injected exactly once
+        self.assertEqual(len([m for m in agent.messages if m.get("content") == TOOL_PARAMETER_WARN]), 1)
+
+    def test_agent_stops_after_five_tool_execution_errors(self):
+        class FailingTool(Tool):
+            name = "failing"
+            description = "Always fails."
+            args_model = _AnyArgs
+
+            def execute(self):
+                return "Error: always fails"
+
+        class FailingLLM:
+            model = "fake-model"
+
+            def __init__(self):
+                self.calls = 0
+
+            @property
+            def estimated_cost(self):
+                return None
+
+            def chat(self, messages, tools=None, on_token=None):
+                self.calls += 1
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(id=f"call_{self.calls}", name="failing", arguments="{}")],
+                )
+
+        agent = Agent(llm=FailingLLM(), tools=[FailingTool()], max_rounds=50, max_tool_errors=5)
+
+        result = agent.chat("do something")
+
+        self.assertIn("I stopped retrying failing", result)
+        self.assertIn("execution_failure", result)
+        self.assertEqual(agent.llm.calls, 5)
+        self.assertEqual(len([m for m in agent.messages if m.get("content") == TOOL_EXECUTION_WARN]), 1)
+
+    def test_failure_streaks_count_independently(self):
+        advance = Agent._advance_failure_streaks
+
+        # bad_arguments increments the parameter streak, resets the error streak
+        self.assertEqual(advance(ToolExecutionResult("x", "bad_arguments"), 2, 3), (3, 0))
+        # error increments the error streak, resets the parameter streak
+        self.assertEqual(advance(ToolExecutionResult("x", "error"), 2, 3), (0, 4))
+        # ok / timeout reset both
+        self.assertEqual(advance(ToolExecutionResult("x", "ok"), 4, 4), (0, 0))
+        self.assertEqual(advance(ToolExecutionResult("x", "timeout"), 4, 4), (0, 0))
 
     def test_agent_does_not_inject_todo_reminder_before_todos_exist(self):
         class NoTodoLLM:
@@ -488,7 +526,7 @@ class ToolValidationTests(unittest.TestCase):
         class LongTool(Tool):
             name = "long_tool"
             description = "Return a long output."
-            parameters = {"type": "object", "properties": {}, "required": []}
+            args_model = _AnyArgs
 
             def execute(self):
                 return long_output

@@ -1,8 +1,17 @@
 """File creation / overwrite."""
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 from .edit import _changed_files, _unified_diff
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
+
+
+class WriteFileArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    file_path: str = Field(description="Path for the file")
+    content: str = Field(description="Full file content to write")
 
 
 class WriteFileTool(Tool):
@@ -14,20 +23,7 @@ class WriteFileTool(Tool):
         "Never use this tool to create or modify memory.md; use the memory tool to manage persistent long-term memory. "
         "For targeted edits to an existing file, use edit_file instead."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "file_path": {
-                "type": "string",
-                "description": "Path for the file",
-            },
-            "content": {
-                "type": "string",
-                "description": "Full file content to write",
-            },
-        },
-        "required": ["file_path", "content"],
-    }
+    args_model = WriteFileArgs
 
     def execute(self, file_path: str, content: str) -> str | ToolOutput:
         try:

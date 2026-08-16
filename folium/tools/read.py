@@ -1,7 +1,8 @@
 """File reading with line numbers."""
 
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
@@ -17,9 +18,9 @@ def _read_text_prefer_utf8(path: Path) -> str:
 class ReadFileArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    file_path: str
-    offset: int = 1
-    limit: int = 2000
+    file_path: str = Field(description="Path to the file")
+    offset: int = Field(default=1, description="Start line (1-based). Default 1.")
+    limit: int = Field(default=2000, description="Max lines to read. Default 2000.")
 
 
 class ReadFileTool(Tool):
@@ -29,24 +30,6 @@ class ReadFileTool(Tool):
         "Use this tool instead of shell commands such as cat, head, or tail. "
         "Always read a file before editing it."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "file_path": {
-                "type": "string",
-                "description": "Path to the file",
-            },
-            "offset": {
-                "type": "integer",
-                "description": "Start line (1-based). Default 1.",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max lines to read. Default 2000.",
-            },
-        },
-        "required": ["file_path"],
-    }
     args_model = ReadFileArgs
 
     def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:

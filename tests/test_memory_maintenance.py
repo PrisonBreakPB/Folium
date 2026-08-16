@@ -91,7 +91,7 @@ def test_memory_tool_read_and_compare_and_swap_append(tmp_path):
 
 
 def test_memory_tool_action_enum_is_validated():
-    with pytest.raises(ToolValidationError, match="must be one of: read, append"):
+    with pytest.raises(ToolValidationError, match="field 'action'"):
         MemoryTool().validate_arguments({"action": "delete"})
 
 

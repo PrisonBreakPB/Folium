@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .context import estimate_tokens
-from .llm import LLMResponse
+from .llm import LLMResponse, parse_arguments_lenient
 from .observability import observe_trace
 from .observability.context import mark_current_span_status, record_event
 from .token_estimator import estimate_text_tokens
@@ -195,11 +195,11 @@ class MemoryAgent:
                     "memory_maintenance",
                     {
                         "action": action,
-                        "section": tool_call.arguments.get("section"),
+                        "section": parse_arguments_lenient(tool_call.arguments).get("section"),
                         "memory_version": _short_version(
                             _read_version_from_output(output)
                             if action == "read"
-                            else tool_call.arguments.get("expected_version")
+                            else parse_arguments_lenient(tool_call.arguments).get("expected_version")
                         ),
                         "status": operation_status,
                     },

@@ -2,8 +2,17 @@
 
 import os
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool
 from ..sandbox import DockerSandboxExecutor, LocalCommandExecutor
+
+
+class BashArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    command: str = Field(description="The shell command to run")
+    timeout: int = Field(default=120, description="Timeout in seconds (default 120)")
 
 
 class BashTool(Tool):
@@ -18,20 +27,7 @@ class BashTool(Tool):
         "Do not use it to create or overwrite files with echo, cat, heredocs, or shell redirection; "
         "use write_file instead."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "command": {
-                "type": "string",
-                "description": "The shell command to run",
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "Timeout in seconds (default 120)",
-            },
-        },
-        "required": ["command"],
-    }
+    args_model = BashArgs
 
     def __init__(self, executor=None):
         self._executor = executor

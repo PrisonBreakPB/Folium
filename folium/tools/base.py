@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -32,119 +32,50 @@ class Tool(ABC):
 
     name: str
     description: str
-    parameters: dict  # JSON Schema for the function args
-    args_model: ClassVar[type[BaseModel] | None] = None
+    args_model: ClassVar[type[BaseModel]]
 
     @abstractmethod
     def execute(self, **kwargs) -> str | ToolOutput:
         """Run the tool and return a text result."""
         ...
 
-    def validate_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Validate raw model-provided arguments against this tool's schema."""
-        if not isinstance(arguments, dict):
-            raise ToolValidationError(self.name, ["arguments must be an object"])
+    def validate_arguments(self, arguments: str | dict) -> dict:
+        """Validate model-provided arguments against this tool's Pydantic model.
 
-        # When the LLM returns arguments that fail JSON parsing, the llm layer
-        # wraps the raw string in a __malformed_arguments__ key.  Surface the
-        # real error so the LLM can adjust, instead of just saying "missing field".
-        if "__malformed_arguments__" in arguments:
-            raise ToolValidationError(self.name, [
-                f"arguments JSON could not be parsed: {arguments['__parse_error__']}",
-                f"raw argument text was: {arguments['__malformed_arguments__'][:500]}",
-            ])
-
-        if self.args_model is not None:
-            try:
+        Accepts either the raw JSON string from the model (parsed + validated in
+        one step via ``model_validate_json``) or an already-parsed dict.
+        """
+        try:
+            if isinstance(arguments, str):
+                validated = self.args_model.model_validate_json(arguments or "{}")
+            else:
                 validated = self.args_model.model_validate(arguments)
-            except ValidationError as exc:
-                raise ToolValidationError(
-                    self.name,
-                    _format_pydantic_errors(exc),
-                ) from exc
-            return validated.model_dump(exclude_unset=True)
-
-        schema = self.parameters
-        if schema.get("type") != "object":
-            raise ToolValidationError(self.name, ["tool parameters schema must be an object"])
-
-        properties = schema.get("properties", {})
-        required = set(schema.get("required", []))
-        errors: list[str] = []
-
-        for field in required:
-            if field not in arguments:
-                errors.append(f"missing required field '{field}'")
-
-        for field in arguments:
-            if field not in properties:
-                errors.append(f"unknown field '{field}'")
-
-        validated: dict[str, Any] = {}
-        for field, value in arguments.items():
-            field_schema = properties.get(field)
-            if not field_schema:
-                continue
-            ok, expected = _matches_schema_type(value, field_schema.get("type"))
-            if not ok:
-                errors.append(f"field '{field}' must be {expected}, got {type(value).__name__}")
-                continue
-            allowed = field_schema.get("enum")
-            if allowed is not None and value not in allowed:
-                errors.append(
-                    f"field '{field}' must be one of: {', '.join(str(item) for item in allowed)}"
-                )
-                continue
-            validated[field] = value
-
-        if errors:
-            raise ToolValidationError(self.name, errors)
-        return validated
+        except ValidationError as exc:
+            raise ToolValidationError(self.name, _format_pydantic_errors(exc)) from exc
+        return validated.model_dump(exclude_unset=True)
 
     def schema(self) -> dict:
-        """OpenAI function-calling schema."""
+        """OpenAI function-calling schema, generated from the Pydantic model."""
+        params = self.args_model.model_json_schema()
+        params.setdefault("required", [])
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters,
+                "parameters": params,
             },
         }
-
-
-def _matches_schema_type(value: Any, schema_type: Any) -> tuple[bool, str]:
-    if schema_type is None:
-        return True, "any"
-
-    types = schema_type if isinstance(schema_type, list) else [schema_type]
-    if value is None:
-        return (("null" in types), _format_expected(types))
-
-    checks = {
-        "string": lambda v: isinstance(v, str),
-        "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-        "number": lambda v: (isinstance(v, int | float) and not isinstance(v, bool)),
-        "boolean": lambda v: isinstance(v, bool),
-        "object": lambda v: isinstance(v, dict),
-        "array": lambda v: isinstance(v, list),
-    }
-    for t in types:
-        checker = checks.get(t)
-        if checker is None or checker(value):
-            return True, _format_expected(types)
-    return False, _format_expected(types)
-
-
-def _format_expected(types: list[str]) -> str:
-    return " or ".join(types)
 
 
 def _format_pydantic_errors(exc: ValidationError) -> list[str]:
     errors = []
     for error in exc.errors():
-        location = ".".join(str(part) for part in error.get("loc", ())) or "<root>"
         error_type = error.get("type")
+        if error_type == "json_invalid":
+            errors.append("arguments JSON could not be parsed")
+            continue
+        location = ".".join(str(part) for part in error.get("loc", ())) or "<root>"
         if error_type == "missing":
             errors.append(f"missing required field '{location}'")
         elif error_type == "extra_forbidden":

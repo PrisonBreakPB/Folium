@@ -1,7 +1,16 @@
 """File pattern matching."""
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
+
+
+class GlobArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    pattern: str = Field(description="Glob pattern, e.g. '**/*.py' or 'src/**/*.ts'")
+    path: str = Field(default=".", description="Directory to search in (default: cwd)")
 
 
 class GlobTool(Tool):
@@ -10,20 +19,7 @@ class GlobTool(Tool):
         "Find files matching a glob pattern. "
         "Supports ** for recursive matching (e.g. '**/*.py')."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "Glob pattern, e.g. '**/*.py' or 'src/**/*.ts'",
-            },
-            "path": {
-                "type": "string",
-                "description": "Directory to search in (default: cwd)",
-            },
-        },
-        "required": ["pattern"],
-    }
+    args_model = GlobArgs
 
     def execute(self, pattern: str, path: str = ".") -> str:
         try:

@@ -8,11 +8,21 @@ and makes edits safe and reviewable.
 
 import difflib
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool, ToolOutput
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # track files changed this session for /diff
 _changed_files: set[str] = set()
+
+
+class EditFileArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    file_path: str = Field(description="Path to the file to edit")
+    old_string: str = Field(description="Exact text to find (must be unique in file)")
+    new_string: str = Field(description="Replacement text")
 
 
 class EditFileTool(Tool):
@@ -25,24 +35,7 @@ class EditFileTool(Tool):
         "Never use this tool to modify memory.md; use the memory tool to manage persistent long-term memory. "
         "Do not edit files through bash with sed or awk."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "file_path": {
-                "type": "string",
-                "description": "Path to the file to edit",
-            },
-            "old_string": {
-                "type": "string",
-                "description": "Exact text to find (must be unique in file)",
-            },
-            "new_string": {
-                "type": "string",
-                "description": "Replacement text",
-            },
-        },
-        "required": ["file_path", "old_string", "new_string"],
-    }
+    args_model = EditFileArgs
 
     def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput:
         try:

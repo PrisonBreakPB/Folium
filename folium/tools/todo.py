@@ -1,5 +1,7 @@
 """Todo list tool for long-running agent tasks."""
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .base import Tool
 
 
@@ -61,6 +63,12 @@ class TodoManager:
         self.items.clear()
 
 
+class TodoArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    items: list[dict] = Field(description="Full replacement todo list. Each item: {id, text, status} where status is pending|in_progress|completed")
+
+
 class TodoTool(Tool):
     name = "todo"
     description = (
@@ -68,28 +76,7 @@ class TodoTool(Tool):
         "Use this to create a plan, mark exactly one task in_progress, "
         "and mark completed tasks as work finishes."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "items": {
-                "type": "array",
-                "description": "Full replacement todo list.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "id": {"type": "string"},
-                        "text": {"type": "string"},
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "completed"],
-                        },
-                    },
-                    "required": ["id", "text", "status"],
-                },
-            },
-        },
-        "required": ["items"],
-    }
+    args_model = TodoArgs
 
     def __init__(self, manager: TodoManager | None = None):
         self.manager = manager or TodoManager()

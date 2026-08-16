@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool
 
@@ -22,9 +22,11 @@ NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/
 class ArxivSearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    query: str
-    max_results: int = DEFAULT_RESULTS
-    sort: Literal["relevance", "date"] = "relevance"
+    query: str = Field(description="Search query or topic")
+    max_results: int = Field(default=DEFAULT_RESULTS, description="Maximum results (default 5, max 20)")
+    sort: Literal["relevance", "date"] = Field(default="relevance", description="Sort order: relevance (default) or date (newest first)")
+    year_from: int | None = Field(default=None, description="Filter papers published from this year (inclusive)")
+    year_to: int | None = Field(default=None, description="Filter papers published up to this year (inclusive)")
 
 
 class ArxivSearchTool(Tool):
@@ -34,25 +36,6 @@ class ArxivSearchTool(Tool):
         "authors, abstract, and PDF link. Default: last 1 year only. "
         "Use for latest preprints or when paper_search has no results."
     )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query or topic",
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "Maximum results (default 5, max 20)",
-            },
-            "sort": {
-                "type": "string",
-                "enum": ["relevance", "date"],
-                "description": "Sort order: relevance (default) or date (newest first)",
-            },
-        },
-        "required": ["query"],
-    }
     args_model = ArxivSearchArgs
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",

@@ -24,7 +24,12 @@ from .observability.redaction import compact_payload
 class ToolCall:
     id: str
     name: str
-    arguments: dict
+    arguments: str  # raw JSON string as sent by the model
+
+    def __post_init__(self):
+        # Serialize a dict for ergonomic construction (tests, callers).
+        if not isinstance(self.arguments, str):
+            self.arguments = json.dumps(self.arguments)
 
 
 @dataclass
@@ -46,7 +51,7 @@ class LLMResponse:
                     "type": "function",
                     "function": {
                         "name": tc.name,
-                        "arguments": json.dumps(tc.arguments),
+                        "arguments": tc.arguments,
                     },
                 }
                 for tc in self.tool_calls
@@ -148,20 +153,30 @@ def _tools_to_responses(tools: list[dict]) -> list[dict]:
 
 
 def _parse_function_call_item(item) -> ToolCall:
-    """Parse a Responses function_call output item into a ToolCall."""
-    raw_args = getattr(item, "arguments", "") or ""
-    try:
-        args = json.loads(raw_args) if raw_args else {}
-    except json.JSONDecodeError as e:
-        args = {
-            "__malformed_arguments__": raw_args,
-            "__parse_error__": str(e),
-        }
+    """Build a ToolCall from a Responses function_call output item."""
     return ToolCall(
         id=getattr(item, "call_id", "") or "",
         name=getattr(item, "name", "") or "",
-        arguments=args,
+        arguments=getattr(item, "arguments", "") or "",
     )
+
+
+def parse_arguments_lenient(arguments) -> dict:
+    """Best-effort parse of raw tool-call arguments, for pre-validation routing/display.
+
+    Accepts a raw JSON string (or an already-parsed dict) and returns a dict;
+    returns {} when the JSON is malformed or not an object. Strict validation
+    stays in ``Tool.validate_arguments``.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if not arguments:
+        return {}
+    try:
+        data = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class LLMProviderError(RuntimeError):
@@ -361,22 +376,11 @@ class LLM:
                         if tc_delta.function.arguments:
                             tc_map[idx]["args"] += tc_delta.function.arguments
 
-        # parse accumulated tool calls
+        # collect accumulated tool calls (arguments stay as the raw JSON string)
         parsed: list[ToolCall] = []
         for idx in sorted(tc_map):
             raw = tc_map[idx]
-            try:
-                args = json.loads(raw["args"])
-            except json.JSONDecodeError as e:
-                # Don't silently drop arguments — return the raw string as a
-                # special "malformed_arguments" tool call so the agent loop can
-                # feed the parse error back to the LLM instead of cycling on
-                # empty args forever.
-                args = {
-                    "__malformed_arguments__": raw["args"],
-                    "__parse_error__": str(e),
-                }
-            parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=args))
+            parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=raw["args"]))
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
@@ -674,14 +678,7 @@ class LiteLLM(LLM):
         parsed: list[ToolCall] = []
         for idx in sorted(tc_map):
             raw = tc_map[idx]
-            try:
-                args = json.loads(raw["args"])
-            except json.JSONDecodeError as e:
-                args = {
-                    "__malformed_arguments__": raw["args"],
-                    "__parse_error__": str(e),
-                }
-            parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=args))
+            parsed.append(ToolCall(id=raw["id"], name=raw["name"], arguments=raw["args"]))
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok

@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass
 from .skills.types import Skill
-from .llm import LLM, LLMResponse, estimate_cost
+from .llm import LLM, LLMResponse, estimate_cost, parse_arguments_lenient
 from .tools import create_tools
 from .tools.base import Tool, ToolOutput, ToolValidationError
 from .tools.agent import AgentTool
@@ -56,6 +56,27 @@ FINAL_ROUND_REMINDER = (
     "</reminder>"
 )
 
+TOOL_PARAMETER_WARN = (
+    "Several of your recent tool calls had invalid arguments and were rejected. "
+    "Stop retrying them unchanged; fix the arguments, change strategy, or explain the blocker."
+)
+TOOL_EXECUTION_WARN = (
+    "Several of your recent tool calls failed during execution. "
+    "Stop retrying them unchanged; change strategy or explain the blocker."
+)
+
+
+def _failure_halt_message(tool_name, code, count) -> str:
+    """Hardcoded user-facing halt message (Hermes guardrail_halt style)."""
+    tool = tool_name or "a tool"
+    return (
+        f"I stopped retrying {tool} because it hit the tool-call guardrail "
+        f"({code}) after {count} repeated non-progressing attempts. "
+        "The last tool result explains the blocker; the next step is to "
+        "change strategy instead of repeating the same call."
+    )
+
+
 _SERIAL_TOOLS = {"bash", "agent"}
 _NEVER_PARALLEL_TOOLS = {"memory"}
 _FILE_TOOLS = {"read_file", "write_file", "edit_file"}
@@ -91,7 +112,7 @@ def _should_parallelize_tool_batch(tool_calls) -> bool:
 
 
 def _resolve_file_tool_path(tool_call):
-    file_path = tool_call.arguments.get("file_path")
+    file_path = parse_arguments_lenient(tool_call.arguments).get("file_path")
     if not isinstance(file_path, str) or not file_path:
         return None
     try:
@@ -137,6 +158,9 @@ class Agent:
         max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS,
         max_rounds: int = 50,
         max_bad_tool_calls: int = 5,
+        max_bad_tool_calls_warn: int = 3,
+        max_tool_errors: int = 5,
+        max_tool_errors_warn: int = 3,
         tool_timeout: int = 120,
         skills: list[Skill] | None = None,
         system_addendum: str | None = None,
@@ -148,6 +172,9 @@ class Agent:
         self.context = ContextManager(max_tokens=max_context_tokens)
         self.max_rounds = max_rounds
         self.max_bad_tool_calls = max_bad_tool_calls
+        self.max_bad_tool_calls_warn = max_bad_tool_calls_warn
+        self.max_tool_errors = max_tool_errors
+        self.max_tool_errors_warn = max_tool_errors_warn
         self.tool_timeout = tool_timeout
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self._skill_sources = (
@@ -258,6 +285,10 @@ class Agent:
         self._maybe_compress_observed("after_user_message", new_message_tokens=_approx_tokens(user_input))
         self._emit_context_update(on_event)
         bad_tool_calls = 0
+        tool_error_calls = 0
+        bad_warned = False
+        error_warned = False
+        last_failed_tool = None
 
         for round_index in range(1, self.max_rounds + 1):
             is_final_round = round_index == self.max_rounds
@@ -324,7 +355,9 @@ class Agent:
                     used_todo = used_todo or (tc.name == "todo" and result.status == "ok")
                     tool_tokens += _approx_tokens(result.content)
                     self._emit_context_update(on_event)
-                    bad_tool_calls = self._count_bad_tool_call_streak(result, bad_tool_calls)
+                    bad_tool_calls, tool_error_calls = self._advance_failure_streaks(result, bad_tool_calls, tool_error_calls)
+                    if result.status in ("bad_arguments", "error"):
+                        last_failed_tool = tc.name
 
                 if any(result.status == "rejected" for result in results):
                     self._emit_event(
@@ -337,9 +370,24 @@ class Agent:
 
                 self._update_todo_nag_state(used_todo, on_event)
 
+                # N1: warn (inject a hint, keep tools available) when a failure
+                # streak crosses its warn threshold.
+                if bad_tool_calls >= self.max_bad_tool_calls_warn and not bad_warned:
+                    self._emit_event(on_event, "agent_status", message="Tool parameter errors; warning injected", status="error")
+                    self._append_message({"role": "user", "content": TOOL_PARAMETER_WARN})
+                    bad_warned = True
+                if tool_error_calls >= self.max_tool_errors_warn and not error_warned:
+                    self._emit_event(on_event, "agent_status", message="Tool execution errors; warning injected", status="error")
+                    self._append_message({"role": "user", "content": TOOL_EXECUTION_WARN})
+                    error_warned = True
+
+                # N2: soft stop (hardcoded assistant message, no extra LLM call).
                 if bad_tool_calls >= self.max_bad_tool_calls:
-                    self._emit_event(on_event, "agent_status", message="Consecutive tool parameter errors, task stopped", status="error")
-                    return f"Consecutive {bad_tool_calls} tool call failures, current task stopped."
+                    self._emit_event(on_event, "agent_status", message="Tool parameter errors; task stopped", status="error")
+                    return _failure_halt_message(last_failed_tool, "parameter_validation_failure", bad_tool_calls)
+                if tool_error_calls >= self.max_tool_errors:
+                    self._emit_event(on_event, "agent_status", message="Tool execution errors; task stopped", status="error")
+                    return _failure_halt_message(last_failed_tool, "execution_failure", tool_error_calls)
 
                 # compress if tool outputs are big
                 self._maybe_compress_observed("after_tool_results", on_event=on_event, new_message_tokens=tool_tokens)
@@ -395,7 +443,7 @@ class Agent:
         if prepared_changes:
             for tc in tool_calls:
                 if on_tool:
-                    on_tool(tc.name, tc.arguments)
+                    on_tool(tc.name, parse_arguments_lenient(tc.arguments))
                 self._emit_tool_start(on_event, tc)
 
             approved_results = self._execute_protected_file_change_set(
@@ -418,17 +466,17 @@ class Agent:
                         result = self._exec_tool(tc)
                 results.append(result)
                 if on_tool:
-                    on_tool(tc.name, tc.arguments, result.status)
+                    on_tool(tc.name, parse_arguments_lenient(tc.arguments), result.status)
             return results
 
         if len(tool_calls) == 1:
             tc = tool_calls[0]
             if on_tool:
-                on_tool(tc.name, tc.arguments)
+                on_tool(tc.name, parse_arguments_lenient(tc.arguments))
             self._emit_tool_start(on_event, tc)
             result = self._exec_tool(tc)
             if on_tool:
-                on_tool(tc.name, tc.arguments, result.status)
+                on_tool(tc.name, parse_arguments_lenient(tc.arguments), result.status)
             return [result]
 
         # Keep bash and sub-agent calls serial; other tools can run together.
@@ -436,18 +484,18 @@ class Agent:
             results = []
             for tc in tool_calls:
                 if on_tool:
-                    on_tool(tc.name, tc.arguments)
+                    on_tool(tc.name, parse_arguments_lenient(tc.arguments))
                 self._emit_tool_start(on_event, tc)
                 result = self._exec_tool(tc)
                 if on_tool:
-                    on_tool(tc.name, tc.arguments, result.status)
+                    on_tool(tc.name, parse_arguments_lenient(tc.arguments), result.status)
                 results.append(result)
                 if result.status in {"rejected", "revision_requested"}:
                     for skipped_tc in tool_calls[len(results):]:
                         skipped = self._skipped_after_change_set_decision(result.status)
                         self._record_preapproved_tool_result(skipped_tc, skipped)
                         if on_tool:
-                            on_tool(skipped_tc.name, skipped_tc.arguments, skipped.status)
+                            on_tool(skipped_tc.name, parse_arguments_lenient(skipped_tc.arguments), skipped.status)
                         results.append(skipped)
                     break
             return results
@@ -633,7 +681,7 @@ class Agent:
             "tool_call_id": tc.id,
             "tool_name": tc.name,
             "arguments": compact_payload(
-                tc.arguments,
+                parse_arguments_lenient(tc.arguments),
                 include_full=cfg.full_tool_args,
                 max_preview_chars=cfg.max_preview_chars,
                 redact=cfg.redact_secrets,
@@ -762,7 +810,7 @@ class Agent:
         """
         for tc in tool_calls:
             if on_tool:
-                on_tool(tc.name, tc.arguments)
+                on_tool(tc.name, parse_arguments_lenient(tc.arguments))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             futures = [
@@ -773,7 +821,7 @@ class Agent:
 
         if on_tool:
             for tc, result in zip(tool_calls, results):
-                on_tool(tc.name, tc.arguments, result.status)
+                on_tool(tc.name, parse_arguments_lenient(tc.arguments), result.status)
         return results
 
     def _maybe_require_bash_approval(self, tc, arguments: dict) -> str | None:
@@ -807,7 +855,7 @@ class Agent:
             on_event,
             "tool_start",
             name=tc.name,
-            arguments_preview=_brief_arguments(tc.arguments),
+            arguments_preview=_brief_arguments(parse_arguments_lenient(tc.arguments)),
         )
 
     def _emit_tool_result(self, on_event, tc, result: ToolExecutionResult):
@@ -893,10 +941,12 @@ class Agent:
         return None
 
     @staticmethod
-    def _count_bad_tool_call_streak(result: ToolExecutionResult, current: int) -> int:
+    def _advance_failure_streaks(result: ToolExecutionResult, bad_streak: int, error_streak: int) -> tuple[int, int]:
         if result.status == "bad_arguments":
-            return current + 1
-        return 0
+            return bad_streak + 1, 0
+        if result.status == "error":
+            return 0, error_streak + 1
+        return 0, 0
 
     def _refresh_system_prompt(self) -> None:
         """Refresh default skills or the caller-provided skill scope."""
