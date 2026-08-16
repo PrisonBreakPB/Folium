@@ -37,6 +37,7 @@ class Config:
     temperature: float = 0.0
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
+    api_format: str = "chat_completions"
     token_estimator: str = "deepseek"
     memory_maintenance_turns: int = 10
     memory_maintenance_max_steps: int = 5
@@ -61,6 +62,7 @@ class Config:
             temperature=float(os.getenv("FOLIUM_TEMPERATURE", "0")),
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
+            api_format=os.getenv("FOLIUM_API_FORMAT", "chat_completions"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
             memory_maintenance_turns=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")

@@ -198,6 +198,7 @@ def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryAgent:
         base_url=getattr(config, "base_url", None),
         temperature=getattr(config, "temperature", 0.0),
         max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
+        api_format=getattr(agent.llm, "api_format", "chat_completions"),
     )
     return MemoryAgent(
         llm,

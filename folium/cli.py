@@ -70,6 +70,7 @@ def main():
         base_url=config.base_url,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
+        api_format=config.api_format,
     )
     agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
 

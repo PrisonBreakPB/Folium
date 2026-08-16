@@ -111,6 +111,7 @@ FOLIUM_API_KEY              Folium 专用 API key，优先级高于 OPENAI_API_K
 FOLIUM_BASE_URL             Folium 专用 base URL
 FOLIUM_MODEL                默认模型，默认 gpt-4o
 FOLIUM_PROVIDER             openai 或 litellm
+FOLIUM_API_FORMAT           API 格式：chat_completions（默认）或 responses
 FOLIUM_MAX_TOKENS           单次输出 token 上限
 FOLIUM_TEMPERATURE          采样温度
 FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
@@ -128,6 +129,8 @@ FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance b
 FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           Maximum maintenance model/tool rounds (default 5)
 FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (default 2000)
 ```
+
+Responses 模式说明：设置 `FOLIUM_API_FORMAT=responses` 可切换到 OpenAI Responses API 格式（仅 `FOLIUM_PROVIDER=openai` 生效，LiteLLM 保持 Chat Completions）。DeepSeek 的 Responses 端点只支持 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，为无状态接口、支持 function calling；切换时需同时把 `FOLIUM_MODEL` 换成上述模型之一。
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
 

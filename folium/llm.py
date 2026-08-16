@@ -89,6 +89,81 @@ def _trace_input_payload(messages: list[dict], cfg, trace_input: bool) -> dict:
     )
 
 
+def _messages_to_responses_input(messages: list[dict]) -> tuple[str | None, list[dict]]:
+    """Translate internal Chat-Completions messages into Responses `input` items.
+
+    Returns (instructions, items): system messages fold into `instructions`,
+    everything else becomes Responses input items.
+    """
+    system_parts: list[str] = []
+    items: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system":
+            if content:
+                system_parts.append(content)
+        elif role == "user":
+            items.append({
+                "role": "user",
+                "content": [{"type": "input_text", "text": content or ""}],
+            })
+        elif role == "assistant":
+            if content:
+                items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}],
+                })
+            for tc in msg.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id"),
+                    "name": fn.get("name"),
+                    "arguments": fn.get("arguments", ""),
+                })
+        elif role == "tool":
+            items.append({
+                "type": "function_call_output",
+                "call_id": msg.get("tool_call_id"),
+                "output": content or "",
+            })
+    instructions = "\n".join(system_parts) if system_parts else None
+    return instructions, items
+
+
+def _tools_to_responses(tools: list[dict]) -> list[dict]:
+    """Flatten Chat-Completions tool schemas into Responses tool format."""
+    flat: list[dict] = []
+    for tool in tools:
+        fn = tool.get("function") or {}
+        flat.append({
+            "type": "function",
+            "name": fn.get("name"),
+            "description": fn.get("description"),
+            "parameters": fn.get("parameters"),
+        })
+    return flat
+
+
+def _parse_function_call_item(item) -> ToolCall:
+    """Parse a Responses function_call output item into a ToolCall."""
+    raw_args = getattr(item, "arguments", "") or ""
+    try:
+        args = json.loads(raw_args) if raw_args else {}
+    except json.JSONDecodeError as e:
+        args = {
+            "__malformed_arguments__": raw_args,
+            "__parse_error__": str(e),
+        }
+    return ToolCall(
+        id=getattr(item, "call_id", "") or "",
+        name=getattr(item, "name", "") or "",
+        arguments=args,
+    )
+
+
 class LLMProviderError(RuntimeError):
     def __init__(self, info: LLMErrorInfo):
         self.info = info
@@ -174,6 +249,7 @@ class LLM:
     ):
         self.model = model
         self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.api_format = kwargs.pop("api_format", "chat_completions")
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -211,7 +287,10 @@ class LLM:
             },
             "input": _trace_input_payload(messages, cfg, trace_input),
         }
-        with span("chat.completions", "llm", metadata=llm_metadata):
+        span_name = "responses" if self.api_format == "responses" else "chat.completions"
+        with span(span_name, "llm", metadata=llm_metadata):
+            if self.api_format == "responses":
+                return self._chat_observed_responses(messages, tools, on_token)
             return self._chat_observed(messages, tools, on_token)
 
     def _chat_observed(
@@ -353,11 +432,115 @@ class LLM:
         })
         return response
 
-    def _call_with_retry(self, params: dict, max_retries: int = 3, record_errors: bool = True):
+    def _chat_observed_responses(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        on_token=None,
+    ) -> LLMResponse:
+        """Send messages via the Responses API, stream back, handle tool calls."""
+        instructions, items = _messages_to_responses_input(messages)
+        params: dict = {
+            "model": self.model,
+            "input": items,
+            "stream": True,
+        }
+        if instructions:
+            params["instructions"] = instructions
+        if tools:
+            params["tools"] = _tools_to_responses(tools)
+        if "max_tokens" in self.extra:
+            params["max_output_tokens"] = self.extra["max_tokens"]
+        for key in ("temperature", "top_p"):
+            if key in self.extra:
+                params[key] = self.extra[key]
+
+        stream = self._call_with_retry(params, _create=self.client.responses.create)
+
+        content_parts: list[str] = []
+        parsed: list[ToolCall] = []
+        prompt_tok = 0
+        completion_tok = 0
+        cached_tok = 0
+        first_token_at = None
+        stream_started_at = time.time()
+
+        for event in _iter_stream(stream, provider="openai"):
+            etype = getattr(event, "type", None)
+            if etype == "response.output_text.delta":
+                delta = getattr(event, "delta", None)
+                if delta:
+                    if first_token_at is None:
+                        first_token_at = time.time()
+                    content_parts.append(delta)
+                    if on_token:
+                        on_token(delta)
+            elif etype == "response.output_item.done":
+                item = getattr(event, "item", None)
+                if item is not None and getattr(item, "type", None) == "function_call":
+                    parsed.append(_parse_function_call_item(item))
+            elif etype == "response.completed":
+                resp = getattr(event, "response", None)
+                usage = getattr(resp, "usage", None)
+                if usage:
+                    prompt_tok = getattr(usage, "input_tokens", 0) or 0
+                    completion_tok = getattr(usage, "output_tokens", 0) or 0
+                    details = getattr(usage, "input_tokens_details", None)
+                    cached_tok = (getattr(details, "cached_tokens", 0) if details else 0) or 0
+            elif etype == "response.failed":
+                resp = getattr(event, "response", None)
+                error = getattr(resp, "error", None)
+                raise LLMProviderError(LLMErrorInfo(
+                    message=str(error) if error else "response.failed",
+                    provider="openai",
+                    error_type="response.failed",
+                ))
+
+        self.total_prompt_tokens += prompt_tok
+        self.total_completion_tokens += completion_tok
+        self.total_cached_tokens += cached_tok
+        self.last_prompt_tokens = prompt_tok
+        self.last_completion_tokens = completion_tok
+
+        response = LLMResponse(
+            content="".join(content_parts),
+            tool_calls=parsed,
+            prompt_tokens=prompt_tok,
+            completion_tokens=completion_tok,
+            cached_tokens=cached_tok,
+        )
+        cfg = active_observer().config
+        active_observer().record({
+            "event": "llm_result",
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
+            "name": "responses",
+            "type": "llm",
+            "metadata": {
+                "model": self.model,
+                "prompt_tokens": prompt_tok,
+                "completion_tokens": completion_tok,
+                "tool_call_count": len(parsed),
+                "time_to_first_token_ms": (
+                    int((first_token_at - stream_started_at) * 1000)
+                    if first_token_at is not None else None
+                ),
+                "output": compact_payload(
+                    response.content,
+                    include_full=cfg.full_llm_output,
+                    max_preview_chars=cfg.max_preview_chars,
+                    redact=cfg.redact_secrets,
+                ),
+            },
+        })
+        return response
+
+    def _call_with_retry(self, params: dict, max_retries: int = 3, record_errors: bool = True, _create=None):
         """Retry on transient errors with exponential backoff."""
+        create = _create if _create is not None else self.client.chat.completions.create
         for attempt in range(max_retries):
             try:
-                return self.client.chat.completions.create(**params)
+                return create(**params)
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                 info = _openai_error_info(e, provider="openai", retryable=True)
                 if attempt == max_retries - 1:
@@ -402,6 +585,7 @@ class LiteLLM(LLM):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
+        self.api_format = kwargs.pop("api_format", "chat_completions")
         self.extra = kwargs
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
