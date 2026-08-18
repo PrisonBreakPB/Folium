@@ -129,7 +129,7 @@ class AgentToolTests(unittest.TestCase):
                 tool = next(t for t in parent.tools if isinstance(t, AgentTool))
 
                 result = tool.execute(task="write sub.py", agent_type="general", timeout=30)
-                self.assertEqual(approvals, [("write_file", str(Path(tmp) / "sub.py"))])
+                self.assertEqual(approvals, [("write_file", str(Path(tmp).resolve() / "sub.py"))])
                 self.assertFalse((Path(tmp) / "sub.py").exists())
             finally:
                 if old_workspace is None:
