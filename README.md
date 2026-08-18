@@ -11,16 +11,11 @@
   <img src="https://img.shields.io/github/last-commit/PrisonBreakPB/Folium?label=updated" alt="Last commit">
 </p>
 
-<p align="center">
-  <em>论文检索 · 理论推导 · 仿真实验闭环 —— 一个正在演进中的科研 Agent 工作助手</em>
-</p>
-
 ---
 
 ## 目录
 
 - [适用场景](#适用场景)
-- [面向的科研闭环](#面向的科研闭环)
 - [快速开始](#快速开始)
 - [已实现能力](#已实现能力)
 - [Web 界面](#web-界面)
@@ -39,25 +34,14 @@ Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助
 
 ## 适用场景
 
-| 场景 | Folium 提供的支持 |
-| --- | --- |
-| 学术调研 | 检索论文、补全元数据、读取网页和 PDF 内容 |
-| 理论研究 | 面向控制理论的公式、假设、Lyapunov 推导与 LMI 检查能力建设 |
-| 实验验证 | 生成、执行和分析 Python 仿真实验 |
-| Agent 工程 | 工具参数校验、Docker 沙箱、上下文压缩、SQLite 持久化与 trace |
+Folium 覆盖科研工作的四个核心环节：
 
-## 面向的科研闭环
+- **学术调研** — 检索论文、补全元数据、读取网页和 PDF 内容
+- **理论研究** — 面向控制理论的公式、假设、Lyapunov 推导与 LMI 检查能力建设
+- **实验验证** — 生成、执行和分析 Python 仿真实验
+- **Agent 工程** — 工具参数校验、Docker 沙箱、上下文压缩、SQLite 持久化与 trace
 
-```mermaid
-flowchart LR
-    A["研究课题"] --> B["文献检索<br/>paper_search / arxiv_search"]
-    B --> C["论文阅读<br/>PDF 与结构化笔记"]
-    C --> D["理论检查<br/>假设、推导、稳定性"]
-    D --> E["实验验证<br/>代码、运行、结果"]
-    E --> F["研究产物<br/>综述、报告、论文材料"]
-```
-
-> 其中学术检索、PDF 读取与工程 Harness 已具备基础能力；理论检查、结构化论文库和实验闭环仍在持续建设。
+> 学术检索、PDF 读取与工程 Harness 已具备基础能力；理论检查、结构化论文库和实验闭环仍在持续建设。
 
 ## 快速开始
 
