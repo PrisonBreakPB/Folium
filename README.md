@@ -1,14 +1,39 @@
-<div align="center">
-  <h1>Folium</h1>
-  <p>面向控制理论科研任务的 AI Agent</p>
-  <p>
-    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
-    <img src="https://img.shields.io/badge/FastAPI-Web%20UI-009688?logo=fastapi&logoColor=white" alt="FastAPI Web UI">
-    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3DA639" alt="MIT License"></a>
-  </p>
-</div>
+<p align="center">
+  <img src="docs/images/folium-hero.png" alt="Folium">
+</p>
 
-Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助你检索与阅读论文、检查控制理论中的关键推导、生成并运行仿真实验，以及沉淀可复盘的研究过程。项目同时建设工具调用、沙箱执行、记忆和可观测性等 Agent Harness 组件。
+<p align="center">
+  <a href="https://github.com/PrisonBreakPB/Folium/actions"><img src="https://img.shields.io/github/actions/workflow/status/PrisonBreakPB/Folium/ci.yml?label=CI&logo=github&logoColor=white" alt="CI"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
+  <img src="https://img.shields.io/badge/FastAPI-Web%20UI-009688?logo=fastapi&logoColor=white" alt="FastAPI Web UI">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3DA639" alt="MIT License"></a>
+  <a href="https://github.com/PrisonBreakPB/Folium/stargazers"><img src="https://img.shields.io/github/stars/PrisonBreakPB/Folium?style=social" alt="Stars"></a>
+  <img src="https://img.shields.io/github/last-commit/PrisonBreakPB/Folium?label=updated" alt="Last commit">
+</p>
+
+<p align="center">
+  <em>论文检索 · 理论推导 · 仿真实验闭环 —— 一个正在演进中的科研 Agent 工作助手</em>
+</p>
+
+---
+
+## 目录
+
+- [适用场景](#适用场景)
+- [面向的科研闭环](#面向的科研闭环)
+- [快速开始](#快速开始)
+- [已实现能力](#已实现能力)
+- [Web 界面](#web-界面)
+- [工具系统](#工具系统)
+- [Skills](#skills)
+- [上下文压缩](#上下文压缩)
+- [本地可观测性](#本地可观测性)
+- [项目结构](#项目结构)
+- [科研智能体改造方向](#科研智能体改造方向)
+- [测试](#测试)
+- [License](#license)
+
+Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助你检索与阅读论文、检查控制理论中的关键推导、生成并运行仿真实验，并沉淀可复盘的研究过程。项目同时建设**工具调用、Docker 沙箱、记忆和可观测性**等 Agent Harness 组件。
 
 ![Folium Web UI](docs/images/folium-web-ui.png)
 
@@ -57,17 +82,6 @@ python -m folium
 ```
 
 浏览器访问 <http://localhost:8000>。
-
-## 已实现能力
-
-- Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
-- OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
-- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
-- 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
-- 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
-- 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
-- Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
-- 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
 
 <details>
 <summary>完整安装、运行与环境配置</summary>
@@ -142,6 +156,17 @@ FOLIUM_MODEL=qwen3:32b
 
 </details>
 
+## 已实现能力
+
+- Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
+- OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
+- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
+- 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
+- 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
+- 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
+- Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
+- 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
+
 ## Web 界面
 
 Web 入口提供：
@@ -159,13 +184,13 @@ Web 入口提供：
 
 当前行为说明：
 
-- 点击“新建对话”会进入一个空白对话状态
+- 点击"新建对话"会进入一个空白对话状态
 - 空白对话不会立刻持久化
 - 发送第一条消息后，对话才会保存到 `data/folium.db`
 - 切换到其他对话前，当前已有内容的对话会自动保存
 - 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
 
-## 工具
+## 工具系统
 
 内置工具位于 `folium/tools/`：
 

@@ -25,6 +25,7 @@ output*.txt
 show.py
 AGENTS.md
 RESEARCH_AGENT_ROADMAP.md
+memory.md
 
 # scratch / temp files
 .run/
