@@ -30,7 +30,7 @@ from .skills import load_skills
 from .skills.parser import parse_skill_file
 from .observability import mark_current_span_status, observe_trace, span
 from .observability.context import active_observer, current_span_id, current_trace_id
-from .observability.redaction import compact_payload
+from .observability.redaction import compact_payload, stable_hash
 from .encoding import repair_mojibake_text
 from .edit_approval import (
     FileChangeProposal,
@@ -280,6 +280,7 @@ class Agent:
         )
         metadata = {
             "model": self.llm.model,
+            "system_prompt_hash": stable_hash(self._system),
             "user_input": user_payload,
             "max_rounds": self.max_rounds,
         }

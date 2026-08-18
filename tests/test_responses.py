@@ -174,6 +174,35 @@ def test_chat_observed_responses_parses_events_and_params():
     assert "instructions" not in captured
 
 
+def test_chat_observed_responses_records_raw_tool_args():
+    llm = _make_llm()
+    events = [
+        SimpleNamespace(type="response.output_item.done",
+                        item=SimpleNamespace(type="function_call", call_id="c1",
+                                             name="bash", arguments='{"cmd": ')),
+    ]
+
+    observer = _fake_observer()
+    observer.config.full_tool_args = False
+    recorded = []
+    observer.record.side_effect = recorded.append
+
+    def fake_call(params, **kwargs):
+        return iter(events)
+
+    with (
+        mock.patch.object(llm, "_call_with_retry", side_effect=fake_call),
+        mock.patch("folium.llm.active_observer", return_value=observer),
+    ):
+        llm._chat_observed_responses(messages=[{"role": "user", "content": "hi"}])
+
+    result = next(e for e in recorded if e["event"] == "llm_result")
+    raw = result["metadata"]["tool_calls_raw_args"]
+    assert list(raw) == ["0:bash"]
+    assert raw["0:bash"]["preview"] == '{"cmd": '
+    assert "value" not in raw["0:bash"]
+
+
 def test_chat_observed_responses_failed_raises():
     llm = _make_llm()
     events = [SimpleNamespace(type="response.failed",

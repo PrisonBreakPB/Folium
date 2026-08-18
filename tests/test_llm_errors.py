@@ -132,6 +132,40 @@ def test_stream_options_does_not_mask_auth_errors():
     assert raised.value.info.status_code == 401
 
 
+def test_retry_success_records_llm_retry_event():
+    import httpx
+    from types import SimpleNamespace
+    from openai import APIConnectionError
+
+    llm = LLM.__new__(LLM)
+    llm.model = "test-model"
+    llm.extra = {}
+    calls = []
+
+    def flaky_create(**params):
+        calls.append(params)
+        if len(calls) == 1:
+            raise APIConnectionError(request=httpx.Request("POST", "http://localhost"))
+        return object()
+
+    llm.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=flaky_create))
+    )
+
+    recorded = []
+    fake_observer = mock.Mock()
+    fake_observer.record.side_effect = recorded.append
+
+    with mock.patch("folium.llm.active_observer", return_value=fake_observer):
+        llm._call_with_retry({"model": "test-model", "messages": []})
+
+    retries = [e for e in recorded if e["event"] == "llm_retry"]
+    assert len(retries) == 1
+    assert retries[0]["name"] == "chat.completions"
+    assert retries[0]["metadata"]["attempt"] == 2
+    assert "llm_error" not in [e["event"] for e in recorded]
+
+
 def test_stream_iteration_errors_are_wrapped():
     def broken_stream():
         raise RuntimeError("stream broke")

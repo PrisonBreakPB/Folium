@@ -149,6 +149,25 @@ class TestCallWithRetry:
         call_kwargs = self.fake.completion.call_args[1]
         assert "api_base" not in call_kwargs
 
+    def test_retry_success_records_llm_retry(self):
+        llm = LiteLLM(model="x")
+        self.fake.completion.side_effect = [
+            RuntimeError("rate_limit hit"),
+            _make_stream(["ok"]),
+        ]
+
+        recorded = []
+        fake_observer = mock.Mock()
+        fake_observer.record.side_effect = recorded.append
+
+        with mock.patch("folium.llm.active_observer", return_value=fake_observer):
+            llm._call_with_retry({"model": "x", "messages": [], "stream": True})
+
+        retries = [e for e in recorded if e["event"] == "llm_retry"]
+        assert len(retries) == 1
+        assert retries[0]["name"] == "litellm.completion"
+        assert retries[0]["metadata"]["attempt"] == 2
+
 
 # ---------------------------------------------------------------------------
 # chat() end-to-end (mocked)

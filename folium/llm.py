@@ -514,6 +514,15 @@ class LLM:
             cached_tokens=cached_tok,
         )
         cfg = active_observer().config
+        raw_tc_args = {
+            f"{idx}:{tc.name}": compact_payload(
+                tc.arguments,
+                include_full=cfg.full_tool_args,
+                max_preview_chars=cfg.max_preview_chars,
+                redact=cfg.redact_secrets,
+            )
+            for idx, tc in enumerate(parsed)
+        }
         active_observer().record({
             "event": "llm_result",
             "trace_id": current_trace_id(),
@@ -525,6 +534,7 @@ class LLM:
                 "prompt_tokens": prompt_tok,
                 "completion_tokens": completion_tok,
                 "tool_call_count": len(parsed),
+                "tool_calls_raw_args": raw_tc_args,
                 "time_to_first_token_ms": (
                     int((first_token_at - stream_started_at) * 1000)
                     if first_token_at is not None else None
@@ -542,9 +552,13 @@ class LLM:
     def _call_with_retry(self, params: dict, max_retries: int = 3, record_errors: bool = True, _create=None):
         """Retry on transient errors with exponential backoff."""
         create = _create if _create is not None else self.client.chat.completions.create
+        name = "responses" if _create is not None else "chat.completions"
         for attempt in range(max_retries):
             try:
-                return create(**params)
+                stream = create(**params)
+                if attempt > 0:
+                    _record_llm_retry(name, attempt + 1)
+                return stream
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                 info = _openai_error_info(e, provider="openai", retryable=True)
                 if attempt == max_retries - 1:
@@ -743,7 +757,10 @@ class LiteLLM(LLM):
 
         for attempt in range(max_retries):
             try:
-                return litellm.completion(**params)
+                stream = litellm.completion(**params)
+                if attempt > 0:
+                    _record_llm_retry("litellm.completion", attempt + 1)
+                return stream
             except Exception as e:
                 err = str(e).lower()
                 is_transient = any(
@@ -818,6 +835,18 @@ def _iter_stream(stream, provider: str):
         info = _stream_error_info(e, provider=provider)
         _record_llm_error(info, attempt=1)
         raise LLMProviderError(info) from e
+
+
+def _record_llm_retry(name: str, attempt: int) -> None:
+    active_observer().record({
+        "event": "llm_retry",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": name,
+        "type": "llm",
+        "status": "ok",
+        "metadata": {"attempt": attempt},
+    })
 
 
 def _record_llm_error(info: LLMErrorInfo, attempt: int) -> None:

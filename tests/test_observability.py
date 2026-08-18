@@ -132,6 +132,28 @@ class ObservabilityTests(unittest.TestCase):
             finally:
                 _observer_var.reset(token)
 
+    def test_trace_root_records_system_prompt_hash(self):
+        import tempfile
+        from pathlib import Path
+
+        from folium.observability.redaction import stable_hash
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "folium.db"
+            observer = Observer(ObservabilityConfig(database_path=db_path))
+            token = _observer_var.set(observer)
+            try:
+                agent = Agent(llm=NoToolLLM(), max_rounds=1)
+                self.assertEqual(agent.chat("hello"), "done")
+                trace_id = list_traces(db_path)[0]["trace_id"]
+                root = next(
+                    event for event in _events(db_path, trace_id)
+                    if event["event"] == "span_start" and "system_prompt_hash" in event["metadata"]
+                )
+                self.assertEqual(root["metadata"]["system_prompt_hash"], stable_hash(agent._system))
+            finally:
+                _observer_var.reset(token)
+
     def test_full_llm_snapshot_can_include_values(self):
         import tempfile
         from pathlib import Path
