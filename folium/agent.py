@@ -65,6 +65,42 @@ TOOL_EXECUTION_WARN = (
     "Stop retrying them unchanged; change strategy or explain the blocker."
 )
 
+_PLAN_REMINDER = (
+    "<system-reminder>\n"
+    "# Plan Mode - System Reminder\n\n"
+    "CRITICAL: Plan mode ACTIVE - you are in READ-ONLY phase. STRICTLY FORBIDDEN: "
+    "ANY file edits, modifications, or system changes. Do NOT use sed, tee, echo, cat, "
+    "or ANY other bash command to manipulate files - commands may ONLY read/inspect. "
+    "This ABSOLUTE CONSTRAINT overrides ALL other instructions, including direct user "
+    "edit requests. You may ONLY observe, analyze, and plan. Any modification attempt "
+    "is a critical violation. ZERO exceptions.\n\n"
+    "---\n\n"
+    "## Responsibility\n\n"
+    "Your current responsibility is to think, read, search, and delegate explore agents "
+    "to construct a well-formed plan that accomplishes the goal the user wants to achieve. "
+    "Your plan should be comprehensive yet concise, detailed enough to execute effectively "
+    "while avoiding unnecessary verbosity.\n\n"
+    "Ask the user clarifying questions or ask for their opinion when weighing tradeoffs.\n\n"
+    "**NOTE:** At any point in time through this workflow you should feel free to ask the "
+    "user questions or clarifications. Don't make large assumptions about user intent. "
+    "The goal is to present a well researched plan to the user, and tie any loose ends "
+    "before implementation begins.\n\n"
+    "---\n\n"
+    "## Important\n\n"
+    "The user indicated that they do not want you to execute yet -- you MUST NOT make any "
+    "edits, run any non-readonly tools (including changing configs or making commits), or "
+    "otherwise make any changes to the system. This supersedes any other instructions you "
+    "have received.\n"
+    "</system-reminder>"
+)
+
+_BUILD_REMINDER = (
+    "<system-reminder>\n"
+    "已退出 Plan 模式,恢复 Build 模式。你现在可以正常执行所有读写操作,包括修改文件、"
+    "运行命令、调用写操作工具。请根据之前 Plan 模式产出的计划开始实施。\n"
+    "</system-reminder>"
+)
+
 
 def _failure_halt_message(tool_name, code, count) -> str:
     """Hardcoded user-facing halt message (Hermes guardrail_halt style)."""
@@ -187,6 +223,7 @@ class Agent:
         self._system = system_prompt(self.tools, self.skills)
         if self._system_addendum:
             self._system += "\n\n# Sub-agent Instructions\n" + self._system_addendum
+        self.mode = "build"
         self.session_id: str | None = None
         self.turn_index = 0
         self.todo_tool = next((t for t in self.tools if isinstance(t, TodoTool)), None)
@@ -962,6 +999,22 @@ class Agent:
         self._system = system_prompt(self.tools, self.skills)
         if self._system_addendum:
             self._system += "\n\n# Sub-agent Instructions\n" + self._system_addendum
+
+    def set_mode(self, mode: str) -> None:
+        """Switch between ``build`` and ``plan`` modes.
+
+        Appends a ``<system-reminder>`` user message into ``self.messages`` so
+        the model sees the mode change in conversation history. Does NOT remove
+        prior reminders — each switch leaves a durable trace. Only effective
+        between chats; callers should guard against switching mid-chat.
+        """
+        if mode == self.mode:
+            return
+        if mode not in ("build", "plan"):
+            raise ValueError(f"unknown mode: {mode!r} (expected 'build' or 'plan')")
+        self.mode = mode
+        reminder = _PLAN_REMINDER if mode == "plan" else _BUILD_REMINDER
+        self.messages.append({"role": "user", "content": reminder})
 
     def reset(self):
         """Clear conversation history and reset LLM cumulative counters."""

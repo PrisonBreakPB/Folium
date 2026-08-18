@@ -45,6 +45,7 @@ _state = {
     "session_id": None,
     "dirty": False,
     "memory_maintenance": None,
+    "mode": "build",
 }
 _chat_lock = asyncio.Lock()
 _pending_approvals = {}
@@ -62,6 +63,10 @@ class CommandRequest(BaseModel):
 
 class SwitchRequest(BaseModel):
     session_id: str
+
+
+class ModeRequest(BaseModel):
+    mode: Literal["build", "plan"]
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -394,7 +399,12 @@ async def new_conversation():
 @app.get("/conversations")
 async def get_conversations():
     sessions = list_sessions()
-    return {"sessions": sessions, "current": _state["session_id"], "context_budget": _context_budget_payload()}
+    return {
+        "sessions": sessions,
+        "current": _state["session_id"],
+        "context_budget": _context_budget_payload(),
+        "mode": _state["mode"],
+    }
 
 
 @app.get("/todos")
@@ -409,6 +419,26 @@ async def get_skills():
         return {"skills": []}
     skills = getattr(agent, "skills", [])
     return {"skills": [{"name": s.name, "description": s.description} for s in skills]}
+
+
+@app.get("/mode")
+async def get_mode():
+    return {"mode": _state["mode"]}
+
+
+@app.post("/mode")
+async def set_mode(req: ModeRequest):
+    if _chat_lock.locked():
+        return JSONResponse(
+            {"error": "Agent is executing, cannot switch mode now"},
+            status_code=409,
+        )
+    agent = _state.get("agent")
+    if not agent:
+        return JSONResponse({"error": "Agent not ready"}, status_code=503)
+    agent.set_mode(req.mode)
+    _state["mode"] = req.mode
+    return {"mode": _state["mode"]}
 
 
 @app.post("/switch")

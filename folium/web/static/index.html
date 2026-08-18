@@ -910,6 +910,45 @@ body {
   flex-shrink: 0;
 }
 
+.mode-bar {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  flex-shrink: 0;
+}
+
+.mode-bar button {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.mode-bar button:hover {
+  color: var(--text);
+}
+
+.mode-bar button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mode-bar button.active.plan {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .input-area textarea {
   flex: 1;
   background: var(--surface);
@@ -926,9 +965,19 @@ body {
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
+.input-wrapper textarea {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .input-area textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(63, 123, 88, 0.12);
+}
+
+.input-wrapper.is-plan textarea:focus {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 3px rgba(155, 90, 38, 0.12);
 }
 
 .input-area button {
@@ -1131,7 +1180,11 @@ body {
   <div class="messages" id="messages"></div>
 
   <div class="input-area">
-    <div class="input-wrapper">
+    <div class="input-wrapper" id="inputWrapper">
+      <div class="mode-bar" id="modeBar">
+        <button id="modeBuildBtn" class="active" onclick="setMode('build')">Build</button>
+        <button id="modePlanBtn" onclick="setMode('plan')">Plan</button>
+      </div>
       <div class="skill-autocomplete" id="skillAutocomplete"></div>
       <textarea id="input" placeholder="输入你的科研任务、代码问题或实验想法..." rows="1"></textarea>
     </div>
@@ -1229,8 +1282,62 @@ async function init() {
   }
   loadSkills();
   loadConversations();
+  refreshMode();
   refreshTodos();
   updateUsagePanel();
+}
+
+let currentMode = 'build';
+
+function applyMode(mode) {
+  currentMode = mode;
+  const buildBtn = document.getElementById('modeBuildBtn');
+  const planBtn = document.getElementById('modePlanBtn');
+  const wrapper = document.getElementById('inputWrapper');
+  buildBtn.classList.toggle('active', mode === 'build');
+  planBtn.classList.toggle('active', mode === 'plan');
+  planBtn.classList.toggle('plan', mode === 'plan');
+  wrapper.classList.toggle('is-plan', mode === 'plan');
+  const inputEl = document.getElementById('input');
+  if (inputEl) {
+    inputEl.placeholder = mode === 'plan'
+      ? 'Plan 模式：描述你想调研的问题，agent 只做调研和规划，不改文件...'
+      : '输入你的科研任务、代码问题或实验想法...';
+  }
+}
+
+async function refreshMode() {
+  try {
+    const resp = await fetch('/mode');
+    const data = await resp.json();
+    if (data.mode) applyMode(data.mode);
+  } catch (e) {}
+}
+
+async function setMode(mode) {
+  if (mode === currentMode) return;
+  try {
+    const resp = await fetch('/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mode: mode})
+    });
+    if (resp.status === 409) {
+      appendMsg('system', 'Agent 正在执行，请稍后再切换模式。');
+      return;
+    }
+    const data = await resp.json();
+    if (data.mode) {
+      applyMode(data.mode);
+      appendMsg('system', mode === 'plan'
+        ? '已切换到 Plan 模式：agent 只做调研和规划，不会修改文件。'
+        : '已切换到 Build 模式：agent 可以正常执行读写操作。');
+    } else if (data.error) {
+      appendMsg('system', `[错误] ${data.error}`);
+    }
+  } catch (e) {
+    appendMsg('system', `[错误] ${e.message}`);
+  }
 }
 
 async function loadSkills() {
@@ -1250,6 +1357,9 @@ async function loadConversations() {
   sessionIdEl.textContent = current || '新建对话';
   applyContextUpdate(data.context_budget, false);
   updateUsagePanel();
+  if (data.mode) {
+    applyMode(data.mode);
+  }
 
   convListEl.innerHTML = '';
   for (const s of data.sessions) {
