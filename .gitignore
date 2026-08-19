@@ -13,6 +13,7 @@ venv/
 .ruff_cache/
 .folium_history
 .folium/
+.hallmark/
 .DS_Store
 dist/
 .pytest_cache/
