@@ -45,6 +45,19 @@ def test_config_from_env(monkeypatch):
     assert c.model == "test-model"
 
 
+def test_config_llm_timeout_default(monkeypatch):
+    for k in ["FOLIUM_LLM_TIMEOUT"]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("folium.config._load_dotenv", lambda: None)
+    assert Config.from_env().llm_timeout == 30
+
+
+def test_config_llm_timeout_from_env(monkeypatch):
+    monkeypatch.setenv("FOLIUM_LLM_TIMEOUT", "60")
+    monkeypatch.setattr("folium.config._load_dotenv", lambda: None)
+    assert Config.from_env().llm_timeout == 60
+
+
 def test_config_defaults(monkeypatch):
     # temporarily clear relevant env vars
     for k in ["FOLIUM_MODEL", "FOLIUM_MAX_TOKENS"]:

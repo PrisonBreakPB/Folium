@@ -38,6 +38,9 @@ class Config:
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
     api_format: str = "chat_completions"
+    llm_timeout: float = 30.0
+    circuit_failure_threshold: int = 3
+    circuit_cooldown_seconds: float = 10.0
     model_fast: str = "gpt-4o-mini"
     model_flagship: str = "gpt-4o"
     token_estimator: str = "deepseek"
@@ -65,6 +68,13 @@ class Config:
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
             api_format=os.getenv("FOLIUM_API_FORMAT", "chat_completions"),
+            llm_timeout=float(os.getenv("FOLIUM_LLM_TIMEOUT", "30")),
+            circuit_failure_threshold=int(
+                os.getenv("FOLIUM_CIRCUIT_FAILURE_THRESHOLD", "3")
+            ),
+            circuit_cooldown_seconds=float(
+                os.getenv("FOLIUM_CIRCUIT_COOLDOWN_SECONDS", "10")
+            ),
             model_fast=os.getenv("FOLIUM_MODEL_FAST", "gpt-4o-mini"),
             model_flagship=os.getenv("FOLIUM_MODEL_FLAGSHIP", "gpt-4o"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),

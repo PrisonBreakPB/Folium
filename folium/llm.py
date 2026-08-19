@@ -19,6 +19,7 @@ from .observability import span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
 from . import gateway as _gateway
+from .circuit_breaker import get_circuit_breaker
 
 
 @dataclass
@@ -264,8 +265,10 @@ class LLM:
         **kwargs,
     ):
         self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        timeout = kwargs.pop("timeout", 30.0)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.api_format = kwargs.pop("api_format", "chat_completions")
+        self.provider = kwargs.pop("provider", "openai")
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -313,21 +316,40 @@ class LLM:
             "input": _trace_input_payload(messages, cfg, trace_input),
         }
         span_name = "responses" if self.api_format == "responses" else "chat.completions"
+        provider = getattr(self, "provider", "openai")
         last_error: LLMProviderError | None = None
+        breaker = get_circuit_breaker()
         with span(span_name, "llm", metadata=llm_metadata):
             for idx, model in enumerate(candidates):
                 self.model = model
+                # fast-fail a circuit-open model and move to the next candidate
+                if not breaker.allow(provider, model):
+                    _record_circuit_open(model)
+                    continue
                 try:
                     if self.api_format == "responses":
-                        return self._chat_observed_responses(messages, tools, on_token)
-                    return self._chat_observed(messages, tools, on_token)
+                        result = self._chat_observed_responses(messages, tools, on_token)
+                    else:
+                        result = self._chat_observed(messages, tools, on_token)
+                    breaker.record_success(provider, model)
+                    return result
                 except LLMProviderError as e:
                     last_error = e
                     if not _should_fallback(e.info):
                         raise
+                    if breaker.record_failure(provider, model):
+                        _record_circuit_trip(e.info, model)
                     nxt = candidates[idx + 1] if idx + 1 < len(candidates) else None
                     if nxt is not None:
                         _record_llm_fallback(e.info, fallback=nxt)
+        if last_error is None:  # every candidate circuit-open, nothing was called
+            raise LLMProviderError(
+                LLMErrorInfo(
+                    message="all model candidates are circuit-open",
+                    provider=provider,
+                    retryable=True,
+                )
+            )
         raise last_error  # every candidate exhausted
 
     def _chat_observed(
@@ -587,8 +609,8 @@ class LLM:
                     if record_errors:
                         _record_llm_error(info, attempt + 1)
                     raise LLMProviderError(info) from e
-                wait = 2 ** attempt
-                time.sleep(wait)
+                wait = _retry_after_seconds(e) if isinstance(e, RateLimitError) else None
+                time.sleep(wait if wait is not None else 2 ** attempt)
             except APIError as e:
                 # 5xx = server error, retry; 4xx = client error, don't
                 retryable = bool(e.status_code and e.status_code >= 500)
@@ -802,6 +824,27 @@ class LiteLLM(LLM):
                     raise LLMProviderError(info) from e
 
 
+def _retry_after_seconds(e: RateLimitError) -> float | None:
+    """Honor the Retry-After header on a 429 rate-limit error.
+
+    Returns the wait in seconds, or None when the header is absent/unparseable
+    (the caller then falls back to exponential backoff).
+    """
+    response = getattr(e, "response", None)
+    if response is None:
+        return None
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 def _openai_error_info(e: Exception, provider: str, retryable: bool) -> LLMErrorInfo:
     status_code = getattr(e, "status_code", None)
     request_id = getattr(e, "request_id", None)
@@ -915,6 +958,33 @@ def _record_llm_fallback(info: LLMErrorInfo, fallback: str) -> None:
         "metadata": {
             **info.to_dict(),
             "fallback": fallback,
+        },
+    })
+
+
+def _record_circuit_open(model: str) -> None:
+    active_observer().record({
+        "event": "circuit_open",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": "chat.completions",
+        "type": "llm",
+        "status": "ok",
+        "metadata": {"model": model},
+    })
+
+
+def _record_circuit_trip(info: LLMErrorInfo, model: str) -> None:
+    active_observer().record({
+        "event": "circuit_trip",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": "chat.completions",
+        "type": "llm",
+        "status": "error",
+        "metadata": {
+            **info.to_dict(),
+            "model": model,
         },
     })
 

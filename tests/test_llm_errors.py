@@ -12,6 +12,53 @@ from folium.llm import (
     _should_fallback,
 )
 from folium.web.server import _error_event
+from folium.circuit_breaker import get_circuit_breaker, reset_circuit_breaker
+import folium.gateway as gateway
+
+
+@pytest.fixture(autouse=True)
+def _isolate_breaker():
+    reset_circuit_breaker()
+    yield
+    reset_circuit_breaker()
+
+
+def _route_env(monkeypatch):
+    monkeypatch.setenv("FOLIUM_MODEL", "gpt-4o")
+    monkeypatch.setenv("FOLIUM_MODEL_FAST", "gpt-4o-mini")
+    import folium.gateway as gateway
+    gateway._registry_ready = False
+    gateway.MODEL_REGISTRY.clear()
+
+
+def test_llm_init_passes_timeout_to_openai_client(monkeypatch):
+    import folium.llm as llm_mod
+
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_mod, "OpenAI", FakeOpenAI)
+    llm_mod.LLM(model="gpt-4o", api_key="k", timeout=42)
+    assert captured["timeout"] == 42
+
+
+def test_llm_init_default_timeout_is_30_seconds(monkeypatch):
+    import folium.llm as llm_mod
+
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(llm_mod, "OpenAI", FakeOpenAI)
+    llm_mod.LLM(model="gpt-4o", api_key="k")
+    assert captured["timeout"] == 30
+    # timeout is NOT forwarded as an extra chat parameter
+    assert "timeout" not in llm_mod.LLM(model="gpt-4o", api_key="k").extra
 
 
 def test_llm_provider_error_formats_structured_info():
@@ -134,6 +181,64 @@ def test_stream_options_does_not_mask_auth_errors():
     assert raised.value.info.status_code == 401
 
 
+def _rate_limit_http_error(retry_after=None):
+    import httpx
+    from openai import RateLimitError
+
+    headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
+    response = httpx.Response(
+        429,
+        headers=headers,
+        request=httpx.Request("POST", "http://localhost"),
+    )
+    return RateLimitError(
+        "rate limited",
+        response=response,
+        body={"error": {"message": "rate", "type": "rate_limit_error", "code": "rate_limit"}},
+    )
+
+
+def _llm_with_flaky_create(first_error, then_success=True):
+    from types import SimpleNamespace
+
+    llm = LLM.__new__(LLM)
+    llm.model = "test-model"
+    llm.extra = {}
+    calls = []
+
+    def flaky_create(**params):
+        calls.append(params)
+        if len(calls) == 1 and first_error is not None:
+            raise first_error
+        return object()
+
+    llm.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=flaky_create))
+    )
+    return llm
+
+
+def test_retry_respects_retry_after_header_on_429(monkeypatch):
+    llm = _llm_with_flaky_create(_rate_limit_http_error(retry_after=7))
+    sleeps = []
+    monkeypatch.setattr("folium.llm.time.sleep", lambda s: sleeps.append(s))
+    observer = mock.Mock()
+    monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+    llm._call_with_retry({"model": "test-model", "messages": []})
+    # Retry-After: 7 wins over the default 2**0 = 1s backoff
+    assert sleeps == [7]
+
+
+def test_retry_uses_exponential_backoff_without_retry_after(monkeypatch):
+    llm = _llm_with_flaky_create(_rate_limit_http_error())  # no Retry-After header
+    sleeps = []
+    monkeypatch.setattr("folium.llm.time.sleep", lambda s: sleeps.append(s))
+    observer = mock.Mock()
+    monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+    llm._call_with_retry({"model": "test-model", "messages": []})
+    assert sleeps == [1]  # 2**0
+
+
 def test_retry_success_records_llm_retry_event():
     import httpx
     from types import SimpleNamespace
@@ -239,6 +344,107 @@ def test_chat_raises_last_error_when_all_candidates_fail(monkeypatch):
         # primary and fallback both tried -> no swallow, last error propagates
         assert llm.tried == ["custom-model", "gpt-4o-mini"]
         assert raised.value.info.status_code == 503
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+class _StubTransportOK(LLM):
+    """Real LLM whose transport always succeeds, recording which model was tried."""
+
+    def __init__(self, model):
+        super().__init__(model=model, api_key="test-key")
+        self.tried = []
+
+    def _chat_observed(self, messages, tools=None, on_token=None):
+        self.tried.append(self.model)
+        return LLMResponse(content="ok", prompt_tokens=1, completion_tokens=1)
+
+
+class _StubTransportDown(LLM):
+    """Real LLM whose transport always fails with a fallbackable 503."""
+
+    def __init__(self, model):
+        super().__init__(model=model, api_key="test-key")
+        self.tried = []
+
+    def _chat_observed(self, messages, tools=None, on_token=None):
+        self.tried.append(self.model)
+        raise LLMProviderError(LLMErrorInfo(message="down", status_code=503))
+
+
+def test_chat_fast_fails_circuit_open_candidate(monkeypatch):
+    _route_env(monkeypatch)
+    breaker = get_circuit_breaker()
+    for _ in range(3):
+        breaker.record_failure("openai", "custom-model")
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportOK(model="custom-model")
+        result = llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        # primary (custom-model) is circuit-open -> skipped; fallback called instead
+        assert llm.tried == ["gpt-4o-mini"]
+        assert result.content == "ok"
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+def test_chat_trips_breaker_and_fast_fails_on_repeat(monkeypatch):
+    _route_env(monkeypatch)
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportDown(model="custom-model")
+        for _ in range(3):  # each call fails primary then fallback (both 503)
+            llm.model = "custom-model"  # chat() advances the model pointer each call
+            with pytest.raises(LLMProviderError):
+                llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        # after 3 failures the primary candidate tripped -> event recorded
+        trip_events = [
+            c.args[0]
+            for c in observer.record.call_args_list
+            if c.args[0]["event"] == "circuit_trip"
+        ]
+        assert trip_events, "expected circuit_trip events"
+        assert any(e["metadata"]["model"] == "custom-model" for e in trip_events)
+        # 4th call: both candidates open -> nothing is actually called
+        llm.tried.clear()
+        with pytest.raises(LLMProviderError):
+            llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        assert llm.tried == []
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+def test_chat_does_not_count_non_fallbackable_error(monkeypatch):
+    _route_env(monkeypatch)
+
+    class _StubAuthLLM(LLM):
+        def __init__(self, model):
+            super().__init__(model=model, api_key="test-key")
+
+        def _chat_observed(self, messages, tools=None, on_token=None):
+            raise LLMProviderError(
+                LLMErrorInfo(
+                    message="bad key", status_code=401, error_type="authentication_error"
+                )
+            )
+
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubAuthLLM(model="custom-model")
+        for _ in range(5):
+            with pytest.raises(LLMProviderError):
+                llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        # auth errors never counted -> circuit never trips
+        assert get_circuit_breaker().allow("openai", "custom-model") is True
     finally:
         gateway._registry_ready = False
         gateway.MODEL_REGISTRY.clear()
