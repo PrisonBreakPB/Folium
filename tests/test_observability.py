@@ -27,7 +27,7 @@ class FakeLLM:
     def estimated_cost(self):
         return None
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         from folium.observability import span
         from folium.observability.context import active_observer, current_span_id, current_trace_id
 
@@ -68,7 +68,7 @@ class NoToolLLM:
     def estimated_cost(self):
         return None
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         return LLMResponse(content="done", prompt_tokens=8, completion_tokens=1)
 
 

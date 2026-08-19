@@ -311,7 +311,7 @@ class FakeLLM:
     def __init__(self):
         self.calls = []
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         self.calls.append(messages)
         content = "summary"
         if "Existing summary:" in messages[-1]["content"]:
@@ -320,7 +320,7 @@ class FakeLLM:
 
 
 class FailingLLM:
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         raise RuntimeError("boom")
 
 

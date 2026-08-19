@@ -1,0 +1,57 @@
+"""LLM gateway - control plane for model selection (rule-based routing).
+
+Holds everything that decides *which* model to call: scene -> tier candidates
+and tier -> concrete model id. Transport (retry/streaming/errors) stays in
+``llm.py``; callers only report their ``scene`` and do not pick a model.
+"""
+
+from __future__ import annotations
+
+from .config import Config
+
+# scene -> (primary tier, ordered fallback tiers). Define capability *levels*,
+# not concrete model ids, so swapping vendors only touches the registry.
+SCENE_ROUTES: dict[str, tuple[str, list[str]]] = {
+    "agent_reasoning": ("tier-balanced", ["tier-fast"]),
+    "context_summarize": ("tier-fast", ["tier-balanced"]),
+    "memory_maintain": ("tier-fast", ["tier-balanced"]),
+}
+DEFAULT_ROUTE: tuple[str, list[str]] = ("tier-balanced", ["tier-fast"])
+
+# tier -> concrete model id. Populated once from Config on first use.
+MODEL_REGISTRY: dict[str, str] = {}
+_registry_ready = False
+
+
+def _ensure_registry() -> None:
+    """Build MODEL_REGISTRY from Config (env). Lazily, on first route()."""
+    global _registry_ready
+    if _registry_ready:
+        return
+    cfg = Config.from_env()
+    MODEL_REGISTRY.update(
+        {
+            "tier-fast": cfg.model_fast,
+            "tier-balanced": cfg.model,
+            "tier-flagship": cfg.model_flagship,
+        }
+    )
+    _registry_ready = True
+
+
+def route(scene: str, default_model: str | None = None) -> tuple[str, str]:
+    """Pick a model for ``scene``.
+
+    Returns ``(model_id, route_reason)``. ``default_model`` (the LLM instance's
+    own configured model) is used for the ``tier-balanced`` entry so routing
+    honors runtime overrides (CLI/model/switched models) as the balanced tier.
+    Falls back to the default route for unknown scenes. Pure lookup - no model
+    call, no budget/health logic yet.
+    """
+    _ensure_registry()
+    tier, _ = SCENE_ROUTES.get(scene, DEFAULT_ROUTE)
+    model = MODEL_REGISTRY[tier]
+    if tier == "tier-balanced" and default_model:
+        model = default_model
+    reason = f"scene={scene},tier={tier},rule:fixed"
+    return model, reason

@@ -102,7 +102,7 @@ class NoChangeLLM:
         self.requests = []
         self.trace_inputs = []
 
-    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True, **kwargs):
         self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
         self.trace_inputs.append(trace_input)
         return LLMResponse(content="NO_CHANGE", cached_tokens=17)
@@ -115,7 +115,7 @@ class ReadThenAppendLLM:
         self.calls = 0
         self.requests = []
 
-    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True, **kwargs):
         self.calls += 1
         self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
         if self.calls == 1:
@@ -149,7 +149,7 @@ class NonMemoryToolLLM:
         self.calls = 0
         self.requests = []
 
-    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True, **kwargs):
         self.calls += 1
         self.requests.append((copy.deepcopy(messages), copy.deepcopy(tools)))
         if self.calls == 1:
@@ -165,7 +165,7 @@ class ReadForeverLLM:
     def __init__(self):
         self.calls = 0
 
-    def chat(self, messages, tools=None, on_token=None, trace_input=True):
+    def chat(self, messages, tools=None, on_token=None, trace_input=True, **kwargs):
         self.calls += 1
         return LLMResponse(
             tool_calls=[ToolCall(id=str(self.calls), name="memory", arguments={"action": "read"})]

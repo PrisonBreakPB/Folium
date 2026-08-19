@@ -187,7 +187,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 return LLMResponse(
                     content="",
@@ -228,7 +228,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 return LLMResponse(
                     content="",
@@ -271,7 +271,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 if self.calls <= 4:
                     return LLMResponse(
@@ -307,7 +307,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 if self.calls == 1:
                     return LLMResponse(
@@ -359,7 +359,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 self.requests.append({"messages": messages, "tools": tools})
                 if self.calls == 1:
@@ -395,7 +395,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 return LLMResponse(
                     content="",
@@ -424,7 +424,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 if self.calls == 1:
                     return LLMResponse(
@@ -546,7 +546,7 @@ class ToolValidationTests(unittest.TestCase):
             def estimated_cost(self):
                 return None
 
-            def chat(self, messages, tools=None, on_token=None):
+            def chat(self, messages, tools=None, on_token=None, **kwargs):
                 self.calls += 1
                 if self.calls <= 3:
                     return LLMResponse(

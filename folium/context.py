@@ -409,6 +409,7 @@ class ContextManager:
                             ),
                         },
                     ],
+                    scene="context_summarize",
                 )
                 return resp.content, True, False
             except Exception:
@@ -442,6 +443,7 @@ class ContextManager:
                         },
                         {"role": "user", "content": flat[:15000]},
                     ],
+                    scene="context_summarize",
                 )
                 return resp.content, True, False
             except Exception:

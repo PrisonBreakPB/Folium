@@ -116,7 +116,9 @@ OPENAI_API_KEY              模型 API key
 OPENAI_BASE_URL             OpenAI 兼容 API 地址
 FOLIUM_API_KEY              Folium 专用 API key，优先级高于 OPENAI_API_KEY
 FOLIUM_BASE_URL             Folium 专用 base URL
-FOLIUM_MODEL                默认模型，默认 gpt-4o
+FOLIUM_MODEL                默认模型（tier-balanced），默认 gpt-4o
+FOLIUM_MODEL_FAST           快速/低成本模型（tier-fast，用于摘要、记忆维护等），默认 gpt-4o-mini
+FOLIUM_MODEL_FLAGSHIP       旗舰模型（tier-flagship），默认同 FOLIUM_MODEL
 FOLIUM_PROVIDER             openai 或 litellm
 FOLIUM_API_FORMAT           API 格式：chat_completions（默认）或 responses
 FOLIUM_MAX_TOKENS           单次输出 token 上限
@@ -138,6 +140,8 @@ FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (def
 ```
 
 Responses 模式说明：设置 `FOLIUM_API_FORMAT=responses` 可切换到 OpenAI Responses API 格式（仅 `FOLIUM_PROVIDER=openai` 生效，LiteLLM 保持 Chat Completions）。DeepSeek 的 Responses 端点只支持 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，为无状态接口、支持 function calling；切换时需同时把 `FOLIUM_MODEL` 换成上述模型之一。
+
+模型路由（scene 规则路由）：`folium/gateway.py` 提供按调用场景选择模型的规则路由。各调用方通过 `chat(..., scene="...")` 声明自己的场景，网关查 `scene → tier → 模型` 映射决定本次用哪个模型，并把 `route_reason`（为什么选它）写入观测。当前内置场景：`agent_reasoning`（Agent 主循环，默认 tier-balanced）、`context_summarize`（上下文压缩，tier-fast）、`memory_maintain`（记忆维护，tier-fast）。换模型只改 tier 对应的 env，不改路由规则。
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
 

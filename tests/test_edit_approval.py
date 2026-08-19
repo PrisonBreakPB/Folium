@@ -191,7 +191,7 @@ def test_rejected_change_set_stops_agent_without_a_retry(tmp_path, monkeypatch):
         def __init__(self):
             self.calls = 0
 
-        def chat(self, messages, tools=None, on_token=None):
+        def chat(self, messages, tools=None, on_token=None, **kwargs):
             self.calls += 1
             if self.calls == 1:
                 return LLMResponse(tool_calls=[
@@ -224,7 +224,7 @@ def test_revision_request_returns_feedback_to_agent_and_retries_approval(tmp_pat
         def __init__(self):
             self.calls = 0
 
-        def chat(self, messages, tools=None, on_token=None):
+        def chat(self, messages, tools=None, on_token=None, **kwargs):
             self.calls += 1
             if self.calls == 1:
                 return LLMResponse(tool_calls=[

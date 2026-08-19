@@ -38,6 +38,8 @@ class Config:
     max_context_tokens: int = DEFAULT_MAX_CONTEXT_TOKENS
     provider: str = "openai"
     api_format: str = "chat_completions"
+    model_fast: str = "gpt-4o-mini"
+    model_flagship: str = "gpt-4o"
     token_estimator: str = "deepseek"
     memory_maintenance_turns: int = 10
     memory_maintenance_max_steps: int = 5
@@ -63,6 +65,8 @@ class Config:
             max_context_tokens=int(os.getenv("FOLIUM_MAX_CONTEXT", str(DEFAULT_MAX_CONTEXT_TOKENS))),
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
             api_format=os.getenv("FOLIUM_API_FORMAT", "chat_completions"),
+            model_fast=os.getenv("FOLIUM_MODEL_FAST", "gpt-4o-mini"),
+            model_flagship=os.getenv("FOLIUM_MODEL_FLAGSHIP", "gpt-4o"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
             memory_maintenance_turns=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")

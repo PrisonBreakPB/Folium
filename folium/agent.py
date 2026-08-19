@@ -349,6 +349,7 @@ class Agent:
                     messages=full_messages,
                     tools=tool_schemas,
                     on_token=on_token,
+                    scene="agent_reasoning",
                 )
                 assistant_message = self._assistant_message(resp)
                 self._record_llm_response_snapshot(assistant_message, resp, round_index)

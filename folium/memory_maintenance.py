@@ -137,6 +137,7 @@ class MemoryAgent:
                 messages,
                 tools=visible_tools,
                 trace_input=False,
+                scene="memory_maintain",
             )
             cached_tokens += response.cached_tokens
             messages.append(response.message)

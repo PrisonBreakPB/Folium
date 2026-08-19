@@ -16,7 +16,7 @@ class CaptureLLM:
         self.messages = None
         self.tools = None
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         self.messages = messages
         self.tools = tools or []
         return LLMResponse(content="done")
@@ -29,7 +29,7 @@ class WriteOnceLLM:
         self.calls = 0
         self.file_path = file_path
 
-    def chat(self, messages, tools=None, on_token=None):
+    def chat(self, messages, tools=None, on_token=None, **kwargs):
         self.calls += 1
         if self.calls == 1:
             return LLMResponse(tool_calls=[

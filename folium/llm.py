@@ -18,6 +18,7 @@ from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnect
 from .observability import span
 from .observability.context import active_observer, current_span_id, current_trace_id
 from .observability.redaction import compact_payload
+from . import gateway as _gateway
 
 
 @dataclass
@@ -288,12 +289,21 @@ class LLM:
         tools: list[dict] | None = None,
         on_token=None,
         trace_input: bool = True,
+        scene: str = "agent_reasoning",
     ) -> LLMResponse:
-        """Send messages, stream back response, handle tool calls."""
+        """Send messages, stream back response, handle tool calls.
+
+        ``scene`` selects the model via the gateway's rule-based router; the
+        resulting model id is used for this call and recorded as route_reason.
+        """
+        selected_model, route_reason = _gateway.route(scene, default_model=self.model)
+        self.model = selected_model
         observer = active_observer()
         cfg = observer.config
         llm_metadata = {
-            "model": self.model,
+            "model": selected_model,
+            "scene": scene,
+            "route_reason": route_reason,
             "message_count": len(messages),
             "tools_count": len(tools or []),
             "parameters": {
