@@ -205,6 +205,8 @@ def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryAgent:
         max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
         api_format=getattr(agent.llm, "api_format", "chat_completions"),
     )
+    # count background memory-maintenance spend against the session budget
+    llm.meter = getattr(agent, "_cost_meter", None)
     return MemoryAgent(
         llm,
         max_steps=getattr(config, "memory_maintenance_max_steps", 5),
@@ -216,11 +218,19 @@ def _context_budget_payload() -> dict:
     context = getattr(agent, "context", None)
     if not context:
         return {}
-    return {
+    payload = {
         "max_context_tokens": getattr(context, "max_tokens", 0),
         "reserved_output_tokens": getattr(context, "reserved_output_tokens", 0),
         "input_budget_tokens": getattr(context, "input_budget_tokens", 0),
     }
+    meter = getattr(agent, "_cost_meter", None)
+    if meter is not None:
+        payload["budget_usd"] = meter.budget_usd
+        payload["budget_soft_ratio"] = meter.soft_ratio
+        payload["budget_spent"] = meter.spent()
+        payload["budget_soft_reached"] = meter.soft_reached()
+        payload["budget_exhausted"] = meter.exhausted()
+    return payload
 
 
 def _todo_payload() -> dict:

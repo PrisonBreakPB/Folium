@@ -41,6 +41,8 @@ class Config:
     llm_timeout: float = 30.0
     circuit_failure_threshold: int = 3
     circuit_cooldown_seconds: float = 10.0
+    budget_usd: float = 0.0
+    budget_soft_ratio: float = 0.8
     model_fast: str = "gpt-4o-mini"
     model_flagship: str = "gpt-4o"
     token_estimator: str = "deepseek"
@@ -75,6 +77,8 @@ class Config:
             circuit_cooldown_seconds=float(
                 os.getenv("FOLIUM_CIRCUIT_COOLDOWN_SECONDS", "10")
             ),
+            budget_usd=float(os.getenv("FOLIUM_BUDGET_USD", "0")),
+            budget_soft_ratio=float(os.getenv("FOLIUM_BUDGET_SOFT_RATIO", "0.8")),
             model_fast=os.getenv("FOLIUM_MODEL_FAST", "gpt-4o-mini"),
             model_flagship=os.getenv("FOLIUM_MODEL_FLAGSHIP", "gpt-4o"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),

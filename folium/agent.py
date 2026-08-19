@@ -25,7 +25,8 @@ from .tools.session_history import SessionHistoryTool
 from .tools.todo import TODO_REMINDER, TodoTool
 from .prompt import system_prompt
 from .context import ContextManager, estimate_tokens, _approx_tokens
-from .config import DEFAULT_MAX_CONTEXT_TOKENS
+from .config import DEFAULT_MAX_CONTEXT_TOKENS, Config
+from .cost_meter import CostMeter
 from .skills import load_skills
 from .skills.parser import parse_skill_file
 from .observability import mark_current_span_status, observe_trace, span
@@ -55,6 +56,7 @@ FINAL_ROUND_REMINDER = (
     "Clearly explain what is still missing, why it matters, and what the recommended next step should be.\n"
     "</reminder>"
 )
+BUDGET_EXHAUSTED_MESSAGE = "预算已用完（已耗 ${spent:.2f} / ${budget:.2f}），已停止本轮。"
 
 TOOL_PARAMETER_WARN = (
     "Several of your recent tool calls had invalid arguments and were rejected. "
@@ -200,8 +202,19 @@ class Agent:
         tool_timeout: int = 120,
         skills: list[Skill] | None = None,
         system_addendum: str | None = None,
+        budget_usd: float | None = None,
+        budget_soft_ratio: float | None = None,
     ):
         self.llm = llm
+        if budget_usd is None or budget_soft_ratio is None:
+            _cfg = Config.from_env()
+            budget_usd = _cfg.budget_usd if budget_usd is None else budget_usd
+            budget_soft_ratio = (
+                _cfg.budget_soft_ratio if budget_soft_ratio is None else budget_soft_ratio
+            )
+        self._budget_usd = budget_usd
+        self._budget_soft_ratio = budget_soft_ratio
+        self._reset_meter()
         self.tools = tools if tools is not None else create_tools()
         self.messages: list[dict] = []
         self.transcript: list[dict] = []
@@ -332,6 +345,19 @@ class Agent:
             is_final_round = round_index == self.max_rounds
             self._inject_todo_reminder(on_event)
             self._emit_event(on_event, "agent_status", message=f"Model inference round {round_index}")
+            if self._cost_meter.exhausted():
+                self._emit_event(
+                    on_event,
+                    "budget_exhausted",
+                    spent=self._cost_meter.spent(),
+                    budget=self._cost_meter.budget_usd,
+                )
+                self._emit_event(
+                    on_event, "agent_status", message="预算已用完，已停止本轮"
+                )
+                return BUDGET_EXHAUSTED_MESSAGE.format(
+                    spent=self._cost_meter.spent(), budget=self._cost_meter.budget_usd
+                )
             with span("agent_round", "agent", metadata={
                 "round_index": round_index,
                 "message_count": len(self.messages),
@@ -345,10 +371,12 @@ class Agent:
                     tool_schemas = self._tool_schemas()
                 self.last_llm_request_had_visible_tools = tool_schemas is not None
                 self._record_llm_request_snapshot(full_messages, tool_schemas, round_index)
+                cheap = self._cost_meter.soft_reached()
                 resp = self.llm.chat(
                     messages=full_messages,
                     tools=tool_schemas,
                     on_token=on_token,
+                    cheap_only=cheap,
                     scene="agent_reasoning",
                 )
                 assistant_message = self._assistant_message(resp)
@@ -1027,7 +1055,16 @@ class Agent:
         self.llm.total_cached_tokens = 0
         self.llm.last_prompt_tokens = 0
         self.llm.last_completion_tokens = 0
+        self._reset_meter()
         self.reset_todos()
+
+    def _reset_meter(self):
+        """(Re)create the per-conversation cost meter and wire it onto the LLM."""
+        self._cost_meter = CostMeter(
+            budget_usd=self._budget_usd, soft_ratio=self._budget_soft_ratio
+        )
+        if self.llm is not None:
+            self.llm.meter = self._cost_meter
 
     def reset_todos(self):
         self.rounds_since_todo = 0

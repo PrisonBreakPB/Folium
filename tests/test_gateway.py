@@ -35,3 +35,10 @@ def test_unknown_scene_falls_back_to_default_route():
     candidates, reason = route("mystery_scene")
     assert candidates == ["gpt-4o", "gpt-4o-mini"]  # default: balanced primary, fast fallback
     assert reason == "scene=mystery_scene,tier=tier-balanced,rule:fixed"
+
+
+def test_cheap_only_collapses_to_fastest_tier():
+    # cheap_only ignores the balanced default_model and returns only tier-fast
+    candidates, reason = route("agent_reasoning", default_model="custom-model", cheap_only=True)
+    assert candidates == ["gpt-4o-mini"]
+    assert "cheap_only" in reason

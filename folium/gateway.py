@@ -39,7 +39,9 @@ def _ensure_registry() -> None:
     _registry_ready = True
 
 
-def route(scene: str, default_model: str | None = None) -> tuple[list[str], str]:
+def route(
+    scene: str, default_model: str | None = None, cheap_only: bool = False
+) -> tuple[list[str], str]:
     """Pick the ordered model candidates for ``scene``.
 
     Returns ``([model_id, ...], route_reason)``: the primary candidate first,
@@ -47,10 +49,15 @@ def route(scene: str, default_model: str | None = None) -> tuple[list[str], str]
     model ids. ``default_model`` (the LLM instance's own configured model) is
     used wherever a candidate resolves to ``tier-balanced``, so runtime
     overrides (CLI/model/switched models) stay as the balanced tier. Falls back
-    to the default route for unknown scenes. Pure lookup - no model call, no
-    budget/health logic yet.
+    to the default route for unknown scenes.
+
+    ``cheap_only`` collapses the chain to the cheapest tier (tier-fast); used to
+    force low-cost models once a session crosses its soft budget. Pure lookup -
+    no model call, no health logic.
     """
     _ensure_registry()
+    if cheap_only:
+        return [MODEL_REGISTRY["tier-fast"]], f"scene={scene},tier=tier-fast,budget:cheap_only"
     primary, fallbacks = SCENE_ROUTES.get(scene, DEFAULT_ROUTE)
     tiers = [primary] + fallbacks
     candidates: list[str] = []

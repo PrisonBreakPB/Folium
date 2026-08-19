@@ -286,6 +286,20 @@ class LLM:
             getattr(self, "total_cached_tokens", 0),
         )
 
+    def _record_cost(self, response: "LLMResponse") -> None:
+        """Report this call's actual-model cost to the session meter (no-op if unset)."""
+        meter = getattr(self, "meter", None)
+        if meter is None:
+            return
+        meter.record(
+            estimate_cost(
+                self.model,
+                response.prompt_tokens,
+                response.completion_tokens,
+                response.cached_tokens,
+            )
+        )
+
     def chat(
         self,
         messages: list[dict],
@@ -293,13 +307,18 @@ class LLM:
         on_token=None,
         trace_input: bool = True,
         scene: str = "agent_reasoning",
+        cheap_only: bool = False,
     ) -> LLMResponse:
         """Send messages, stream back response, handle tool calls.
 
         ``scene`` selects the model via the gateway's rule-based router; the
         resulting model id is used for this call and recorded as route_reason.
+        ``cheap_only`` forces the cheapest tier (used once a session crosses its
+        soft budget).
         """
-        candidates, route_reason = _gateway.route(scene, default_model=self.model)
+        candidates, route_reason = _gateway.route(
+            scene, default_model=self.model, cheap_only=cheap_only
+        )
         self.model = candidates[0]
         observer = active_observer()
         cfg = observer.config
@@ -332,6 +351,7 @@ class LLM:
                     else:
                         result = self._chat_observed(messages, tools, on_token)
                     breaker.record_success(provider, model)
+                    self._record_cost(result)
                     return result
                 except LLMProviderError as e:
                     last_error = e
@@ -675,7 +695,9 @@ class LiteLLM(LLM):
             "input": _trace_input_payload(messages, cfg, trace_input),
         }
         with span("litellm.completion", "llm", metadata=llm_metadata):
-            return self._chat_observed(messages, tools, on_token)
+            result = self._chat_observed(messages, tools, on_token)
+            self._record_cost(result)
+            return result
 
     def _chat_observed(
         self,

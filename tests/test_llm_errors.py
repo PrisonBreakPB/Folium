@@ -7,6 +7,7 @@ from folium.llm import (
     LLMErrorInfo,
     LLMProviderError,
     LLMResponse,
+    estimate_cost,
     _iter_stream,
     _looks_like_unsupported_stream_options,
     _should_fallback,
@@ -416,6 +417,51 @@ def test_chat_trips_breaker_and_fast_fails_on_repeat(monkeypatch):
         with pytest.raises(LLMProviderError):
             llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
         assert llm.tried == []
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+def test_chat_records_cost_into_meter(monkeypatch):
+    from folium.cost_meter import CostMeter
+    _route_env(monkeypatch)
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportOK(model="gpt-4o")
+        llm.meter = CostMeter(budget_usd=10.0)
+        llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        expected = estimate_cost("gpt-4o", 1, 1)  # _StubTransportOK returns 1/1 tokens
+        assert llm.meter.spent() == pytest.approx(expected)
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+def test_chat_without_meter_is_noop(monkeypatch):
+    _route_env(monkeypatch)
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportOK(model="gpt-4o")  # no .meter set
+        result = llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+        assert result.content == "ok"  # does not crash
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+def test_chat_cheap_only_forces_fast_model(monkeypatch):
+    _route_env(monkeypatch)
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportOK(model="gpt-4o")  # default balanced would be gpt-4o
+        llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning", cheap_only=True)
+        assert llm.tried == ["gpt-4o-mini"]
     finally:
         gateway._registry_ready = False
         gateway.MODEL_REGISTRY.clear()

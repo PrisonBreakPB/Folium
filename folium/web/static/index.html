@@ -225,6 +225,8 @@ button { font-family: inherit; cursor: pointer; }
 }
 .usage-metric-value { font-size: var(--text-md); font-weight: 600; color: var(--text); }
 .usage-metric-value[data-accent="true"] { color: var(--accent); }
+.usage-metric-value.warn { color: oklch(70% 0.16 85); }
+.usage-metric-value.exhausted { color: oklch(58% 0.20 27); }
 
 /* todo panel */
 .todo-panel {
@@ -1641,7 +1643,12 @@ function emptyUsageState() {
     estimatedContextTokens: 0,
     maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
     reservedOutputTokens: DEFAULT_RESERVED_OUTPUT_TOKENS,
-    inputBudgetTokens: DEFAULT_MAX_CONTEXT_TOKENS - DEFAULT_RESERVED_OUTPUT_TOKENS
+    inputBudgetTokens: DEFAULT_MAX_CONTEXT_TOKENS - DEFAULT_RESERVED_OUTPUT_TOKENS,
+    budget: null,
+    budgetSpent: 0,
+    budgetSoftRatio: 0.8,
+    budgetSoftReached: false,
+    budgetExhausted: false
   };
 }
 
@@ -1709,6 +1716,14 @@ function applyContextUpdate(raw, refresh = true) {
   if (maxTokens !== null) usageState.maxContextTokens = maxTokens;
   if (reservedTokens !== null) usageState.reservedOutputTokens = reservedTokens;
   if (inputBudgetTokens !== null) usageState.inputBudgetTokens = inputBudgetTokens;
+  const budgetUsd = numberOrNull(raw?.budget_usd);
+  const budgetSpent = numberOrNull(raw?.budget_spent);
+  const budgetSoftRatio = numberOrNull(raw?.budget_soft_ratio);
+  if (budgetUsd !== null) usageState.budget = budgetUsd;
+  if (budgetSpent !== null) usageState.budgetSpent = budgetSpent;
+  if (budgetSoftRatio !== null) usageState.budgetSoftRatio = budgetSoftRatio;
+  if (budgetUsd !== null) usageState.budgetExhausted = Boolean(raw?.budget_exhausted);
+  if (budgetUsd !== null) usageState.budgetSoftReached = Boolean(raw?.budget_soft_reached);
   if (refresh) updateUsagePanel();
 }
 
@@ -1756,8 +1771,19 @@ function updateSessionStatsFromUsage() {
   const prompt = usageState.cumulativePrompt;
   const cached = usageState.cumulativeCached;
   const hitRate = prompt > 0 ? cached / prompt : 0;
-  setText('statsCost', formatCost(usageState.cumulativeCost));
   setText('statsHitRate', `${(hitRate * 100).toFixed(1)}%`);
+  const costEl = document.getElementById('statsCost');
+  if (!costEl) return;
+  const budget = usageState.budget;
+  if (budget && budget > 0) {
+    const spent = usageState.budgetSpent;
+    costEl.textContent = `$${spent.toFixed(3)} / $${Number(budget).toFixed(3)}`;
+    costEl.classList.toggle('warn', usageState.budgetSoftReached && !usageState.budgetExhausted);
+    costEl.classList.toggle('exhausted', usageState.budgetExhausted);
+  } else {
+    costEl.textContent = formatCost(usageState.cumulativeCost);
+    costEl.classList.remove('warn', 'exhausted');
+  }
 }
 
 function applySessionStats(stats) {

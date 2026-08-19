@@ -120,6 +120,29 @@ class WebServerSessionTests(unittest.TestCase):
             server._state.clear()
             server._state.update(old_state)
 
+    def test_context_budget_payload_includes_cost_meter(self):
+        from folium.cost_meter import CostMeter
+
+        agent = DummyAgent()
+        agent.context = SimpleNamespace(
+            max_tokens=1000,
+            reserved_output_tokens=100,
+            input_budget_tokens=900,
+        )
+        agent._cost_meter = CostMeter(budget_usd=5.0, soft_ratio=0.8)
+        agent._cost_meter.record(4.0)  # 80% -> soft reached
+        old_state = dict(server._state)
+        try:
+            server._state["agent"] = agent
+            payload = server._context_budget_payload()
+            self.assertEqual(payload["budget_usd"], 5.0)
+            self.assertAlmostEqual(payload["budget_spent"], 4.0)
+            self.assertTrue(payload["budget_soft_reached"])
+            self.assertFalse(payload["budget_exhausted"])
+        finally:
+            server._state.clear()
+            server._state.update(old_state)
+
     def test_auto_save_only_updates_dirty_session(self):
         import tempfile
 

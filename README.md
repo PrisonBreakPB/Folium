@@ -140,6 +140,8 @@ FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (def
 FOLIUM_LLM_TIMEOUT            OpenAI 客户端请求超时（秒），默认 30
 FOLIUM_CIRCUIT_FAILURE_THRESHOLD  熔断器触发阈值（连续失败次数），默认 3
 FOLIUM_CIRCUIT_COOLDOWN_SECONDS    熔断器冷却时长（秒），默认 10
+FOLIUM_BUDGET_USD        单次会话成本预算（美元）；0 或未设 = 不限（默认），设正数才生效
+FOLIUM_BUDGET_SOFT_RATIO 软阈值（花到预算的比例后转用便宜模型），默认 0.8
 ```
 
 Responses 模式说明：设置 `FOLIUM_API_FORMAT=responses` 可切换到 OpenAI Responses API 格式（仅 `FOLIUM_PROVIDER=openai` 生效，LiteLLM 保持 Chat Completions）。DeepSeek 的 Responses 端点只支持 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，为无状态接口、支持 function calling；切换时需同时把 `FOLIUM_MODEL` 换成上述模型之一。
@@ -147,6 +149,8 @@ Responses 模式说明：设置 `FOLIUM_API_FORMAT=responses` 可切换到 OpenA
 模型路由（scene 规则路由 + 自动降级）：`folium/gateway.py` 提供按调用场景选择模型的规则路由。各调用方通过 `chat(..., scene="...")` 声明自己的场景，网关查 `scene → tier → 模型` 映射决定候选链（primary + fallback），并把 `route_reason`（为什么选它）写入观测。当 primary 模型调用遇到**可降级错误**（429 限流、5xx、超时/断连）时，`chat()` 会自动改用 fallback 候选重试，避免一失败就崩；参数/鉴权/上下文超限/安全拒答等请求侧错误不会换模型，直接抛出。每次降级都会记录 `llm_fallback` 事件（含原始错误与切到的模型）。当前内置场景：`agent_reasoning`（Agent 主循环，默认 tier-balanced）、`context_summarize`（上下文压缩，tier-fast）、`memory_maintain`（记忆维护，tier-fast）。换模型只改 tier 对应的 env，不改路由规则。
 
 重试与熔断（`folium/llm.py` + `folium/circuit_breaker.py`）：每次请求显式设超时（`FOLIUM_LLM_TIMEOUT`，默认 30s），超时/断连/限流等瞬态错误在候选内做指数退避重试（429 若响应带 `Retry-After` 头则按该时长等待）。每个（provider, model）持有一个进程级熔断器（`folium/circuit_breaker.py`）：连续 `FOLIUM_CIRCUIT_FAILURE_THRESHOLD`（默认 3）次可降级错误后熔断打开，冷却 `FOLIUM_CIRCUIT_COOLDOWN_SECONDS`（默认 10s）内该模型被跳过、直接切下一个候选；冷却期过一次试探调用，成功即闭合复位。熔断状态记录为 `circuit_trip`（打开）与 `circuit_open`（命中已有熔断被跳过）事件。请求侧错误（参数/鉴权/上下文超限/安全拒答）不计入熔断。
+
+成本预算（`folium/cost_meter.py` + `folium/agent.py`）：设置 `FOLIUM_BUDGET_USD`（美元，>0 生效）后，每次 LLM 调用按本地单价表估算成本累计到会话计费器。耗到预算的 `FOLIUM_BUDGET_SOFT_RATIO`（默认 0.8）后，Agent 自动把调用降级到 tier-fast 便宜模型（路由 `cheap_only` 分支）；耗到 100% 后 Agent 在下一轮硬停止本轮，并向用户返回预算用尽提示。预算进度在 WebUI 用量栏实时展示（软阈值黄色告警、耗尽红色）。会话 `reset()` 时重新计费，换对话即从零开始。
 
 如果使用 Ollama 这类本地 OpenAI 兼容服务：
 
