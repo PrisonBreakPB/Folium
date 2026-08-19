@@ -6,8 +6,10 @@ from folium.llm import (
     LLM,
     LLMErrorInfo,
     LLMProviderError,
+    LLMResponse,
     _iter_stream,
     _looks_like_unsupported_stream_options,
+    _should_fallback,
 )
 from folium.web.server import _error_event
 
@@ -176,3 +178,121 @@ def test_stream_iteration_errors_are_wrapped():
 
     assert raised.value.info.message == "stream broke"
     assert raised.value.info.provider == "openai"
+
+
+def make_info(status_code=None, error_type=None, retryable=False):
+    return LLMErrorInfo(
+        message="err", status_code=status_code, error_type=error_type, retryable=retryable
+    )
+
+
+def test_should_fallback_returns_true_for_transient_errors():
+    assert _should_fallback(make_info(status_code=429, error_type="rate_limit_error")) is True
+    assert _should_fallback(make_info(status_code=503)) is True
+    assert _should_fallback(make_info(status_code=500)) is True
+    # timeout / connection: no HTTP status, but flagged retryable
+    assert _should_fallback(make_info(status_code=None, retryable=True)) is True
+
+
+def test_should_fallback_returns_false_for_request_side_errors():
+    assert _should_fallback(make_info(status_code=400)) is False
+    assert _should_fallback(make_info(status_code=401)) is False
+
+
+def test_should_fallback_returns_false_for_context_or_safety():
+    assert (
+        _should_fallback(make_info(status_code=400, error_type="context_length_exceeded")) is False
+    )
+    assert (
+        _should_fallback(make_info(status_code=400, error_type="content_policy_violation")) is False
+    )
+
+
+class _StubTransportLLMAllFail(LLM):
+    """Real LLM whose transport always fails (tests exhausted-candidates)."""
+
+    def __init__(self, model):
+        super().__init__(model=model, api_key="test-key")
+        self.tried = []
+
+    def _chat_observed(self, messages, tools=None, on_token=None):
+        self.tried.append(self.model)
+        raise LLMProviderError(LLMErrorInfo(message="down", status_code=503))
+
+
+def test_chat_raises_last_error_when_all_candidates_fail(monkeypatch):
+    monkeypatch.setenv("FOLIUM_MODEL", "gpt-4o")
+    monkeypatch.setenv("FOLIUM_MODEL_FAST", "gpt-4o-mini")
+    import folium.gateway as gateway
+
+    gateway._registry_ready = False
+    gateway.MODEL_REGISTRY.clear()
+    try:
+        observer = mock.MagicMock()
+        observer.config = _FakeConfig()
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportLLMAllFail(model="custom-model")
+
+        with pytest.raises(LLMProviderError) as raised:
+            llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+
+        # primary and fallback both tried -> no swallow, last error propagates
+        assert llm.tried == ["custom-model", "gpt-4o-mini"]
+        assert raised.value.info.status_code == 503
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()
+
+
+class _FakeConfig:
+    full_llm_input = False
+    max_preview_chars = 100
+    redact_secrets = True
+
+
+class _StubTransportLLM(LLM):
+    """Real LLM whose transport (_chat_observed) fails once then succeeds."""
+
+    def __init__(self, model):
+        super().__init__(model=model, api_key="test-key")
+        self.tried = []
+
+    def _chat_observed(self, messages, tools=None, on_token=None):
+        self.tried.append(self.model)
+        if len(self.tried) == 1:
+            raise LLMProviderError(
+                LLMErrorInfo(message="rate limited", status_code=429, error_type="rate_limit_error")
+            )
+        return LLMResponse(content="fallback-ok", prompt_tokens=3, completion_tokens=1)
+
+
+def test_chat_falls_back_to_next_candidate_on_retryable_error(monkeypatch):
+    # agent_reasoning candidates: primary = default_model, fallback = tier-fast
+    monkeypatch.setenv("FOLIUM_MODEL", "gpt-4o")
+    monkeypatch.setenv("FOLIUM_MODEL_FAST", "gpt-4o-mini")
+    import folium.gateway as gateway
+
+    gateway._registry_ready = False
+    gateway.MODEL_REGISTRY.clear()
+    try:
+        obs = _FakeConfig()
+        observer = mock.MagicMock()
+        observer.config = obs
+        monkeypatch.setattr("folium.llm.active_observer", lambda: observer)
+        llm = _StubTransportLLM(model="custom-model")
+
+        result = llm.chat(messages=[{"role": "user", "content": "hi"}], scene="agent_reasoning")
+
+        # tried primary first, then the fallback candidate
+        assert llm.tried == ["custom-model", "gpt-4o-mini"]
+        # result came from the fallback
+        assert result.content == "fallback-ok"
+        # model pointer advanced to the fallback
+        assert llm.model == "gpt-4o-mini"
+        # a fallback event was recorded into the observability chain
+        fallback_events = [c.args[0] for c in observer.record.call_args_list if c.args[0]["event"] == "llm_fallback"]
+        assert fallback_events, "expected an llm_fallback event"
+        assert fallback_events[0]["metadata"]["fallback"] == "gpt-4o-mini"
+    finally:
+        gateway._registry_ready = False
+        gateway.MODEL_REGISTRY.clear()

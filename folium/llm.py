@@ -296,12 +296,12 @@ class LLM:
         ``scene`` selects the model via the gateway's rule-based router; the
         resulting model id is used for this call and recorded as route_reason.
         """
-        selected_model, route_reason = _gateway.route(scene, default_model=self.model)
-        self.model = selected_model
+        candidates, route_reason = _gateway.route(scene, default_model=self.model)
+        self.model = candidates[0]
         observer = active_observer()
         cfg = observer.config
         llm_metadata = {
-            "model": selected_model,
+            "model": self.model,
             "scene": scene,
             "route_reason": route_reason,
             "message_count": len(messages),
@@ -313,10 +313,22 @@ class LLM:
             "input": _trace_input_payload(messages, cfg, trace_input),
         }
         span_name = "responses" if self.api_format == "responses" else "chat.completions"
+        last_error: LLMProviderError | None = None
         with span(span_name, "llm", metadata=llm_metadata):
-            if self.api_format == "responses":
-                return self._chat_observed_responses(messages, tools, on_token)
-            return self._chat_observed(messages, tools, on_token)
+            for idx, model in enumerate(candidates):
+                self.model = model
+                try:
+                    if self.api_format == "responses":
+                        return self._chat_observed_responses(messages, tools, on_token)
+                    return self._chat_observed(messages, tools, on_token)
+                except LLMProviderError as e:
+                    last_error = e
+                    if not _should_fallback(e.info):
+                        raise
+                    nxt = candidates[idx + 1] if idx + 1 < len(candidates) else None
+                    if nxt is not None:
+                        _record_llm_fallback(e.info, fallback=nxt)
+        raise last_error  # every candidate exhausted
 
     def _chat_observed(
         self,
@@ -872,6 +884,24 @@ def _record_llm_error(info: LLMErrorInfo, attempt: int) -> None:
             "attempt": attempt,
         },
     })
+
+
+def _should_fallback(info: LLMErrorInfo) -> bool:
+    """Whether an error warrants trying the next fallback model candidate.
+
+    Fallback switches to another model, so it should only fire on
+    provider-side/transient failures: rate limits (429), server errors (5xx),
+    and timeouts/connection errors (no HTTP status but flagged retryable).
+    Request-side failures (4xx auth/bad params) and content/context problems
+    won't be fixed by switching models, so they propagate instead.
+    """
+    code = info.status_code
+    if code is not None:
+        if code == 429:
+            return True
+        return 500 <= code < 600
+    # No HTTP status: timeouts/connections are flagged retryable upstream.
+    return info.retryable
 
 
 def _record_llm_fallback(info: LLMErrorInfo, fallback: str) -> None:

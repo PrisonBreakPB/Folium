@@ -39,19 +39,25 @@ def _ensure_registry() -> None:
     _registry_ready = True
 
 
-def route(scene: str, default_model: str | None = None) -> tuple[str, str]:
-    """Pick a model for ``scene``.
+def route(scene: str, default_model: str | None = None) -> tuple[list[str], str]:
+    """Pick the ordered model candidates for ``scene``.
 
-    Returns ``(model_id, route_reason)``. ``default_model`` (the LLM instance's
-    own configured model) is used for the ``tier-balanced`` entry so routing
-    honors runtime overrides (CLI/model/switched models) as the balanced tier.
-    Falls back to the default route for unknown scenes. Pure lookup - no model
-    call, no budget/health logic yet.
+    Returns ``([model_id, ...], route_reason)``: the primary candidate first,
+    followed by fallback candidates in priority order, all resolved to concrete
+    model ids. ``default_model`` (the LLM instance's own configured model) is
+    used wherever a candidate resolves to ``tier-balanced``, so runtime
+    overrides (CLI/model/switched models) stay as the balanced tier. Falls back
+    to the default route for unknown scenes. Pure lookup - no model call, no
+    budget/health logic yet.
     """
     _ensure_registry()
-    tier, _ = SCENE_ROUTES.get(scene, DEFAULT_ROUTE)
-    model = MODEL_REGISTRY[tier]
-    if tier == "tier-balanced" and default_model:
-        model = default_model
-    reason = f"scene={scene},tier={tier},rule:fixed"
-    return model, reason
+    primary, fallbacks = SCENE_ROUTES.get(scene, DEFAULT_ROUTE)
+    tiers = [primary] + fallbacks
+    candidates: list[str] = []
+    for tier in tiers:
+        if tier == "tier-balanced" and default_model:
+            candidates.append(default_model)
+        else:
+            candidates.append(MODEL_REGISTRY[tier])
+    reason = f"scene={scene},tier={primary},rule:fixed"
+    return candidates, reason
