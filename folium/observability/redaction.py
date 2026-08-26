@@ -11,6 +11,7 @@ from typing import Any
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*['\"]?[^'\"\s,}]+"),
+    re.compile(r"(?i)[\"']?(api[_-]?key|token|secret|password)[\"']?\s*[:=]\s*['\"]?[^'\"\s,}]+"),
     re.compile(r"(?i)(authorization:\s*bearer\s+)[A-Za-z0-9._-]+"),
 ]
 
@@ -56,6 +57,8 @@ def compact_payload(
 
 def _replace_secret(match: re.Match) -> str:
     text = match.group(0)
+    if text.startswith("sk-"):
+        return "sk-[REDACTED]"
     if ":" in text and text.lower().startswith("authorization"):
         return match.group(1) + "[REDACTED]"
     key = re.split(r"[:=]", text, maxsplit=1)[0]

@@ -23,7 +23,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 
 from .agent import Agent
-from .llm import LLM, LiteLLM
+from .llm import FailoverLLM, LLM, LiteLLM
 from .config import Config
 from .context import estimate_tokens
 from .session import (
@@ -96,6 +96,18 @@ def main():
         pass
     _validate_cli_sandbox_backend()
     config = Config.from_env()
+    try:
+        profiles = config.endpoint_profiles()
+    except ValueError as exc:
+        console.print(f"[red]Invalid LLM profile configuration: {exc}[/red]")
+        sys.exit(2)
+
+    if profiles:
+        primary = profiles[0]
+        config.model = primary.model
+        config.api_key = primary.api_key
+        config.base_url = primary.base_url
+        config.provider = primary.provider
 
     # CLI args override env vars
     if args.model:
@@ -104,6 +116,12 @@ def main():
         config.base_url = args.base_url
     if args.api_key:
         config.api_key = args.api_key
+
+    if profiles:
+        primary = profiles[0]
+        primary.model = config.model
+        primary.api_key = config.api_key
+        primary.base_url = config.base_url
 
     if not config.api_key:
         console.print("[red bold]No API key found.[/]")
@@ -121,15 +139,24 @@ def main():
         )
         sys.exit(1)
 
-    llm_cls = LiteLLM if config.provider == "litellm" else LLM
-    llm = llm_cls(
-        model=config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        temperature=config.temperature,
-        max_tokens=config.max_tokens,
-        api_format=config.api_format,
-    )
+    if profiles:
+        llm = FailoverLLM(
+            profiles,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            api_format=config.api_format,
+            timeout=config.llm_timeout,
+        )
+    else:
+        llm_cls = LiteLLM if config.provider == "litellm" else LLM
+        llm = llm_cls(
+            model=config.model,
+            api_key=config.api_key,
+            base_url=config.base_url,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            api_format=config.api_format,
+        )
     agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
 
     # resume saved session

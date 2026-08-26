@@ -205,8 +205,13 @@ def test_chat_observed_responses_records_raw_tool_args():
 
 def test_chat_observed_responses_failed_raises():
     llm = _make_llm()
+    secret = "AIzaSensitiveKey123456"
+    llm.api_key = secret
     events = [SimpleNamespace(type="response.failed",
-                              response=SimpleNamespace(error="boom"))]
+                              response=SimpleNamespace(error={
+                                  "message": f"bad key {secret}",
+                                  "status_code": 401,
+                              }))]
 
     def fake_call(params, **kwargs):
         return iter(events)
@@ -215,8 +220,11 @@ def test_chat_observed_responses_failed_raises():
         mock.patch.object(llm, "_call_with_retry", side_effect=fake_call),
         mock.patch("folium.llm.active_observer", return_value=_fake_observer()),
     ):
-        with pytest.raises(LLMProviderError):
+        with pytest.raises(LLMProviderError) as raised:
             llm._chat_observed_responses(messages=[], tools=None)
+
+    assert raised.value.info.status_code == 401
+    assert secret not in str(raised.value)
 
 
 # --- dispatch -------------------------------------------------------------

@@ -476,15 +476,19 @@ def trim_memory_maintenance_tool_outputs(
 
 def build_memory_maintenance_runner(agent, config) -> MemoryAgent:
     """Create the restricted maintenance agent using the parent LLM settings."""
-    llm_cls = type(agent.llm)
-    llm = llm_cls(
-        model=agent.llm.model,
-        api_key=getattr(config, "api_key", ""),
-        base_url=getattr(config, "base_url", None),
-        temperature=getattr(config, "temperature", 0.0),
-        max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
-        api_format=getattr(agent.llm, "api_format", "chat_completions"),
-    )
+    max_tokens = getattr(config, "memory_maintenance_max_tokens", 2000)
+    if hasattr(agent.llm, "for_maintenance"):
+        llm = agent.llm.for_maintenance(max_tokens)
+    else:
+        llm_cls = type(agent.llm)
+        llm = llm_cls(
+            model=agent.llm.model,
+            api_key=getattr(config, "api_key", ""),
+            base_url=getattr(config, "base_url", None),
+            temperature=getattr(config, "temperature", 0.0),
+            max_tokens=max_tokens,
+            api_format=getattr(agent.llm, "api_format", "chat_completions"),
+        )
     llm.meter = getattr(agent, "_cost_meter", None)
     return MemoryAgent(
         llm,

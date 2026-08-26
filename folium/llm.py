@@ -17,9 +17,10 @@ from typing import Any
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
 from .observability import span
 from .observability.context import active_observer, current_span_id, current_trace_id
-from .observability.redaction import compact_payload
+from .observability.redaction import compact_payload, redact_text
 from . import gateway as _gateway
 from .circuit_breaker import get_circuit_breaker
+from .config import LLMProfile
 
 
 @dataclass
@@ -71,6 +72,22 @@ class LLMErrorInfo:
     request_id: str | None = None
     retryable: bool = False
     raw_body: str | None = None
+
+    def __post_init__(self):
+        self.redact()
+
+    def redact(self, *secrets: str | None) -> "LLMErrorInfo":
+        def clean(value: str) -> str:
+            redacted = redact_text(value)
+            for secret in secrets:
+                if secret:
+                    redacted = redacted.replace(secret, "[REDACTED]")
+            return redacted
+
+        self.message = clean(self.message)
+        if self.raw_body is not None:
+            self.raw_body = clean(self.raw_body)
+        return self
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +203,9 @@ class LLMProviderError(RuntimeError):
         self.info = info
         super().__init__(self._format_message(info))
 
+    def __str__(self) -> str:
+        return self._format_message(self.info)
+
     @staticmethod
     def _format_message(info: LLMErrorInfo) -> str:
         parts = []
@@ -266,9 +286,12 @@ class LLM:
     ):
         self.model = model
         timeout = kwargs.pop("timeout", 30.0)
+        self.provider = kwargs.pop("provider", "openai")
+        self.breaker_key = kwargs.pop("breaker_key", self.provider)
+        self.api_key = api_key
+        self.base_url = base_url
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.api_format = kwargs.pop("api_format", "chat_completions")
-        self.provider = kwargs.pop("provider", "openai")
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -308,6 +331,7 @@ class LLM:
         trace_input: bool = True,
         scene: str = "agent_reasoning",
         cheap_only: bool = False,
+        route_models: bool = True,
     ) -> LLMResponse:
         """Send messages, stream back response, handle tool calls.
 
@@ -316,9 +340,13 @@ class LLM:
         ``cheap_only`` forces the cheapest tier (used once a session crosses its
         soft budget).
         """
-        candidates, route_reason = _gateway.route(
-            scene, default_model=self.model, cheap_only=cheap_only
-        )
+        if route_models:
+            candidates, route_reason = _gateway.route(
+                scene, default_model=self.model, cheap_only=cheap_only
+            )
+        else:
+            candidates = [self.model]
+            route_reason = "profile_fallback:fixed_model"
         self.model = candidates[0]
         observer = active_observer()
         cfg = observer.config
@@ -336,13 +364,14 @@ class LLM:
         }
         span_name = "responses" if self.api_format == "responses" else "chat.completions"
         provider = getattr(self, "provider", "openai")
+        breaker_key = getattr(self, "breaker_key", provider)
         last_error: LLMProviderError | None = None
         breaker = get_circuit_breaker()
         with span(span_name, "llm", metadata=llm_metadata):
             for idx, model in enumerate(candidates):
                 self.model = model
                 # fast-fail a circuit-open model and move to the next candidate
-                if not breaker.allow(provider, model):
+                if not breaker.allow(breaker_key, model):
                     _record_circuit_open(model)
                     continue
                 try:
@@ -350,14 +379,14 @@ class LLM:
                         result = self._chat_observed_responses(messages, tools, on_token)
                     else:
                         result = self._chat_observed(messages, tools, on_token)
-                    breaker.record_success(provider, model)
+                    breaker.record_success(breaker_key, model)
                     self._record_cost(result)
                     return result
                 except LLMProviderError as e:
                     last_error = e
                     if not _should_fallback(e.info):
                         raise
-                    if breaker.record_failure(provider, model):
+                    if breaker.record_failure(breaker_key, model):
                         _record_circuit_trip(e.info, model)
                     nxt = candidates[idx + 1] if idx + 1 < len(candidates) else None
                     if nxt is not None:
@@ -407,7 +436,7 @@ class LLM:
         first_token_at = None
         stream_started_at = time.time()
 
-        for chunk in _iter_stream(stream, provider="openai"):
+        for chunk in _iter_stream(stream, provider="openai", api_key=getattr(self, "api_key", None)):
             # usage info comes in the final chunk
             if chunk.usage:
                 prompt_tok = chunk.usage.prompt_tokens
@@ -533,7 +562,7 @@ class LLM:
         first_token_at = None
         stream_started_at = time.time()
 
-        for event in _iter_stream(stream, provider="openai"):
+        for event in _iter_stream(stream, provider="openai", api_key=getattr(self, "api_key", None)):
             etype = getattr(event, "type", None)
             if etype == "response.output_text.delta":
                 delta = getattr(event, "delta", None)
@@ -558,11 +587,13 @@ class LLM:
             elif etype == "response.failed":
                 resp = getattr(event, "response", None)
                 error = getattr(resp, "error", None)
-                raise LLMProviderError(LLMErrorInfo(
-                    message=str(error) if error else "response.failed",
-                    provider="openai",
-                    error_type="response.failed",
-                ))
+                raise LLMProviderError(
+                    _response_failed_error_info(
+                        error,
+                        resp,
+                        api_key=getattr(self, "api_key", None),
+                    )
+                )
 
         self.total_prompt_tokens += prompt_tok
         self.total_completion_tokens += completion_tok
@@ -624,7 +655,9 @@ class LLM:
                     _record_llm_retry(name, attempt + 1)
                 return stream
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
-                info = _openai_error_info(e, provider="openai", retryable=True)
+                info = _openai_error_info(e, provider="openai", retryable=True).redact(
+                    getattr(self, "api_key", None)
+                )
                 if attempt == max_retries - 1:
                     if record_errors:
                         _record_llm_error(info, attempt + 1)
@@ -634,7 +667,9 @@ class LLM:
             except APIError as e:
                 # 5xx = server error, retry; 4xx = client error, don't
                 retryable = bool(e.status_code and e.status_code >= 500)
-                info = _openai_error_info(e, provider="openai", retryable=retryable)
+                info = _openai_error_info(e, provider="openai", retryable=retryable).redact(
+                    getattr(self, "api_key", None)
+                )
                 if retryable and attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
@@ -668,6 +703,8 @@ class LiteLLM(LLM):
         self.api_key = api_key
         self.base_url = base_url
         self.api_format = kwargs.pop("api_format", "chat_completions")
+        self.provider = kwargs.pop("provider", "litellm")
+        self.breaker_key = kwargs.pop("breaker_key", self.provider)
         self.extra = kwargs
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
@@ -679,6 +716,9 @@ class LiteLLM(LLM):
         tools: list[dict] | None = None,
         on_token=None,
         trace_input: bool = True,
+        scene: str = "agent_reasoning",
+        cheap_only: bool = False,
+        route_models: bool = True,
     ) -> LLMResponse:
         """Send messages via litellm, stream back response, handle tool calls."""
         observer = active_observer()
@@ -724,7 +764,7 @@ class LiteLLM(LLM):
         first_token_at = None
         stream_started_at = time.time()
 
-        for chunk in _iter_stream(stream, provider="litellm"):
+        for chunk in _iter_stream(stream, provider="litellm", api_key=getattr(self, "api_key", None)):
             usage = getattr(chunk, "usage", None)
             if usage:
                 prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
@@ -841,9 +881,161 @@ class LiteLLM(LLM):
                         e,
                         provider="litellm",
                         retryable=is_transient or is_server,
-                    )
+                    ).redact(getattr(self, "api_key", None))
                     _record_llm_error(info, attempt + 1)
                     raise LLMProviderError(info) from e
+
+
+class FailoverLLM:
+    """Route calls across independently configured endpoint profiles."""
+
+    def __init__(
+        self,
+        profiles: list[LLMProfile],
+        *,
+        temperature: float = 0.0,
+        max_tokens: int = 32000,
+        api_format: str = "chat_completions",
+        timeout: float = 30.0,
+    ):
+        if not profiles:
+            raise ValueError("at least one LLM profile is required")
+        self._profiles = profiles
+        self._transport_kwargs = {
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "api_format": api_format,
+            "timeout": timeout,
+        }
+        self._llms = [self._create_transport(profile) for profile in profiles]
+        self._active_index = 0
+        self.api_format = api_format
+        self._meter = None
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_cached_tokens = 0
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_cached_tokens = 0
+
+    def _create_transport(self, profile: LLMProfile):
+        llm_cls = LiteLLM if profile.provider == "litellm" else LLM
+        return llm_cls(
+            model=profile.model,
+            api_key=profile.api_key,
+            base_url=profile.base_url,
+            provider=profile.provider,
+            breaker_key=f"{profile.provider}:{profile.name}",
+            **self._transport_kwargs,
+        )
+
+    @property
+    def model(self) -> str:
+        return self._llms[self._active_index].model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        self._llms[self._active_index].model = value
+
+    @property
+    def provider(self) -> str:
+        return self._profiles[self._active_index].provider
+
+    @property
+    def api_key(self) -> str:
+        return self._profiles[self._active_index].api_key
+
+    @property
+    def base_url(self) -> str | None:
+        return self._profiles[self._active_index].base_url
+
+    @property
+    def estimated_cost(self) -> float | None:
+        return estimate_cost(
+            self.model,
+            self.total_prompt_tokens,
+            self.total_completion_tokens,
+            self.total_cached_tokens,
+        )
+
+    @property
+    def meter(self):
+        return self._meter
+
+    @meter.setter
+    def meter(self, value) -> None:
+        self._meter = value
+        for llm in self._llms:
+            llm.meter = value
+
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        on_token=None,
+        trace_input: bool = True,
+        scene: str = "agent_reasoning",
+        cheap_only: bool = False,
+    ) -> LLMResponse:
+        last_error: LLMProviderError | None = None
+        for index in range(self._active_index, len(self._llms)):
+            llm = self._llms[index]
+            try:
+                result = llm.chat(
+                    messages=messages,
+                    tools=tools,
+                    on_token=on_token,
+                    trace_input=trace_input,
+                    scene=scene,
+                    cheap_only=cheap_only,
+                    route_models=index == self._active_index,
+                )
+            except LLMProviderError as exc:
+                exc.info.redact(self._profiles[index].api_key)
+                last_error = exc
+                if not _should_endpoint_failover(exc.info) or index == len(self._llms) - 1:
+                    raise
+                _record_endpoint_fallback(
+                    exc.info,
+                    source=self._profiles[index].name,
+                    fallback=self._profiles[index + 1].name,
+                )
+                continue
+
+            self._active_index = index
+            self.total_prompt_tokens += result.prompt_tokens
+            self.total_completion_tokens += result.completion_tokens
+            self.total_cached_tokens += result.cached_tokens
+            self.last_prompt_tokens = result.prompt_tokens
+            self.last_completion_tokens = result.completion_tokens
+            self.last_cached_tokens = result.cached_tokens
+            return result
+
+        assert last_error is not None
+        raise last_error
+
+    def for_maintenance(self, max_tokens: int):
+        profiles = [
+            LLMProfile(
+                name=profile.name,
+                provider=profile.provider,
+                api_key=profile.api_key,
+                base_url=profile.base_url,
+                model=self._llms[index].model,
+            )
+            for index, profile in enumerate(
+                self._profiles[self._active_index:], start=self._active_index
+            )
+        ]
+        clone = FailoverLLM(
+            profiles,
+            temperature=self._transport_kwargs["temperature"],
+            max_tokens=max_tokens,
+            api_format=self.api_format,
+            timeout=self._transport_kwargs["timeout"],
+        )
+        clone.meter = self.meter
+        return clone
 
 
 def _retry_after_seconds(e: RateLimitError) -> float | None:
@@ -912,14 +1104,40 @@ def _stream_error_info(e: Exception, provider: str) -> LLMErrorInfo:
     return _generic_error_info(e, provider=provider, retryable=False)
 
 
-def _iter_stream(stream, provider: str):
+def _response_failed_error_info(error, response, api_key: str | None) -> LLMErrorInfo:
+    if isinstance(error, dict):
+        message = str(error.get("message") or error or "response.failed")
+        error_type = error.get("type") or "response.failed"
+        error_code = error.get("code")
+        status_code = error.get("status_code") or error.get("status")
+    else:
+        message = str(error) if error else "response.failed"
+        error_type = getattr(error, "type", None) or "response.failed"
+        error_code = getattr(error, "code", None)
+        status_code = getattr(error, "status_code", None) or getattr(error, "status", None)
+
+    status_code = status_code or getattr(response, "status_code", None) or getattr(response, "status", None)
+    try:
+        status_code = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    return LLMErrorInfo(
+        message=message,
+        provider="openai",
+        status_code=status_code,
+        error_type=str(error_type),
+        error_code=str(error_code) if error_code else None,
+    ).redact(api_key)
+
+
+def _iter_stream(stream, provider: str, api_key: str | None = None):
     try:
         for chunk in stream:
             yield chunk
     except LLMProviderError:
         raise
     except Exception as e:
-        info = _stream_error_info(e, provider=provider)
+        info = _stream_error_info(e, provider=provider).redact(api_key)
         _record_llm_error(info, attempt=1)
         raise LLMProviderError(info) from e
 
@@ -969,6 +1187,11 @@ def _should_fallback(info: LLMErrorInfo) -> bool:
     return info.retryable
 
 
+def _should_endpoint_failover(info: LLMErrorInfo) -> bool:
+    """Whether a different provider profile may recover from this error."""
+    return info.status_code in {401, 403} or _should_fallback(info)
+
+
 def _record_llm_fallback(info: LLMErrorInfo, fallback: str) -> None:
     active_observer().record({
         "event": "llm_fallback",
@@ -980,6 +1203,23 @@ def _record_llm_fallback(info: LLMErrorInfo, fallback: str) -> None:
         "metadata": {
             **info.to_dict(),
             "fallback": fallback,
+        },
+    })
+
+
+def _record_endpoint_fallback(
+    info: LLMErrorInfo, source: str, fallback: str
+) -> None:
+    active_observer().record({
+        "event": "llm_endpoint_fallback",
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
+        "name": "endpoint.failover",
+        "type": "llm",
+        "metadata": {
+            "source_profile": source,
+            "fallback_profile": fallback,
+            "error": info.to_dict(),
         },
     })
 

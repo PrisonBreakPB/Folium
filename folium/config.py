@@ -1,11 +1,23 @@
 """Configuration - env vars and defaults."""
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 
 DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
+
+
+@dataclass
+class LLMProfile:
+    """A named, self-contained LLM endpoint configuration."""
+
+    name: str
+    provider: str
+    api_key: str
+    base_url: str | None
+    model: str
 
 
 def _load_dotenv():
@@ -50,6 +62,22 @@ class Config:
     memory_maintenance_max_steps: int = 5
     memory_maintenance_max_tokens: int = 2000
 
+    def endpoint_profiles(self) -> list[LLMProfile]:
+        """Read the active profile and its ordered fallback profiles from env."""
+        active = (os.getenv("FOLIUM_ACTIVE_PROFILE") or "").strip()
+        if not active:
+            return []
+
+        fallbacks = [
+            name.strip()
+            for name in (os.getenv("FOLIUM_FALLBACK_PROFILES") or "").split(",")
+            if name.strip()
+        ]
+        names = [active, *fallbacks]
+        if len({name.upper() for name in names}) != len(names):
+            raise ValueError("FOLIUM_ACTIVE_PROFILE and FOLIUM_FALLBACK_PROFILES must not repeat profiles")
+        return [_profile_from_env(name) for name in names]
+
     @classmethod
     def from_env(cls) -> "Config":
         # load .env if present (won't override existing env vars)
@@ -92,3 +120,28 @@ class Config:
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS", "2000")
             ),
         )
+
+
+def _profile_from_env(name: str) -> LLMProfile:
+    normalized = name.upper()
+    if not re.fullmatch(r"[A-Z0-9_]+", normalized):
+        raise ValueError(
+            f"invalid profile name {name!r}; use letters, digits, and underscores only"
+        )
+
+    prefix = f"FOLIUM_PROFILE_{normalized}_"
+    api_key = os.getenv(f"{prefix}API_KEY") or ""
+    model = os.getenv(f"{prefix}MODEL") or ""
+    missing = [
+        field for field, value in (("API_KEY", api_key), ("MODEL", model)) if not value
+    ]
+    if missing:
+        raise ValueError(f"profile {name!r} is missing {', '.join(prefix + field for field in missing)}")
+
+    return LLMProfile(
+        name=name,
+        provider=(os.getenv(f"{prefix}PROVIDER", "openai") or "openai").lower(),
+        api_key=api_key,
+        base_url=os.getenv(f"{prefix}BASE_URL") or None,
+        model=model,
+    )

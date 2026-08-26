@@ -161,6 +161,29 @@ FOLIUM_BUDGET_USD        单次会话成本预算（美元）；0 或未设 = �
 FOLIUM_BUDGET_SOFT_RATIO 软阈值（花到预算的比例后转用便宜模型），默认 0.8
 ```
 
+### CLI 多端点 profile
+
+CLI 可以把多套供应商凭据保存为全局环境变量或项目 `.env`，并在主端点失败时切换到独立的备用端点：
+
+```text
+FOLIUM_ACTIVE_PROFILE=deepseek
+FOLIUM_FALLBACK_PROFILES=openai,backup
+
+FOLIUM_PROFILE_DEEPSEEK_PROVIDER=openai
+FOLIUM_PROFILE_DEEPSEEK_API_KEY=...
+FOLIUM_PROFILE_DEEPSEEK_BASE_URL=https://api.deepseek.com
+FOLIUM_PROFILE_DEEPSEEK_MODEL=deepseek-v4-pro
+
+FOLIUM_PROFILE_OPENAI_PROVIDER=openai
+FOLIUM_PROFILE_OPENAI_API_KEY=...
+FOLIUM_PROFILE_OPENAI_BASE_URL=https://api.openai.com/v1
+FOLIUM_PROFILE_OPENAI_MODEL=gpt-4o-mini
+```
+
+profile 名只能使用字母、数字和下划线。每套 profile 必须配置 `API_KEY` 和 `MODEL`；`PROVIDER` 默认为 `openai`，`BASE_URL` 可省略以使用 OpenAI 默认地址。未设置 `FOLIUM_ACTIVE_PROFILE` 时，CLI 保持原有 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置方式。
+
+主端点返回 `401/403` 时会直接尝试下一个 profile；对 `429`、5xx、超时和断连，会先执行现有重试与同端点模型降级，仍失败后再切换。其他 4xx 请求错误不会跨端点切换。切换后本会话继续使用成功的 profile；重启 CLI 后仍从 active profile 开始。
+
 Responses 模式说明：设置 `FOLIUM_API_FORMAT=responses` 可切换到 OpenAI Responses API 格式（仅 `FOLIUM_PROVIDER=openai` 生效，LiteLLM 保持 Chat Completions）。DeepSeek 的 Responses 端点只支持 `deepseek-v4-flash` / `deepseek-v4-pro` 模型，为无状态接口、支持 function calling；切换时需同时把 `FOLIUM_MODEL` 换成上述模型之一。
 
 模型路由（scene 规则路由 + 自动降级）：`folium/gateway.py` 提供按调用场景选择模型的规则路由。各调用方通过 `chat(..., scene="...")` 声明自己的场景，网关查 `scene → tier → 模型` 映射决定候选链（primary + fallback），并把 `route_reason`（为什么选它）写入观测。当 primary 模型调用遇到**可降级错误**（429 限流、5xx、超时/断连）时，`chat()` 会自动改用 fallback 候选重试，避免一失败就崩；参数/鉴权/上下文超限/安全拒答等请求侧错误不会换模型，直接抛出。每次降级都会记录 `llm_fallback` 事件（含原始错误与切到的模型）。当前内置场景：`agent_reasoning`（Agent 主循环，默认 tier-balanced）、`context_summarize`（上下文压缩，tier-fast）、`memory_maintain`（记忆维护，tier-fast）。换模型只改 tier 对应的 env，不改路由规则。
