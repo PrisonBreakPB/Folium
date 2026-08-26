@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool
 from ..sandbox import DockerSandboxExecutor, LocalCommandExecutor
+from ..sandbox.session import get_current_session, use_copy_workspace
 
 
 class BashArgs(BaseModel):
@@ -53,4 +54,5 @@ def _executor_from_env():
             memory=os.getenv("FOLIUM_DOCKER_MEMORY", "2g"),
             pids_limit=int(os.getenv("FOLIUM_DOCKER_PIDS_LIMIT", "256")),
         )
-    return LocalCommandExecutor()
+    cwd = str(get_current_session().workspace) if use_copy_workspace() else None
+    return LocalCommandExecutor(cwd=cwd)

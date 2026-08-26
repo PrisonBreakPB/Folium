@@ -4,7 +4,9 @@ from folium.session import (
     calculate_session_stats,
     delete_session,
     ensure_session,
+    get_session_workspace,
     load_session,
+    list_sessions,
     save_session,
 )
 
@@ -99,6 +101,21 @@ def test_delete_session_cascades_to_traces(tmp_path, monkeypatch):
     with get_connection() as conn:
         assert conn.execute("SELECT COUNT(*) FROM traces").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM trace_events").fetchone()[0] == 0
+
+
+def test_session_persists_workspace_path(tmp_path, monkeypatch):
+    _use_temp_db(tmp_path, monkeypatch)
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+
+    sid = save_session(
+        [{"role": "user", "content": "hello"}],
+        "model-a",
+        workspace_path=str(workspace),
+    )
+
+    assert get_session_workspace(sid) == str(workspace)
+    assert list_sessions()[0]["workspace_path"] == str(workspace)
 
 
 def test_session_stats_keeps_separate_llm_spans_with_identical_usage(tmp_path, monkeypatch):

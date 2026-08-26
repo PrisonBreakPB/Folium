@@ -48,6 +48,15 @@ def get_host_workspace() -> Path:
     return Path(os.getenv("FOLIUM_HOST_WORKSPACE") or os.getcwd()).resolve()
 
 
+def configure_host_workspace(workspace_path: str) -> Path:
+    """Set the host workspace for subsequently-created sandbox sessions."""
+    path = Path(workspace_path).expanduser().resolve()
+    if not path.exists() or not path.is_dir():
+        raise SandboxPathError(f"workspace is not a directory: {workspace_path}")
+    os.environ["FOLIUM_HOST_WORKSPACE"] = str(path)
+    return path
+
+
 class SandboxSession:
     def __init__(self, host_workspace: str | None = None, root_dir: str | None = None):
         self.session_id = uuid.uuid4().hex[:12]

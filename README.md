@@ -107,6 +107,17 @@ python -m folium
 http://localhost:8000
 ```
 
+启动 CLI：
+
+```bash
+folium --workspace D:\\Projects\\my-project
+```
+
+CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。默认使用 Docker + `copy` 工作区；
+代码和实验命令先在当前会话的沙箱副本中执行。交互命令包括 `/new`、`/reset`、`/mode`、
+`/workspace`、`/todos`、`/save`、`/sessions`、`/switch <id>`、`/delete <id>`、`/diff`、
+`/traces` 和 `/trace <id>`。CLI 中的受保护文件和可能修改工作区的 Bash 命令会在执行前显示审批提示。
+
 ## 配置
 
 常用环境变量：

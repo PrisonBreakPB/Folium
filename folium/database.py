@@ -42,6 +42,11 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS session_workspaces (
+            session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+            workspace_path TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -97,5 +102,13 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
             ON trace_events(trace_id, event_index);
         """
     )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "workspace_path" in columns:
+        conn.execute(
+            "INSERT OR IGNORE INTO session_workspaces (session_id, workspace_path) "
+            "SELECT id, workspace_path FROM sessions "
+            "WHERE workspace_path IS NOT NULL AND workspace_path <> ''"
+        )
+        conn.execute("ALTER TABLE sessions DROP COLUMN workspace_path")
     conn.execute("PRAGMA user_version = 1")
     conn.commit()

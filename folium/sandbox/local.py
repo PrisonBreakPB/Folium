@@ -21,8 +21,8 @@ _DANGEROUS_PATTERNS = [
 
 
 class LocalCommandExecutor:
-    def __init__(self):
-        self.cwd: str | None = None
+    def __init__(self, cwd: str | None = None):
+        self.cwd: str | None = cwd
 
     def run(self, command: str, timeout: int = 120) -> str:
         warning = check_dangerous(command)

@@ -7,6 +7,7 @@ import json
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from .database import get_connection
@@ -33,7 +34,12 @@ def new_session_id() -> str:
     return _new_session_id()
 
 
-def ensure_session(session_id: str, model: str, system_prompt: str = "") -> str:
+def ensure_session(
+    session_id: str,
+    model: str,
+    system_prompt: str = "",
+    workspace_path: str | None = None,
+) -> str:
     """Create a session row when needed so traces can reference it."""
     now = _now()
     session_id = _normalize_session_id(session_id)
@@ -52,6 +58,12 @@ def ensure_session(session_id: str, model: str, system_prompt: str = "") -> str:
             """,
             (session_id, model, system_prompt, now, now),
         )
+        if workspace_path is not None:
+            conn.execute(
+                "INSERT INTO session_workspaces (session_id, workspace_path) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET workspace_path = excluded.workspace_path",
+                (session_id, workspace_path),
+            )
     return session_id
 
 
@@ -61,6 +73,7 @@ def save_session(
     session_id: str | None = None,
     transcript: list[dict] | None = None,
     system_prompt: str | None = None,
+    workspace_path: str | None = None,
 ) -> str:
     """Persist canonical transcript and current model context in one transaction."""
     session_id = _normalize_session_id(session_id)
@@ -72,6 +85,13 @@ def save_session(
             (session_id,),
         ).fetchone()
         prompt = system_prompt if system_prompt is not None else (existing["system_prompt"] if existing else "")
+        saved_workspace = workspace_path
+        if saved_workspace is None and existing:
+            saved_row = conn.execute(
+                "SELECT workspace_path FROM session_workspaces WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            saved_workspace = saved_row["workspace_path"] if saved_row else None
         conn.execute(
             """
             INSERT INTO sessions (id, model, system_prompt, created_at, updated_at)
@@ -83,6 +103,12 @@ def save_session(
             """,
             (session_id, model, prompt, existing["created_at"] if existing else now, now),
         )
+        if saved_workspace is not None:
+            conn.execute(
+                "INSERT INTO session_workspaces (session_id, workspace_path) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET workspace_path = excluded.workspace_path",
+                (session_id, saved_workspace),
+            )
         conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         _insert_messages(conn, session_id, messages, transcript)
     return session_id
@@ -125,6 +151,26 @@ def delete_session(session_id: str) -> bool:
     with get_connection() as conn:
         cursor = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     return cursor.rowcount > 0
+
+
+def get_session_workspace(session_id: str) -> str | None:
+    """Return the persisted workspace path for a session, if configured."""
+    session_id = _normalize_session_id(session_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT workspace_path FROM session_workspaces WHERE session_id = ?", (session_id,)
+        ).fetchone()
+    return row["workspace_path"] if row and row["workspace_path"] else None
+
+
+def normalize_workspace_path(workspace_path: str | None) -> str:
+    """Validate and normalize a user-selected workspace directory."""
+    path = Path(workspace_path or ".").expanduser().resolve()
+    if not path.exists():
+        raise ValueError(f"Workspace does not exist: {path}")
+    if not path.is_dir():
+        raise ValueError(f"Workspace is not a directory: {path}")
+    return str(path)
 
 
 def calculate_session_stats(session_id: str) -> dict:
@@ -194,6 +240,11 @@ def list_sessions() -> list[dict]:
                 s.created_at,
                 s.updated_at,
                 (
+                    SELECT workspace_path
+                    FROM session_workspaces sw
+                    WHERE sw.session_id = s.id
+                ) AS workspace_path,
+                (
                     SELECT m.content
                     FROM messages m
                     WHERE m.session_id = s.id AND m.role = 'user'
@@ -215,6 +266,7 @@ def list_sessions() -> list[dict]:
             "model": row["model"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "workspace_path": row["workspace_path"],
             "preview": repair_mojibake_text(row["preview"] or "")[:80],
         }
         for row in rows

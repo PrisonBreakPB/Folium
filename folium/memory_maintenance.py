@@ -472,3 +472,21 @@ def trim_memory_maintenance_tool_outputs(
         trimmed_count += 1
         trimmed_characters += len(content) - len(trimmed)
     return trimmed_messages, trimmed_count, trimmed_characters
+
+
+def build_memory_maintenance_runner(agent, config) -> MemoryAgent:
+    """Create the restricted maintenance agent using the parent LLM settings."""
+    llm_cls = type(agent.llm)
+    llm = llm_cls(
+        model=agent.llm.model,
+        api_key=getattr(config, "api_key", ""),
+        base_url=getattr(config, "base_url", None),
+        temperature=getattr(config, "temperature", 0.0),
+        max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
+        api_format=getattr(agent.llm, "api_format", "chat_completions"),
+    )
+    llm.meter = getattr(agent, "_cost_meter", None)
+    return MemoryAgent(
+        llm,
+        max_steps=getattr(config, "memory_maintenance_max_steps", 5),
+    )

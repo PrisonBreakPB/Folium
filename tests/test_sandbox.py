@@ -272,6 +272,25 @@ class SandboxTests(unittest.TestCase):
             self.assertEqual((session.workspace / "note.txt").read_text(), "sandbox\n")
             self.assertEqual((session.workspace / "created.txt").read_text(), "new\n")
 
+    def test_local_bash_uses_copy_workspace_as_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            root = Path(tmp) / "sessions"
+            host.mkdir()
+            session = SandboxSession(host_workspace=str(host), root_dir=str(root))
+
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_BASH_BACKEND": "local", "FOLIUM_SANDBOX_WORKSPACE_MODE": "copy"},
+                    clear=False,
+                ),
+                mock.patch("folium.sandbox.filesystem.get_current_session", return_value=session),
+                mock.patch("folium.tools.bash.get_current_session", return_value=session),
+            ):
+                tool = BashTool()
+                self.assertEqual(Path(tool.executor.cwd), session.workspace.resolve())
+
     def test_glob_uses_sandbox_workspace_with_local_bash_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
             host = Path(tmp) / "repo"

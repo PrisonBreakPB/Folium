@@ -19,14 +19,17 @@ from ..llm import LLMProviderError
 from ..memory_maintenance import (
     MemoryAgent,
     MemoryMaintenanceScheduler,
+    build_memory_maintenance_runner,
 )
 from ..session import (
     calculate_session_stats,
     delete_session,
     ensure_session,
+    get_session_workspace,
     list_sessions,
     load_session,
     new_session_id,
+    normalize_workspace_path,
     save_session,
 )
 from ..context import estimate_tokens
@@ -34,7 +37,11 @@ from ..encoding import repair_mojibake_payload
 from ..edit_approval import ApprovalDecision
 from ..tools.edit import _changed_files
 from ..observability import delete_traces_for_session, list_traces, read_trace_summary
-from ..sandbox.session import reset_current_session
+from ..sandbox.session import (
+    configure_host_workspace,
+    get_host_workspace,
+    reset_current_session,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -172,6 +179,7 @@ def _auto_save():
             _state["session_id"],
             transcript=getattr(agent, "transcript", agent.messages),
             system_prompt=agent._system,
+            workspace_path=str(get_host_workspace()),
         )
         _state["session_id"] = sid
         agent.session_id = sid
@@ -196,21 +204,7 @@ async def _after_chat_response(completion: dict | None = None):
 
 
 def _new_memory_maintenance_runner(agent: Agent, config: Config) -> MemoryAgent:
-    llm_cls = type(agent.llm)
-    llm = llm_cls(
-        model=agent.llm.model,
-        api_key=getattr(config, "api_key", ""),
-        base_url=getattr(config, "base_url", None),
-        temperature=getattr(config, "temperature", 0.0),
-        max_tokens=getattr(config, "memory_maintenance_max_tokens", 2000),
-        api_format=getattr(agent.llm, "api_format", "chat_completions"),
-    )
-    # count background memory-maintenance spend against the session budget
-    llm.meter = getattr(agent, "_cost_meter", None)
-    return MemoryAgent(
-        llm,
-        max_steps=getattr(config, "memory_maintenance_max_steps", 5),
-    )
+    return build_memory_maintenance_runner(agent, config)
 
 
 def _context_budget_payload() -> dict:
@@ -275,6 +269,7 @@ async def chat(req: ChatRequest):
                 _state["session_id"],
                 _state["config"].model,
                 _state["agent"]._system,
+                workspace_path=str(get_host_workspace()),
             )
         _state["agent"].session_id = _state["session_id"]
         _state["agent"].edit_approval_callback = on_edit_approval
@@ -463,6 +458,12 @@ async def switch_conversation(req: SwitchRequest):
         return JSONResponse({"error": "Session not found"}, status_code=404)
 
     messages, model, transcript, system_prompt = loaded
+    saved_workspace = get_session_workspace(req.session_id)
+    if saved_workspace:
+        try:
+            configure_host_workspace(normalize_workspace_path(saved_workspace))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
     _state["agent"].messages = messages
     _state["agent"].transcript = transcript
     _state["agent"].reset_todos()
