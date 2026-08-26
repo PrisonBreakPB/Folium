@@ -2,6 +2,8 @@ from types import SimpleNamespace
 from io import StringIO
 from unittest import mock
 
+from prompt_toolkit.document import Document
+
 from folium import cli, database
 from folium.config import Config
 from folium.cost_meter import CostMeter
@@ -11,6 +13,45 @@ from folium.session import get_session_workspace
 def test_cli_workspace_argument_is_parsed(monkeypatch):
     monkeypatch.setattr("sys.argv", ["folium", "--workspace", "D:/project"])
     assert cli._parse_args().workspace == "D:/project"
+
+
+def test_cli_slash_command_completer_matches_prefix_and_skills():
+    agent = SimpleNamespace(
+        skills=[SimpleNamespace(name="literature-review")]
+    )
+    completer = cli.SlashCommandCompleter(agent)
+
+    completions = list(completer.get_completions(Document("/mo"), None))
+    assert [item.text for item in completions] == ["/model", "/mode"]
+
+    skill_completions = list(
+        completer.get_completions(Document("/lit"), None)
+    )
+    assert [item.text for item in skill_completions] == ["/literature-review"]
+
+
+def test_cli_slash_command_completer_ignores_normal_text_and_arguments():
+    completer = cli.SlashCommandCompleter(SimpleNamespace(skills=[]))
+
+    assert list(completer.get_completions(Document("hello /mo"), None)) == []
+    assert list(completer.get_completions(Document("/model "), None)) == []
+
+
+def test_cli_enter_accepts_completion_before_submitting():
+    completion = object()
+    buffer = SimpleNamespace(
+        complete_state=SimpleNamespace(
+            current_completion=None,
+            completions=[completion],
+        ),
+        apply_completion=mock.Mock(),
+        validate_and_handle=mock.Mock(),
+    )
+
+    cli._submit_or_accept_completion(SimpleNamespace(current_buffer=buffer))
+
+    buffer.apply_completion.assert_called_once_with(completion)
+    buffer.validate_and_handle.assert_not_called()
 
 
 def test_cli_defaults_workspace_to_current_directory(monkeypatch, tmp_path):

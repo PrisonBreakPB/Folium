@@ -19,6 +19,7 @@ from rich.table import Table
 from rich.box import ROUNDED
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 
@@ -50,6 +51,75 @@ from .memory_maintenance import MemoryMaintenanceScheduler, build_memory_mainten
 from . import __version__
 
 console = Console()
+
+
+class SlashCommandCompleter(Completer):
+    """Complete built-in and dynamically loaded slash commands."""
+
+    _COMMANDS = (
+        ("/help", "Show help"),
+        ("/new", "Start a new conversation"),
+        ("/reset", "Clear conversation history"),
+        ("/model", "Show or switch model"),
+        ("/mode", "Show or switch agent mode"),
+        ("/skills", "List available skills"),
+        ("/status", "Show runtime status"),
+        ("/usage", "Alias for /status"),
+        ("/workspace", "Show host and sandbox workspace"),
+        ("/todos", "Show todo list"),
+        ("/tokens", "Show token usage"),
+        ("/compact", "Compress conversation context"),
+        ("/diff", "Show files modified this session"),
+        ("/save", "Save session to disk"),
+        ("/sessions", "List saved sessions"),
+        ("/switch", "Switch to a saved session"),
+        ("/delete", "Delete a saved session"),
+        ("/traces", "List recent execution traces"),
+        ("/trace", "Show a trace summary"),
+        ("/quit", "Exit Folium"),
+        ("/exit", "Exit Folium"),
+    )
+
+    def __init__(self, agent=None):
+        self.agent = agent
+
+    def get_completions(self, document, complete_event):
+        line = document.text_before_cursor.rsplit("\n", 1)[-1]
+        if not line.startswith("/") or any(char.isspace() for char in line):
+            return
+
+        candidates = list(self._COMMANDS)
+        seen = {command for command, _ in candidates}
+        for skill in getattr(self.agent, "skills", []):
+            name = getattr(skill, "name", "").strip()
+            if name and f"/{name}" not in seen:
+                candidates.append((f"/{name}", "Skill"))
+
+        prefix = line.casefold()
+        for command, description in candidates:
+            if command.casefold().startswith(prefix):
+                yield Completion(
+                    command,
+                    start_position=-len(line),
+                    display=command,
+                    display_meta=description,
+                )
+
+
+def _submit_or_accept_completion(event) -> None:
+    """Accept an open completion menu before submitting multiline input."""
+    buffer = event.current_buffer
+    completion_state = buffer.complete_state
+    if completion_state is not None:
+        completion = completion_state.current_completion
+        if completion is None and completion_state.completions:
+            completion = completion_state.completions[0]
+        if completion is not None:
+            buffer.apply_completion(completion)
+        else:
+            buffer.complete_state = None
+        return
+    buffer.validate_and_handle()
 
 
 def _parse_args():
@@ -254,7 +324,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
 
     @kb.add("enter")
     def _submit(event):
-        event.current_buffer.validate_and_handle()
+        _submit_or_accept_completion(event)
 
     @kb.add("escape", "enter")
     def _newline(event):
@@ -267,6 +337,8 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                 history=history,
                 multiline=True,
                 key_bindings=kb,
+                completer=SlashCommandCompleter(agent),
+                complete_while_typing=True,
                 prompt_continuation="...  ",
             ).strip()
         except (EOFError, KeyboardInterrupt):
