@@ -469,12 +469,13 @@ def _show_help():
 def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     """Render the compact CLI identity and runtime status."""
     logo = Text(
-        " FFFFF   OOO   L      III  U   U  M   M\n"
-        " F      O   O  L       I   U   U  MM MM\n"
-        " FFF    O   O  L       I   U   U  M M M\n"
-        " F      O   O  L       I   U   U  M   M\n"
-        " F       OOO   LLLL   III   UUU   M   M",
+        "F O L I U M",
         style="bold bright_cyan",
+        justify="center",
+    )
+    tagline = Text(
+        f"RESEARCH AGENT  /  v{__version__}",
+        style="bold white",
         justify="center",
     )
     status = Table.grid(padding=(0, 2))
@@ -490,6 +491,7 @@ def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     content = Table.grid(padding=(0, 1), expand=True)
     content.add_column()
     content.add_row(logo)
+    content.add_row(tagline)
     content.add_row(status)
     console.print(Panel(
         Align.left(content),
