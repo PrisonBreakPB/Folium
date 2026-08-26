@@ -65,9 +65,7 @@ def main():
     args = _parse_args()
     os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
     saved_workspace = get_session_workspace(args.resume) if args.resume else None
-    workspace_input = args.workspace or os.getenv("FOLIUM_HOST_WORKSPACE")
-    if not workspace_input and not args.resume and not args.prompt and sys.stdin.isatty():
-        workspace_input = Prompt.ask("Project workspace", default=os.getcwd())
+    workspace_input = args.workspace or os.getenv("FOLIUM_HOST_WORKSPACE") or os.getcwd()
     try:
         workspace = normalize_workspace_path(workspace_input or os.getcwd())
     except ValueError as exc:

@@ -12,6 +12,36 @@ def test_cli_workspace_argument_is_parsed(monkeypatch):
     assert cli._parse_args().workspace == "D:/project"
 
 
+def test_cli_defaults_workspace_to_current_directory(monkeypatch, tmp_path):
+    args = SimpleNamespace(
+        resume=None,
+        workspace=None,
+        prompt=None,
+        model=None,
+        base_url=None,
+        api_key=None,
+    )
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            self.model = kwargs["model"]
+
+    monkeypatch.setattr(cli, "_parse_args", lambda: args)
+    monkeypatch.setattr(cli.os, "getcwd", lambda: str(tmp_path))
+    monkeypatch.delenv("FOLIUM_HOST_WORKSPACE", raising=False)
+    monkeypatch.setenv("FOLIUM_SANDBOX_WORKSPACE_MODE", "host")
+    monkeypatch.setattr(cli.Config, "from_env", staticmethod(lambda: Config(api_key="key")))
+    monkeypatch.setattr(cli, "LLM", FakeLLM)
+    monkeypatch.setattr(cli, "Agent", lambda **kwargs: SimpleNamespace())
+    monkeypatch.setattr(cli, "_repl", lambda agent, config, workspace, session: captured.update(workspace=workspace))
+    monkeypatch.setattr(cli.Prompt, "ask", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not prompt")))
+
+    cli.main()
+
+    assert captured["workspace"] == str(tmp_path.resolve())
+
+
 def test_cli_session_persists_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DB_PATH", tmp_path / "folium.db")
     agent = SimpleNamespace(_system="system", messages=[{"role": "user", "content": "hi"}], transcript=[])

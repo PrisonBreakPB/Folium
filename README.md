@@ -113,6 +113,8 @@ http://localhost:8000
 folium --workspace D:\\Projects\\my-project
 ```
 
+也可以先进入项目目录，再直接输入 `folium`；CLI 会自动把当前目录作为工作区。
+
 CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。默认使用 Docker + `copy` 工作区；
 代码和实验命令先在当前会话的沙箱副本中执行。交互命令包括 `/new`、`/reset`、`/help`、
 `/model`、`/mode`、`/skills`、`/status`（`/usage`）、`/workspace`、`/todos`、`/tokens`、
