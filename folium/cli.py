@@ -469,14 +469,13 @@ def _show_help():
 def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     """Render the compact CLI identity and runtime status."""
     logo = Text(
-        "  ______    ____    ____                      \n"
-        " |  ____|  / __ \\  / __ \\                     \n"
-        " | |__    | |  | || |  | |                    \n"
-        " |  __|   | |  | || |  | |                    \n"
-        " | |      | |__| || |__| |                    \n"
-        " |_|       \\____/  \\____/                     ",
+        " FFFFF   OOO   L      III  U   U  M   M\n"
+        " F      O   O  L       I   U   U  MM MM\n"
+        " FFF    O   O  L       I   U   U  M M M\n"
+        " F      O   O  L       I   U   U  M   M\n"
+        " F       OOO   LLLL   III   UUU   M   M",
         style="bold bright_cyan",
-        justify="left",
+        justify="center",
     )
     status = Table.grid(padding=(0, 2))
     status.add_column(style="dim")
@@ -488,10 +487,10 @@ def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     if config.base_url:
         status.add_row("API", config.base_url)
 
-    content = Table.grid(padding=(0, 3), expand=True)
-    content.add_column(ratio=3)
-    content.add_column(ratio=2)
-    content.add_row(logo, status)
+    content = Table.grid(padding=(0, 1), expand=True)
+    content.add_column()
+    content.add_row(logo)
+    content.add_row(status)
     console.print(Panel(
         Align.left(content),
         title=f"[bold white]FOLIUM / RESEARCH AGENT / v{__version__}[/bold white]",
