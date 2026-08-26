@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from io import StringIO
+from unittest import mock
 
 from folium import cli, database
 from folium.config import Config
@@ -40,6 +41,50 @@ def test_cli_defaults_workspace_to_current_directory(monkeypatch, tmp_path):
     cli.main()
 
     assert captured["workspace"] == str(tmp_path.resolve())
+
+
+def test_cli_rejects_local_backend_for_bash_sandbox(monkeypatch):
+    args = SimpleNamespace(
+        resume=None,
+        workspace=None,
+        prompt=None,
+        model=None,
+        base_url=None,
+        api_key=None,
+    )
+    monkeypatch.setattr(cli, "_parse_args", lambda: args)
+    monkeypatch.setenv("FOLIUM_SANDBOX_WORKSPACE_MODE", "bash")
+    monkeypatch.setenv("FOLIUM_BASH_BACKEND", "local")
+
+    try:
+        cli.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("CLI should reject local backend in bash sandbox mode")
+
+
+def test_cli_rejects_local_backend_from_project_env(monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text("FOLIUM_BASH_BACKEND=local\n", encoding="utf-8")
+    args = SimpleNamespace(
+        resume=None,
+        workspace=str(tmp_path),
+        prompt=None,
+        model=None,
+        base_url=None,
+        api_key=None,
+    )
+    monkeypatch.setattr(cli, "_parse_args", lambda: args)
+    monkeypatch.delenv("FOLIUM_BASH_BACKEND", raising=False)
+    monkeypatch.delenv("FOLIUM_SANDBOX_WORKSPACE_MODE", raising=False)
+
+    with mock.patch.dict("os.environ", {}, clear=False):
+        try:
+            cli.main()
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("CLI should reject local backend loaded from project .env")
 
 
 def test_cli_session_persists_workspace(tmp_path, monkeypatch):
@@ -87,6 +132,24 @@ def test_cli_resets_last_usage_when_switching_sessions():
     assert llm.last_prompt_tokens == 0
     assert llm.last_completion_tokens == 0
     assert llm.last_cached_tokens == 0
+
+
+def test_cli_cleans_cached_bash_executors():
+    class Executor:
+        def __init__(self):
+            self.cleaned = False
+
+        def cleanup(self):
+            self.cleaned = True
+
+    executor = Executor()
+    tool = SimpleNamespace(name="bash", _executor=executor)
+    agent = SimpleNamespace(tools=[tool])
+
+    cli._cleanup_bash_executors(agent)
+
+    assert executor.cleaned is True
+    assert tool._executor is None
 
 
 def test_cli_one_shot_submits_memory_maintenance(monkeypatch, tmp_path):

@@ -38,7 +38,13 @@ from .session import (
     save_session,
 )
 from .observability import list_traces, read_trace_summary
-from .sandbox.session import configure_host_workspace, reset_current_session, get_current_session
+from .sandbox.session import (
+    configure_host_workspace,
+    get_current_session,
+    reset_current_session,
+    use_bash_sandbox,
+    use_copy_workspace,
+)
 from .edit_approval import ApprovalDecision
 from .memory_maintenance import MemoryMaintenanceScheduler, build_memory_maintenance_runner
 from . import __version__
@@ -63,7 +69,8 @@ def _parse_args():
 
 def main():
     args = _parse_args()
-    os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
+    os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "bash")
+    _validate_cli_sandbox_backend()
     saved_workspace = get_session_workspace(args.resume) if args.resume else None
     workspace_input = args.workspace or os.getenv("FOLIUM_HOST_WORKSPACE") or os.getcwd()
     try:
@@ -87,6 +94,7 @@ def main():
         load_dotenv(Path(workspace) / ".env", override=False)
     except ImportError:
         pass
+    _validate_cli_sandbox_backend()
     config = Config.from_env()
 
     # CLI args override env vars
@@ -169,7 +177,10 @@ def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session
     transcript_start = len(agent.transcript)
     session_id = _ensure_session(agent, config, workspace, session_id)
     agent.edit_approval_callback = _cli_edit_approval
-    agent.chat(prompt, on_token=on_token, on_event=on_event)
+    try:
+        agent.chat(prompt, on_token=on_token, on_event=on_event)
+    finally:
+        _cleanup_bash_executors(agent)
     save_session(
         agent.messages,
         config.model,
@@ -248,6 +259,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             current_session_id = _persist_session(agent, config, workspace, current_session_id)
             agent.reset()
             _reset_last_llm_usage(agent.llm)
+            _cleanup_bash_executors(agent)
             current_session_id = None
             agent.session_id = None
             reset_current_session()
@@ -258,6 +270,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             current_session_id = _persist_session(agent, config, workspace, current_session_id)
             agent.reset()
             _reset_last_llm_usage(agent.llm)
+            _cleanup_bash_executors(agent)
             current_session_id = None
             agent.session_id = None
             reset_current_session()
@@ -300,7 +313,11 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                     console.print(f"[red]{exc}[/red]")
             continue
         if user_input == "/workspace":
-            sandbox = get_current_session() if os.getenv("FOLIUM_SANDBOX_WORKSPACE_MODE") == "copy" else None
+            sandbox = (
+                get_current_session(copy_workspace=use_copy_workspace())
+                if use_bash_sandbox()
+                else None
+            )
             console.print(f"Host workspace: [cyan]{workspace}[/cyan]")
             if sandbox:
                 console.print(f"Sandbox workspace: [cyan]{sandbox.workspace}[/cyan]")
@@ -360,6 +377,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                     console.print(f"[red]{exc}[/red]")
                     continue
                 configure_host_workspace(workspace)
+            _cleanup_bash_executors(agent)
             reset_current_session()
             agent.messages = messages
             agent.transcript = transcript
@@ -384,6 +402,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                 if target == current_session_id:
                     agent.reset()
                     _reset_last_llm_usage(agent.llm)
+                    _cleanup_bash_executors(agent)
                     agent.session_id = None
                     current_session_id = None
                     reset_current_session()
@@ -465,6 +484,8 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
 
+    _cleanup_bash_executors(agent)
+
 
 def _show_skills(agent: Agent) -> None:
     skills = getattr(agent, "skills", [])
@@ -491,8 +512,9 @@ def _show_status(
     table.add_row("MODEL", config.model)
     table.add_row("MODE", agent.mode)
     table.add_row("WORKSPACE", workspace)
-    if os.getenv("FOLIUM_SANDBOX_WORKSPACE_MODE") == "copy":
-        table.add_row("SANDBOX", str(get_current_session().workspace))
+    if use_bash_sandbox():
+        sandbox = get_current_session(copy_workspace=use_copy_workspace())
+        table.add_row("SANDBOX", str(sandbox.workspace))
     if context:
         estimated = estimate_tokens(agent.messages)
         table.add_row(
@@ -709,6 +731,32 @@ def _ensure_session(
     ensure_session(session_id, config.model, agent._system, workspace_path=workspace)
     agent.session_id = session_id
     return session_id
+
+
+def _cleanup_bash_executors(agent: Agent) -> None:
+    """Stop cached Bash executors before replacing the current sandbox session."""
+    for tool in getattr(agent, "tools", []):
+        if getattr(tool, "name", None) != "bash":
+            continue
+        executor = getattr(tool, "_executor", None)
+        if executor is None:
+            continue
+        cleanup = getattr(executor, "cleanup", None)
+        if cleanup:
+            cleanup()
+        tool._executor = None
+
+
+def _validate_cli_sandbox_backend() -> None:
+    if (
+        os.getenv("FOLIUM_SANDBOX_WORKSPACE_MODE") == "bash"
+        and os.getenv("FOLIUM_BASH_BACKEND", "docker").strip().lower() == "local"
+    ):
+        console.print(
+            "[red]CLI bash sandbox requires FOLIUM_BASH_BACKEND=docker; "
+            "local does not isolate processes.[/red]"
+        )
+        sys.exit(2)
 
 
 def _persist_session(

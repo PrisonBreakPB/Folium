@@ -66,6 +66,32 @@ class SandboxTests(unittest.TestCase):
             self.assertIs(executor.session, session)
             self.assertEqual(executor.workspace, session.workspace.resolve())
 
+    def test_bash_only_mode_uses_empty_workspace_for_docker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            root = Path(tmp) / "sessions"
+            host.mkdir()
+            (host / "host_only.py").write_text("print('host')\n", encoding="utf-8")
+            session = SandboxSession(
+                host_workspace=str(host), root_dir=str(root), copy_workspace=False
+            )
+
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"FOLIUM_SANDBOX_WORKSPACE_MODE": "bash"},
+                    clear=False,
+                ),
+                mock.patch("folium.sandbox.docker.get_current_session", return_value=session),
+            ):
+                tool = BashTool()
+                executor = tool.executor
+                session.prepare()
+
+            self.assertIs(executor.session, session)
+            self.assertEqual(executor.workspace, session.workspace.resolve())
+            self.assertFalse((session.workspace / "host_only.py").exists())
+
     def test_docker_executor_starts_container_and_execs_command(self):
         run_calls = []
         popen_calls = []
@@ -271,6 +297,55 @@ class SandboxTests(unittest.TestCase):
             self.assertEqual(host_file.read_text(encoding="utf-8"), "old\n")
             self.assertEqual((session.workspace / "note.txt").read_text(), "sandbox\n")
             self.assertEqual((session.workspace / "created.txt").read_text(), "new\n")
+
+    def test_file_tools_use_host_workspace_in_bash_only_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            host.mkdir()
+            host_file = host / "note.txt"
+            host_file.write_text("old\n", encoding="utf-8")
+
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "FOLIUM_BASH_BACKEND": "local",
+                    "FOLIUM_SANDBOX_WORKSPACE_MODE": "bash",
+                    "FOLIUM_HOST_WORKSPACE": str(host),
+                },
+                clear=False,
+            ):
+                result = EditFileTool().execute("note.txt", "old", "host")
+
+            self.assertIn("Edited", result.content)
+            self.assertEqual(host_file.read_text(encoding="utf-8"), "host\n")
+
+    def test_local_bash_uses_empty_workspace_in_bash_only_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Path(tmp) / "repo"
+            root = Path(tmp) / "sessions"
+            host.mkdir()
+            (host / "host_only.py").write_text("print('host')\n", encoding="utf-8")
+            session = SandboxSession(
+                host_workspace=str(host), root_dir=str(root), copy_workspace=False
+            )
+
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {
+                        "FOLIUM_BASH_BACKEND": "local",
+                        "FOLIUM_SANDBOX_WORKSPACE_MODE": "bash",
+                    },
+                    clear=False,
+                ),
+                mock.patch("folium.tools.bash.get_current_session", return_value=session),
+            ):
+                tool = BashTool()
+                executor = tool.executor
+                session.prepare()
+
+            self.assertEqual(Path(executor.cwd), session.workspace.resolve())
+            self.assertFalse((session.workspace / "host_only.py").exists())
 
     def test_local_bash_uses_copy_workspace_as_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:

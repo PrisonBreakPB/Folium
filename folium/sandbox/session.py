@@ -44,6 +44,11 @@ def use_copy_workspace() -> bool:
     return sandbox_workspace_mode() == "copy"
 
 
+def use_bash_sandbox() -> bool:
+    """Whether Bash should run against a dedicated sandbox workspace."""
+    return sandbox_workspace_mode() in {"copy", "bash"}
+
+
 def get_host_workspace() -> Path:
     return Path(os.getenv("FOLIUM_HOST_WORKSPACE") or os.getcwd()).resolve()
 
@@ -58,24 +63,32 @@ def configure_host_workspace(workspace_path: str) -> Path:
 
 
 class SandboxSession:
-    def __init__(self, host_workspace: str | None = None, root_dir: str | None = None):
+    def __init__(
+        self,
+        host_workspace: str | None = None,
+        root_dir: str | None = None,
+        copy_workspace: bool = True,
+    ):
         self.session_id = uuid.uuid4().hex[:12]
         self.host_workspace = Path(host_workspace).resolve() if host_workspace else get_host_workspace()
         base = Path(root_dir).resolve() if root_dir else self.host_workspace / SANDBOX_DIR
         self.session_dir = base / self.session_id
         self.workspace = self.session_dir / "workspace"
+        self.copy_workspace = copy_workspace
         self._prepared = False
 
     def prepare(self):
         if self._prepared:
             return
         self.workspace.mkdir(parents=True, exist_ok=True)
-        _copy_workspace(self.host_workspace, self.workspace)
+        if self.copy_workspace:
+            _copy_workspace(self.host_workspace, self.workspace)
         self._prepared = True
         record_sandbox_event("workspace_prepared", {
             "sandbox_session_id": self.session_id,
             "host_workspace": str(self.host_workspace),
             "sandbox_workspace": str(self.workspace),
+            "workspace_mode": "copy" if self.copy_workspace else "bash",
         })
 
     def resolve_path(self, file_path: str) -> Path:
@@ -96,10 +109,10 @@ class SandboxSession:
         return resolved
 
 
-def get_current_session() -> SandboxSession:
+def get_current_session(copy_workspace: bool = True) -> SandboxSession:
     global _current_session
-    if _current_session is None:
-        _current_session = SandboxSession()
+    if _current_session is None or _current_session.copy_workspace != copy_workspace:
+        _current_session = SandboxSession(copy_workspace=copy_workspace)
     _current_session.prepare()
     return _current_session
 

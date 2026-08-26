@@ -115,8 +115,9 @@ folium --workspace D:\\Projects\\my-project
 
 也可以先进入项目目录，再直接输入 `folium`；CLI 会自动把当前目录作为工作区。
 
-CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。默认使用 Docker + `copy` 工作区；
-代码和实验命令先在当前会话的沙箱副本中执行。交互命令包括 `/new`、`/reset`、`/help`、
+CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。CLI 默认使用 Docker + `bash` 模式：
+文件工具直接操作当前工作区，Bash 在独立的空工作区中执行。Web 仍默认使用 `copy` 模式。
+交互命令包括 `/new`、`/reset`、`/help`、
 `/model`、`/mode`、`/skills`、`/status`（`/usage`）、`/workspace`、`/todos`、`/tokens`、
 `/compact`、`/save`、`/sessions`、`/switch <id>`、`/delete <id>`、`/diff`、`/traces` 和
 `/trace <id>`。CLI 中的受保护文件和可能修改工作区的 Bash 命令会在执行前显示审批提示；
@@ -144,7 +145,7 @@ FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek �
 FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
 FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
 FOLIUM_HOST_WORKSPACE       真实项目目录，默认当前进程工作目录
-FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host 或 copy；Web 默认 copy。copy 会在每个 Web 会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目
+FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host、copy 或 bash；Web 默认 copy。copy 会在每个会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目；bash 只为 Bash 创建空工作区
 FOLIUM_DOCKER_IMAGE         Docker 沙箱镜像，默认 python:3.11-slim
 FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需禁止 bash 容器联网可设为 none
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
