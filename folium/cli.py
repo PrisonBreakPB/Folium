@@ -12,6 +12,11 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.text import Text
+from rich.align import Align
+from rich.table import Table
+from rich.box import ROUNDED
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit import prompt as pt_prompt
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -178,14 +183,7 @@ def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session
 
 def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None = None):
     """Interactive read-eval-print loop."""
-    console.print(Panel(
-        f"[bold]Folium[/bold] v{__version__}\n"
-        f"Model: [cyan]{config.model}[/cyan]"
-        f"  Workspace: [cyan]{workspace}[/cyan]"
-        + (f"  Base: [dim]{config.base_url}[/dim]" if config.base_url else "")
-        + "\nType [bold]/help[/bold] for commands, [bold]Ctrl+C[/bold] to cancel, [bold]quit[/bold] to exit.",
-        border_style="blue",
-    ))
+    _show_banner(agent, config, workspace)
 
     hist_path = os.path.expanduser("~/.folium_history")
     history = FileHistory(hist_path)
@@ -207,7 +205,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
     while True:
         try:
             user_input = pt_prompt(
-                "You > ",
+                HTML("<ansibrightcyan><b> YOU </b></ansibrightcyan><ansiyellow> &gt;&gt; </ansiyellow>"),
                 history=history,
                 multiline=True,
                 key_bindings=kb,
@@ -466,6 +464,43 @@ def _show_help():
         title="Folium Help",
         border_style="dim",
     ))
+
+
+def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
+    """Render the compact CLI identity and runtime status."""
+    logo = Text(
+        "  _____       _ _                 \n"
+        " |  ___|__   | (_)_   _ _ __ ___  \n"
+        " | |_ / _ \\  | | | | | | '_ ` _ \\ \n"
+        " |  _| (_) | | | | |_| | | | | | |\n"
+        " |_|  \\___/  |_|_|\\__,_|_| |_| |_|",
+        style="bold bright_cyan",
+        justify="left",
+    )
+    status = Table.grid(padding=(0, 2))
+    status.add_column(style="dim")
+    status.add_column(style="white")
+    status.add_row("VERSION", f"v{__version__}")
+    status.add_row("MODEL", config.model)
+    status.add_row("MODE", agent.mode)
+    status.add_row("WORKSPACE", workspace)
+    if config.base_url:
+        status.add_row("API", config.base_url)
+
+    content = Table.grid(padding=(0, 3), expand=True)
+    content.add_column(ratio=3)
+    content.add_column(ratio=2)
+    content.add_row(logo, status)
+    console.print(Panel(
+        Align.left(content),
+        title="[bold white]FOLIUM RESEARCH AGENT[/bold white]",
+        subtitle="[dim]Type /help for commands[/dim]",
+        border_style="bright_cyan",
+        box=ROUNDED,
+        padding=(1, 2),
+    ))
+    console.print("[dim]─[/dim]" * max(24, min(console.width, 96)))
+    console.print("[bold bright_cyan]Your turn[/bold bright_cyan]  [dim]Enter a request or use /help[/dim]")
 
 
 def _brief(kwargs: dict, maxlen: int = 80) -> str:

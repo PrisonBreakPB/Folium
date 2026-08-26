@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from io import StringIO
 
 from folium import cli, database
 from folium.config import Config
@@ -26,3 +27,20 @@ def test_cli_approval_can_reject(monkeypatch):
     monkeypatch.setattr(cli.Prompt, "ask", lambda *args, **kwargs: "n")
 
     assert cli._cli_edit_approval(None, proposal) is False
+
+
+def test_cli_banner_contains_identity_and_input_guidance(monkeypatch):
+    output = StringIO()
+    from rich.console import Console
+
+    monkeypatch.setattr(cli, "console", Console(file=output, width=100))
+    cli._show_banner(
+        SimpleNamespace(mode="build"),
+        SimpleNamespace(model="deepseek-v4-pro", base_url=None),
+        "D:/project",
+    )
+
+    rendered = output.getvalue()
+    assert "FOLIUM RESEARCH AGENT" in rendered
+    assert "v0.3.0" in rendered
+    assert "Your turn" in rendered
