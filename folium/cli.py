@@ -469,11 +469,12 @@ def _show_help():
 def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     """Render the compact CLI identity and runtime status."""
     logo = Text(
-        "  _____       _ _                 \n"
-        " |  ___|__   | (_)_   _ _ __ ___  \n"
-        " | |_ / _ \\  | | | | | | '_ ` _ \\ \n"
-        " |  _| (_) | | | | |_| | | | | | |\n"
-        " |_|  \\___/  |_|_|\\__,_|_| |_| |_|",
+        "  ______    ____    ____                      \n"
+        " |  ____|  / __ \\  / __ \\                     \n"
+        " | |__    | |  | || |  | |                    \n"
+        " |  __|   | |  | || |  | |                    \n"
+        " | |      | |__| || |__| |                    \n"
+        " |_|       \\____/  \\____/                     ",
         style="bold bright_cyan",
         justify="left",
     )
@@ -493,7 +494,7 @@ def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     content.add_row(logo, status)
     console.print(Panel(
         Align.left(content),
-        title="[bold white]FOLIUM RESEARCH AGENT[/bold white]",
+        title=f"[bold white]FOLIUM / RESEARCH AGENT / v{__version__}[/bold white]",
         subtitle="[dim]Type /help for commands[/dim]",
         border_style="bright_cyan",
         box=ROUNDED,

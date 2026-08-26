@@ -41,6 +41,6 @@ def test_cli_banner_contains_identity_and_input_guidance(monkeypatch):
     )
 
     rendered = output.getvalue()
-    assert "FOLIUM RESEARCH AGENT" in rendered
+    assert "FOLIUM / RESEARCH AGENT / v0.3.0" in rendered
     assert "v0.3.0" in rendered
     assert "Your turn" in rendered
