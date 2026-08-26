@@ -9,6 +9,7 @@ import copy
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -24,6 +25,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from .agent import Agent
 from .llm import LLM, LiteLLM
 from .config import Config
+from .context import estimate_tokens
 from .session import (
     calculate_session_stats,
     delete_session,
@@ -137,6 +139,7 @@ def main():
             if system_prompt:
                 agent._system = system_prompt
             stats = calculate_session_stats(args.resume)
+            _reset_last_llm_usage(agent.llm)
             agent.llm.total_prompt_tokens = stats["prompt_tokens"]
             agent.llm.total_completion_tokens = stats["completion_tokens"]
             agent.llm.total_cached_tokens = stats["cached_tokens"]
@@ -161,15 +164,14 @@ def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session
     def on_token(tok):
         print(tok, end="", flush=True)
 
-    def on_tool(name, kwargs, status=None):
-        if status:
-            console.print(f"\n[dim]< {name} status={status}[/dim]")
-        else:
-            console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
+    def on_event(event):
+        _render_agent_event(event)
 
+    maintenance = _CliMaintenance(agent, config)
+    transcript_start = len(agent.transcript)
     session_id = _ensure_session(agent, config, workspace, session_id)
     agent.edit_approval_callback = _cli_edit_approval
-    agent.chat(prompt, on_token=on_token, on_tool=on_tool)
+    agent.chat(prompt, on_token=on_token, on_event=on_event)
     save_session(
         agent.messages,
         config.model,
@@ -178,6 +180,26 @@ def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session
         system_prompt=agent._system,
         workspace_path=workspace,
     )
+    scheduled = maintenance.submit(
+        session_id=session_id,
+        messages=copy.deepcopy(agent._full_messages()),
+        visible_tools=copy.deepcopy(agent._tool_schemas()),
+        main_agent_used_memory=any(
+            message.get("role") == "tool" and message.get("name") == "memory"
+            for message in agent.transcript[transcript_start:]
+        ),
+        main_prompt_tokens=getattr(agent.llm, "last_prompt_tokens", 0),
+        main_completion_tokens=getattr(agent.llm, "last_completion_tokens", 0),
+        main_request_matches_memory_context=getattr(
+            agent, "last_llm_request_had_visible_tools", False
+        ),
+    )
+    try:
+        if scheduled is not None:
+            scheduled.result(timeout=5)
+        maintenance.wait(session_id)
+    except TimeoutError:
+        console.print("\n[yellow]Background memory maintenance did not finish before exit.[/yellow]")
     print()
 
 
@@ -221,12 +243,13 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
         # built-in commands
         if user_input.lower() in ("quit", "exit", "/quit", "/exit"):
             break
-        if user_input == "/help":
+        if user_input in ("/help", "help"):
             _show_help()
             continue
         if user_input == "/reset":
             current_session_id = _persist_session(agent, config, workspace, current_session_id)
             agent.reset()
+            _reset_last_llm_usage(agent.llm)
             current_session_id = None
             agent.session_id = None
             reset_current_session()
@@ -236,6 +259,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
         if user_input == "/new":
             current_session_id = _persist_session(agent, config, workspace, current_session_id)
             agent.reset()
+            _reset_last_llm_usage(agent.llm)
             current_session_id = None
             agent.session_id = None
             reset_current_session()
@@ -259,6 +283,12 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                 console.print(f"Switched to [cyan]{new_model}[/cyan]")
             else:
                 console.print(f"Current model: [cyan]{config.model}[/cyan]")
+            continue
+        if user_input in ("/skills", "skills"):
+            _show_skills(agent)
+            continue
+        if user_input in ("/status", "status", "/usage", "usage"):
+            _show_status(agent, config, workspace, current_session_id)
             continue
         if user_input == "/mode" or user_input.startswith("/mode "):
             requested = user_input[6:].strip() if user_input.startswith("/mode ") else ""
@@ -343,6 +373,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             if saved_prompt is not None:
                 agent._system = saved_prompt
             stats = calculate_session_stats(target)
+            _reset_last_llm_usage(agent.llm)
             agent.llm.total_prompt_tokens = stats["prompt_tokens"]
             agent.llm.total_completion_tokens = stats["completion_tokens"]
             agent.llm.total_cached_tokens = stats["cached_tokens"]
@@ -354,6 +385,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             if delete_session(target):
                 if target == current_session_id:
                     agent.reset()
+                    _reset_last_llm_usage(agent.llm)
                     agent.session_id = None
                     current_session_id = None
                     reset_current_session()
@@ -398,16 +430,17 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             streamed.append(tok)
             print(tok, end="", flush=True)
 
-        def on_tool(name, kwargs, status=None):
-            if status:
-                console.print(f"\n[dim]< {name} status={status}[/dim]")
-            else:
-                console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
+        def on_event(event):
+            _render_agent_event(event)
 
         try:
             current_session_id = _ensure_session(agent, config, workspace, current_session_id)
             transcript_start = len(agent.transcript)
-            response = agent.chat(user_input, on_token=on_token, on_tool=on_tool)
+            response = agent.chat(
+                user_input,
+                on_token=on_token,
+                on_event=on_event,
+            )
             agent.session_id = current_session_id
             current_session_id = _persist_session(agent, config, workspace, current_session_id)
             maintenance.submit(
@@ -435,6 +468,126 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             console.print(f"\n[red]Error: {e}[/red]")
 
 
+def _show_skills(agent: Agent) -> None:
+    skills = getattr(agent, "skills", [])
+    if not skills:
+        console.print("[dim]No skills found. Add skills under skills/<name>/SKILL.md.[/dim]")
+        return
+    console.print("[bold]Available skills[/bold]")
+    for skill in skills:
+        console.print(f"  [cyan]/{skill.name}[/cyan]  {skill.description}")
+
+
+def _show_status(
+    agent: Agent,
+    config: Config,
+    workspace: str,
+    session_id: str | None,
+) -> None:
+    context = getattr(agent, "context", None)
+    meter = getattr(agent, "_cost_meter", None)
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim")
+    table.add_column(style="white")
+    table.add_row("SESSION", session_id or "(unsaved)")
+    table.add_row("MODEL", config.model)
+    table.add_row("MODE", agent.mode)
+    table.add_row("WORKSPACE", workspace)
+    if os.getenv("FOLIUM_SANDBOX_WORKSPACE_MODE") == "copy":
+        table.add_row("SANDBOX", str(get_current_session().workspace))
+    if context:
+        estimated = estimate_tokens(agent.messages)
+        table.add_row(
+            "CONTEXT",
+            f"{estimated:,} / {context.max_tokens:,} tokens "
+            f"(input budget {context.input_budget_tokens:,}, reserve {context.reserved_output_tokens:,})",
+        )
+    prompt_tokens = getattr(agent.llm, "last_prompt_tokens", 0)
+    completion_tokens = getattr(agent.llm, "last_completion_tokens", 0)
+    cached_tokens = getattr(agent.llm, "last_cached_tokens", 0)
+    table.add_row(
+        "LAST TURN",
+        f"{prompt_tokens:,} in + {completion_tokens:,} out + {cached_tokens:,} cached",
+    )
+    total_prompt = getattr(agent.llm, "total_prompt_tokens", 0)
+    total_completion = getattr(agent.llm, "total_completion_tokens", 0)
+    total_cached = getattr(agent.llm, "total_cached_tokens", 0)
+    hit_rate = total_cached / total_prompt if total_prompt else 0
+    table.add_row(
+        "SESSION TOTAL",
+        f"{total_prompt + total_completion:,} tokens, cache hit {hit_rate:.1%}",
+    )
+    if meter is not None:
+        budget = meter.budget_usd
+        spent = meter.spent()
+        budget_text = f"${spent:.6f}"
+        if budget and budget > 0:
+            budget_text += f" / ${budget:.6f}"
+        table.add_row("COST", budget_text)
+        if budget and budget > 0:
+            table.add_row(
+                "BUDGET",
+                "exhausted" if meter.exhausted() else (
+                    "soft threshold reached" if meter.soft_reached() else "within limit"
+                ),
+            )
+    console.print(Panel(table, title="[bold]Runtime status[/bold]", border_style="cyan"))
+
+
+def _render_agent_event(event: dict) -> None:
+    event_type = event.get("type")
+    if event_type == "tool_start":
+        console.print(
+            f"\n[dim]> {event.get('name', 'tool')}({event.get('arguments_preview', '')})[/dim]"
+        )
+    elif event_type in {"tool_result", "tool_error"}:
+        preview = event.get("preview") or event.get("content") or ""
+        safe_preview = str(preview)[:120].replace("\n", " ")
+        suffix = f" {escape(safe_preview)}" if preview else ""
+        console.print(
+            f"\n[dim]< {event.get('name', 'tool')} status={event.get('status', 'ok')}"
+            f"{suffix}[/dim]"
+        )
+    elif event_type == "context_compress":
+        console.print(
+            f"\n[dim]context compressed: {event.get('before_tokens', 0):,} -> "
+            f"{event.get('after_tokens', 0):,} tokens[/dim]"
+        )
+    elif event_type == "context_update":
+        estimated = event.get("estimated_context_tokens", 0)
+        maximum = event.get("max_context_tokens", 0)
+        if maximum:
+            console.print(f"\n[dim]context: {estimated:,} / {maximum:,} tokens[/dim]")
+    elif event_type == "todo_reminder":
+        console.print("\n[dim]todo reminder: update the task progress[/dim]")
+    elif event_type == "todo_update":
+        items = event.get("items") or []
+        done = sum(1 for item in items if item.get("status") == "completed")
+        console.print(f"\n[dim]todo updated: {done}/{len(items)} completed[/dim]")
+    elif event_type == "budget_exhausted":
+        spent = event.get("spent")
+        budget = event.get("budget")
+        if spent is not None and budget:
+            message = f"Budget exhausted (${spent:.6f} / ${budget:.6f}); task stopped."
+        else:
+            message = "Budget exhausted; task stopped."
+        console.print(f"\n[bold yellow]{message}[/bold yellow]")
+    elif event_type == "usage_update":
+        prompt = event.get("prompt_tokens", 0)
+        completion = event.get("completion_tokens", 0)
+        cached = event.get("cached_tokens", 0)
+        cost = event.get("cost")
+        suffix = f", cost ${cost:.6f}" if cost is not None else ""
+        console.print(
+            f"\n[dim]usage: {prompt:,} in + {completion:,} out + "
+            f"{cached:,} cached{suffix}[/dim]"
+        )
+    elif event_type == "agent_status" and event.get("status") in {"error", "rejected"}:
+        console.print(f"\n[bold yellow]{event.get('message', 'Agent status changed')}[/bold yellow]")
+    elif event_type == "error":
+        console.print(f"\n[bold red]{event.get('content', 'Agent error')}[/bold red]")
+
+
 def _show_help():
     console.print(Panel(
         "[bold]Commands:[/bold]\n"
@@ -443,6 +596,9 @@ def _show_help():
         "  /reset         Clear conversation history\n"
         "  /model         Show current model\n"
         "  /model <name>  Switch model mid-conversation\n"
+        "  /skills        List available skills\n"
+        "  /status        Show model, context, budget, and workspace\n"
+        "  /usage         Alias for /status\n"
         "  /mode          Show current mode\n"
         "  /mode <name>   Switch between build and plan\n"
         "  /workspace     Show host and sandbox workspace\n"
@@ -564,6 +720,9 @@ def _cli_edit_approval(_tool_call, proposal):
     else:
         console.print(f"[cyan]{getattr(proposal, 'path', '')}[/cyan]")
         console.print(getattr(proposal, "diff", ""))
+    if not sys.stdin.isatty():
+        console.print("[yellow]Interactive approval is required; change rejected.[/yellow]")
+        return ApprovalDecision("rejected", "Interactive approval is required in CLI one-shot mode.")
     choice = Prompt.ask(
         "Apply this change? [y]es / [n]o / [e]dit",
         choices=["y", "n", "e"],
@@ -608,7 +767,28 @@ class _CliMaintenance:
 
     def submit(self, **kwargs):
         if self.scheduler is None:
-            return
-        asyncio.run_coroutine_threadsafe(
+            return None
+        return asyncio.run_coroutine_threadsafe(
             self.scheduler.on_turn_completed(**kwargs), self.loop
         )
+
+    def wait(self, session_id: str, timeout: float = 30) -> None:
+        """Wait for a scheduled pass when a short-lived CLI process needs it."""
+        if self.scheduler is None:
+            return
+
+        async def wait_for_task():
+            async with self.scheduler._lock:
+                state = self.scheduler._states.get(session_id)
+                task = state.task if state else None
+            if task is not None:
+                await task
+
+        future = asyncio.run_coroutine_threadsafe(wait_for_task(), self.loop)
+        future.result(timeout=timeout)
+
+
+def _reset_last_llm_usage(llm) -> None:
+    for name in ("last_prompt_tokens", "last_completion_tokens", "last_cached_tokens"):
+        if hasattr(llm, name):
+            setattr(llm, name, 0)
