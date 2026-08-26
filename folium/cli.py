@@ -502,17 +502,17 @@ def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
 
 
 def _block_wordmark(word: str) -> str:
-    """Build a large wordmark from block strokes instead of letter glyphs."""
+    """Build a terminal-safe large wordmark from ASCII strokes."""
     glyphs = {
-        "F": ("██████", "██", "████", "██", "██"),
-        "O": ("██████", "██  ██", "██  ██", "██  ██", "██████"),
-        "L": ("██", "██", "██", "██", "██████"),
-        "I": ("████", " ██ ", " ██ ", " ██ ", "████"),
-        "U": ("██  ██", "██  ██", "██  ██", "██  ██", "██████"),
-        "M": ("██   ██", "███ ███", "███████", "██ █ ██", "██   ██"),
+        "F": ("######", "#     ", "#     ", "####  ", "#     ", "#     ", "#     "),
+        "O": (" ##### ", "#     #", "#     #", "#     #", "#     #", "#     #", " ##### "),
+        "L": ("#     ", "#     ", "#     ", "#     ", "#     ", "#     ", "######"),
+        "I": ("#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "#####"),
+        "U": ("#     #", "#     #", "#     #", "#     #", "#     #", "#     #", " ##### "),
+        "M": ("#     #", "##   ##", "##   ##", "# # # #", "# # # #", "#  #  #", "#     #"),
     }
     rows = []
-    for row in range(5):
+    for row in range(7):
         rows.append("  ".join(glyphs[char][row] for char in word))
     return "\n".join(rows)
 
