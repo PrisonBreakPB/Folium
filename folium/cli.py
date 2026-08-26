@@ -468,11 +468,7 @@ def _show_help():
 
 def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     """Render the compact CLI identity and runtime status."""
-    logo = Text(
-        "F O L I U M",
-        style="bold bright_cyan",
-        justify="center",
-    )
+    logo = Text(_block_wordmark("FOLIUM"), style="bold bright_cyan", justify="center")
     tagline = Text(
         f"RESEARCH AGENT  /  v{__version__}",
         style="bold white",
@@ -503,6 +499,22 @@ def _show_banner(agent: Agent, config: Config, workspace: str) -> None:
     ))
     console.print("[dim]─[/dim]" * max(24, min(console.width, 96)))
     console.print("[bold bright_cyan]Your turn[/bold bright_cyan]  [dim]Enter a request or use /help[/dim]")
+
+
+def _block_wordmark(word: str) -> str:
+    """Build a large wordmark from block strokes instead of letter glyphs."""
+    glyphs = {
+        "F": ("██████", "██", "████", "██", "██"),
+        "O": ("██████", "██  ██", "██  ██", "██  ██", "██████"),
+        "L": ("██", "██", "██", "██", "██████"),
+        "I": ("████", " ██ ", " ██ ", " ██ ", "████"),
+        "U": ("██  ██", "██  ██", "██  ██", "██  ██", "██████"),
+        "M": ("██   ██", "███ ███", "███████", "██ █ ██", "██   ██"),
+    }
+    rows = []
+    for row in range(5):
+        rows.append("  ".join(glyphs[char][row] for char in word))
+    return "\n".join(rows)
 
 
 def _brief(kwargs: dict, maxlen: int = 80) -> str:
