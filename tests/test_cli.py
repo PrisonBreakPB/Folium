@@ -261,3 +261,20 @@ def test_cli_renders_agent_progress_events(monkeypatch):
     assert "todo reminder: update the task progress" in rendered
     assert "todo updated: 1/2 completed" in rendered
     assert "usage: 12 in + 7 out + 3 cached, cost $0.001000" in rendered
+
+
+def test_cli_diff_uses_red_and_green_backgrounds(monkeypatch):
+    rendered = []
+
+    class CaptureConsole:
+        def print(self, value):
+            rendered.append(value)
+
+    monkeypatch.setattr(cli, "console", CaptureConsole())
+    cli._render_diff("--- old\n+++ new\n-old line\n+new line\n context")
+
+    assert rendered[0].style == "bold cyan"
+    assert rendered[1].style == "bold cyan"
+    assert rendered[2].style == "white on red"
+    assert rendered[3].style == "black on green"
+    assert rendered[4].style == "dim"

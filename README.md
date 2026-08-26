@@ -119,6 +119,7 @@ CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。默认使�
 `/compact`、`/save`、`/sessions`、`/switch <id>`、`/delete <id>`、`/diff`、`/traces` 和
 `/trace <id>`。CLI 中的受保护文件和可能修改工作区的 Bash 命令会在执行前显示审批提示；
 模型调用的上下文压缩、用量、todo、预算和错误状态会实时显示。
+文件修改 diff 使用红色背景标记删除行、绿色背景标记新增行。
 
 ## 配置
 

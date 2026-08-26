@@ -541,6 +541,13 @@ def _render_agent_event(event: dict) -> None:
             f"\n[dim]> {event.get('name', 'tool')}({event.get('arguments_preview', '')})[/dim]"
         )
     elif event_type in {"tool_result", "tool_error"}:
+        diff = event.get("diff") or ""
+        if diff:
+            console.print(
+                f"\n[dim]< {event.get('name', 'tool')} status={event.get('status', 'ok')}[/dim]"
+            )
+            _render_diff(diff)
+            return
         preview = event.get("preview") or event.get("content") or ""
         safe_preview = str(preview)[:120].replace("\n", " ")
         suffix = f" {escape(safe_preview)}" if preview else ""
@@ -586,6 +593,22 @@ def _render_agent_event(event: dict) -> None:
         console.print(f"\n[bold yellow]{event.get('message', 'Agent status changed')}[/bold yellow]")
     elif event_type == "error":
         console.print(f"\n[bold red]{event.get('content', 'Agent error')}[/bold red]")
+
+
+def _render_diff(diff: str) -> None:
+    """Render unified diff lines with terminal background colors."""
+    for line in str(diff).splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            style = "bold cyan"
+        elif line.startswith("+"):
+            style = "black on green"
+        elif line.startswith("-"):
+            style = "white on red"
+        elif line.startswith("@@"):
+            style = "bold yellow"
+        else:
+            style = "dim"
+        console.print(Text(line, style=style))
 
 
 def _show_help():
@@ -716,10 +739,10 @@ def _cli_edit_approval(_tool_call, proposal):
     if files:
         for change in files:
             console.print(f"[cyan]{change.path}[/cyan]")
-            console.print(change.preview_diff or change.diff)
+            _render_diff(change.preview_diff or change.diff)
     else:
         console.print(f"[cyan]{getattr(proposal, 'path', '')}[/cyan]")
-        console.print(getattr(proposal, "diff", ""))
+        _render_diff(getattr(proposal, "diff", ""))
     if not sys.stdin.isatty():
         console.print("[yellow]Interactive approval is required; change rejected.[/yellow]")
         return ApprovalDecision("rejected", "Interactive approval is required in CLI one-shot mode.")
