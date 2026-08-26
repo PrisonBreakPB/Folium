@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import threading
 import copy
+from pathlib import Path
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -55,8 +56,6 @@ def _parse_args():
 
 def main():
     args = _parse_args()
-    config = Config.from_env()
-
     os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "copy")
     saved_workspace = get_session_workspace(args.resume) if args.resume else None
     workspace_input = args.workspace or os.getenv("FOLIUM_HOST_WORKSPACE")
@@ -76,6 +75,14 @@ def main():
             )
     configure_host_workspace(workspace)
     reset_current_session()
+
+    # Load project-local settings after the selected workspace is known.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(workspace) / ".env", override=False)
+    except ImportError:
+        pass
+    config = Config.from_env()
 
     # CLI args override env vars
     if args.model:
