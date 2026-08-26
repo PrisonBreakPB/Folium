@@ -64,6 +64,7 @@ class SlashCommandCompleter(Completer):
         ("/mode", "Show or switch agent mode"),
         ("/skills", "List available skills"),
         ("/status", "Show runtime status"),
+        ("/context", "Show context and token usage"),
         ("/usage", "Alias for /status"),
         ("/workspace", "Show host and sandbox workspace"),
         ("/todos", "Show todo list"),
@@ -400,6 +401,9 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
         if user_input in ("/status", "status", "/usage", "usage"):
             _show_status(agent, config, workspace, current_session_id)
             continue
+        if user_input in ("/context", "context"):
+            _show_context(agent, config)
+            continue
         if user_input == "/mode" or user_input.startswith("/mode "):
             requested = user_input[6:].strip() if user_input.startswith("/mode ") else ""
             if not requested:
@@ -653,6 +657,71 @@ def _show_status(
     console.print(Panel(table, title="[bold]Runtime status[/bold]", border_style="cyan"))
 
 
+def _show_context(agent: Agent, config: Config) -> None:
+    """Render context capacity and token/cost usage for the current session."""
+    context = getattr(agent, "context", None)
+    llm = agent.llm
+    max_context = getattr(
+        context, "max_tokens", getattr(config, "max_context_tokens", 0)
+    )
+    input_budget = getattr(context, "input_budget_tokens", max_context)
+    reserved_output = getattr(context, "reserved_output_tokens", 0)
+    estimated_context = estimate_tokens(agent.messages)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim")
+    table.add_column(style="white")
+    context_ratio = estimated_context / max_context if max_context else 0
+    input_ratio = estimated_context / input_budget if input_budget else 0
+    table.add_row(
+        "CONTEXT WINDOW",
+        f"{estimated_context:,} / {max_context:,} tokens ({context_ratio:.1%})",
+    )
+    table.add_row(
+        "INPUT BUDGET",
+        f"{estimated_context:,} / {input_budget:,} tokens ({input_ratio:.1%})",
+    )
+    table.add_row("OUTPUT RESERVE", f"{reserved_output:,} tokens")
+    table.add_row("API MAX OUTPUT", f"{getattr(config, 'max_tokens', 0):,} tokens")
+
+    last_prompt = getattr(llm, "last_prompt_tokens", 0)
+    last_completion = getattr(llm, "last_completion_tokens", 0)
+    last_cached = getattr(llm, "last_cached_tokens", 0)
+    table.add_row(
+        "LAST TURN",
+        f"{last_prompt:,} prompt + {last_completion:,} completion + "
+        f"{last_cached:,} cached = {last_prompt + last_completion:,} total",
+    )
+
+    total_prompt = getattr(llm, "total_prompt_tokens", 0)
+    total_completion = getattr(llm, "total_completion_tokens", 0)
+    total_cached = getattr(llm, "total_cached_tokens", 0)
+    total_tokens = total_prompt + total_completion
+    cache_hit_rate = total_cached / total_prompt if total_prompt else 0
+    table.add_row(
+        "SESSION TOTAL",
+        f"{total_prompt:,} prompt + {total_completion:,} completion = "
+        f"{total_tokens:,} tokens",
+    )
+    table.add_row("CACHE HIT RATE", f"{cache_hit_rate:.1%} ({total_cached:,} cached)")
+
+    estimated_cost = getattr(llm, "estimated_cost", None)
+    table.add_row(
+        "ESTIMATED COST",
+        f"${estimated_cost:.6f}" if estimated_cost is not None else "unavailable for model",
+    )
+    meter = getattr(agent, "_cost_meter", None)
+    if meter is not None:
+        budget = meter.budget_usd
+        spent = meter.spent()
+        budget_text = f"${spent:.6f} spent"
+        if budget and budget > 0:
+            budget_text += f" / ${budget:.6f} budget"
+        table.add_row("COST BUDGET", budget_text)
+
+    console.print(Panel(table, title="[bold]Context and usage[/bold]", border_style="cyan"))
+
+
 def _render_agent_event(event: dict) -> None:
     event_type = event.get("type")
     if event_type == "tool_start":
@@ -740,6 +809,7 @@ def _show_help():
         "  /model <name>  Switch model mid-conversation\n"
         "  /skills        List available skills\n"
         "  /status        Show model, context, budget, and workspace\n"
+        "  /context       Show context window, tokens, cache, and cost\n"
         "  /usage         Alias for /status\n"
         "  /mode          Show current mode\n"
         "  /mode <name>   Switch between build and plan\n"

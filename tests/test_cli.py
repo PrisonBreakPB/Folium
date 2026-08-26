@@ -345,6 +345,45 @@ def test_cli_status_renders_runtime_usage_and_budget(monkeypatch, tmp_path):
     assert "$0.250000 / $1.000000" in rendered
 
 
+def test_cli_context_renders_window_token_cache_and_cost(monkeypatch, tmp_path):
+    output = StringIO()
+    from rich.console import Console
+
+    monkeypatch.setattr(cli, "console", Console(file=output, width=120))
+    monkeypatch.setattr(cli, "estimate_tokens", lambda messages: 450)
+    llm = SimpleNamespace(
+        last_prompt_tokens=120,
+        last_completion_tokens=30,
+        last_cached_tokens=20,
+        total_prompt_tokens=500,
+        total_completion_tokens=200,
+        total_cached_tokens=80,
+        estimated_cost=0.42,
+    )
+    agent = SimpleNamespace(
+        messages=[{"role": "user", "content": "hello"}],
+        context=SimpleNamespace(
+            max_tokens=1000,
+            input_budget_tokens=900,
+            reserved_output_tokens=100,
+        ),
+        llm=llm,
+        _cost_meter=CostMeter(budget_usd=1.0),
+    )
+    agent._cost_meter.record(0.25)
+
+    cli._show_context(agent, Config(model="test-model", max_tokens=300))
+
+    rendered = output.getvalue()
+    assert "Context and usage" in rendered
+    assert "450 / 1,000 tokens (45.0%)" in rendered
+    assert "100 tokens" in rendered
+    assert "120 prompt + 30 completion + 20 cached = 150 total" in rendered
+    assert "16.0% (80 cached)" in rendered
+    assert "$0.420000" in rendered
+    assert "$0.250000 spent / $1.000000 budget" in rendered
+
+
 def test_cli_renders_agent_progress_events(monkeypatch):
     output = StringIO()
     from rich.console import Console
