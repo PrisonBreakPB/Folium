@@ -6,6 +6,8 @@ import re
 import signal
 import subprocess
 
+from ..tools.base import ToolFailure, tool_failure
+
 
 _DANGEROUS_PATTERNS = [
     (r"\brm\s+(-\w*)?-r\w*\s+(/|~|\$HOME)", "recursive delete on home/root"),
@@ -24,10 +26,11 @@ class LocalCommandExecutor:
     def __init__(self, cwd: str | None = None):
         self.cwd: str | None = cwd
 
-    def run(self, command: str, timeout: int = 120) -> str:
+    def run(self, command: str, timeout: int = 120) -> str | ToolFailure:
         warning = check_dangerous(command)
         if warning:
-            return f"[Warning] Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            message = f"[Warning] Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            return tool_failure("command_blocked", "security", message, content=message)
 
         cwd = self.cwd or os.getcwd()
 
@@ -57,7 +60,14 @@ class LocalCommandExecutor:
                 if stderr:
                     out += f"\n[stderr]\n{stderr}"
                 out += f"\nError: timed out after {timeout}s and terminated process"
-                return truncate_output(out)
+                message = truncate_output(out)
+                return tool_failure(
+                    "command_timeout",
+                    "timeout",
+                    f"command timed out after {timeout}s",
+                    retryable=None,
+                    content=message,
+                )
 
             stdout = decode_process_output(stdout_bytes)
             stderr = decode_process_output(stderr_bytes)
@@ -69,9 +79,19 @@ class LocalCommandExecutor:
                 out += f"\n[stderr]\n{stderr}"
             if proc.returncode != 0:
                 out += f"\n[exit code: {proc.returncode}]"
-            return truncate_output(out)
+            message = truncate_output(out)
+            if proc.returncode != 0:
+                return tool_failure(
+                    "command_failed",
+                    "process",
+                    f"command exited with code {proc.returncode}",
+                    retryable=False,
+                    details={"exit_code": proc.returncode},
+                    content=message,
+                )
+            return message
         except Exception as e:
-            return f"Error running command: {e}"
+            return tool_failure("command_execution_failed", "dependency", f"Error running command: {e}")
 
     def _update_cwd(self, command: str, current_cwd: str):
         parts = command.split("&&")

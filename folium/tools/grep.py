@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # skip these dirs to avoid noise
@@ -28,18 +28,18 @@ class GrepTool(Tool):
     )
     args_model = GrepArgs
 
-    def execute(self, pattern: str, path: str = ".", include: str | None = None) -> str:
+    def execute(self, pattern: str, path: str = ".", include: str | None = None) -> str | ToolFailure:
         try:
             regex = re.compile(pattern)
         except re.error as e:
-            return f"Invalid regex: {e}"
+            return tool_failure("invalid_regex", "validation", f"Invalid regex: {e}")
 
         try:
             base = resolve_tool_path(path)
         except SandboxPathError as e:
-            return f"Error: {e}"
+            return tool_failure("sandbox_path_error", "permission", str(e))
         if not base.exists():
-            return f"Error: {path} not found"
+            return tool_failure("path_not_found", "resource", f"{path} not found")
 
         if base.is_file():
             files = [base]

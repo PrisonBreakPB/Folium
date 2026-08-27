@@ -39,22 +39,52 @@ class ToolError:
     details: dict | None = None
 
 
-@dataclass
-class ToolFailure:
-    """Explicit failure result returned by a tool."""
+class ToolFailure(str):
+    """Explicit, string-compatible failure result returned by a tool."""
 
-    error: ToolError
-    content: str | None = None
-    preview: str = ""
-    diff: str = ""
-    raw_content: str | None = None
+    def __new__(
+        cls,
+        error: ToolError,
+        content: str | None = None,
+        preview: str = "",
+        diff: str = "",
+        raw_content: str | None = None,
+    ):
+        instance = super().__new__(cls, content or error.message)
+        instance.error = error
+        instance.content = content
+        instance.preview = preview
+        instance.diff = diff
+        instance.raw_content = raw_content
+        return instance
 
     @property
     def message(self) -> str:
         return self.content or self.error.message
 
-    def __str__(self) -> str:
-        return self.message
+
+def tool_failure(
+    code: str,
+    category: str,
+    message: str,
+    *,
+    retryable: bool | None = None,
+    details: dict | None = None,
+    content: str | None = None,
+    preview: str = "",
+    diff: str = "",
+    raw_content: str | None = None,
+) -> ToolFailure:
+    """Create a string-compatible structured tool failure."""
+
+    display_content = content or (message if message.startswith(("Error:", "[Warning]")) else f"Error: {message}")
+    return ToolFailure(
+        ToolError(code, category, message, retryable=retryable, details=details),
+        content=display_content,
+        preview=preview,
+        diff=diff,
+        raw_content=raw_content,
+    )
 
 
 class ToolExecutionError(Exception):

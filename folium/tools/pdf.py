@@ -6,7 +6,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 from .web import _validate_public_http_url, _SafeRedirectHandler
 
 MAX_PDF_BYTES = 20_000_000  # 20 MB
@@ -29,24 +29,26 @@ class PdfFetchTool(Tool):
     )
     args_model = PdfFetchArgs
 
-    def execute(self, url: str, max_chars: int = DEFAULT_MAX_CHARS) -> str | ToolOutput:
+    def execute(self, url: str, max_chars: int = DEFAULT_MAX_CHARS) -> str | ToolOutput | ToolFailure:
         url = url.strip()
         if not url:
-            return "Error: url required"
+            return tool_failure("missing_url", "validation", "url required")
 
         error = _validate_public_http_url(url)
         if error:
-            return f"Error: {error}"
+            return tool_failure("invalid_url", "validation", error)
 
         limit = max(1000, min(int(max_chars or DEFAULT_MAX_CHARS), 100_000))
 
         pdf_bytes = _download_pdf(url)
-        if isinstance(pdf_bytes, str):
+        if isinstance(pdf_bytes, ToolFailure):
             return pdf_bytes
 
         text = _extract_text(pdf_bytes)
+        if isinstance(text, ToolFailure):
+            return text
         if not text:
-            return "Error: no readable text found in PDF (may be a scanned document)"
+            return tool_failure("no_readable_text", "content", "no readable text found in PDF (may be a scanned document)")
 
         if len(text) <= limit:
             return text
@@ -55,7 +57,7 @@ class PdfFetchTool(Tool):
         return ToolOutput(content=model_content, raw_content=text)
 
 
-def _download_pdf(url: str) -> bytes | str:
+def _download_pdf(url: str) -> bytes | ToolFailure:
     req = urllib.request.Request(
         url,
         headers={
@@ -69,37 +71,43 @@ def _download_pdf(url: str) -> bytes | str:
             final_url = resp.geturl()
             error = _validate_public_http_url(final_url)
             if error:
-                return f"Error: redirected to disallowed URL: {error}"
+                return tool_failure("invalid_redirect", "security", f"redirected to disallowed URL: {error}")
             content_type = resp.headers.get("Content-Type", "")
             body = resp.read(MAX_PDF_BYTES + 1)
     except urllib.error.HTTPError as e:
-        return f"Error: PDF download failed with HTTP {e.code}"
+        return tool_failure(
+            f"http_{e.code}",
+            "network",
+            f"PDF download failed with HTTP {e.code}",
+            retryable=e.code in {408, 429, 500, 502, 503, 504},
+            details={"http_status": e.code},
+        )
     except urllib.error.URLError as e:
-        return f"Error: PDF download failed: {e.reason}"
+        return tool_failure("network_error", "network", f"PDF download failed: {e.reason}", retryable=True)
     except TimeoutError:
-        return "Error: PDF download timed out"
+        return tool_failure("timeout", "timeout", "PDF download timed out", retryable=True)
     except Exception as e:
-        return f"Error: PDF download failed: {e}"
+        return tool_failure("download_failed", "network", f"PDF download failed: {e}")
 
     if len(body) > MAX_PDF_BYTES:
-        return "Error: PDF file too large (>20 MB)"
+        return tool_failure("pdf_too_large", "resource", "PDF file too large (>20 MB)")
 
     return body
 
 
-def _extract_text(pdf_bytes: bytes) -> str:
+def _extract_text(pdf_bytes: bytes) -> str | ToolFailure:
     try:
         import fitz
     except ImportError:
-        return "Error: PyMuPDF is not installed. Run: pip install pymupdf"
+        return tool_failure("missing_dependency", "dependency", "PyMuPDF is not installed. Run: pip install pymupdf")
 
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception:
-        return "Error: invalid or corrupted PDF file"
+        return tool_failure("invalid_pdf", "content", "invalid or corrupted PDF file")
 
     if doc.is_encrypted:
-        return "Error: PDF is encrypted or password-protected"
+        return tool_failure("encrypted_pdf", "permission", "PDF is encrypted or password-protected")
 
     pages_text = []
     for page_num in range(len(doc)):

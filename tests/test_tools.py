@@ -16,6 +16,7 @@ from folium.tools.todo import TodoTool
 from folium.tools.pdf import PdfFetchTool
 from folium.tools.web import WebFetchTool, WebSearchTool
 from folium.tools.write import WriteFileTool
+from folium.tools.base import ToolFailure
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +56,9 @@ def test_bash_utf8_output():
 def test_bash_exit_code():
     bash = BashTool()
     r = bash.execute(command="exit 42")
+    assert isinstance(r, ToolFailure)
+    assert r.error.code == "command_failed"
+    assert r.error.details == {"exit_code": 42}
     assert "exit code: 42" in r
 
 
@@ -112,6 +116,9 @@ def test_read_file_utf8_chinese(tmp_path):
 def test_read_file_not_found():
     read = ReadFileTool()
     r = read.execute(file_path="/tmp/folium_nonexistent_file.txt")
+    assert isinstance(r, ToolFailure)
+    assert r.error.code == "file_not_found"
+    assert r.error.category == "resource"
     assert "not found" in r.lower() or "Error" in r
 
 
@@ -297,6 +304,8 @@ def test_web_search_formats_tavily_results(monkeypatch):
 def test_web_fetch_rejects_non_http_url():
     r = WebFetchTool().execute(url="file:///etc/passwd")
 
+    assert isinstance(r, ToolFailure)
+    assert r.error.code == "invalid_url"
     assert "only http:// and https:// URLs are allowed" in r
 
 

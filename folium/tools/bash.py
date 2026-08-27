@@ -4,7 +4,7 @@ import os
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure
 from ..sandbox import DockerSandboxExecutor, LocalCommandExecutor
 from ..sandbox.session import get_current_session, use_bash_sandbox, use_copy_workspace
 
@@ -39,7 +39,7 @@ class BashTool(Tool):
             self._executor = _executor_from_env()
         return self._executor
 
-    def execute(self, command: str, timeout: int = 120) -> str:
+    def execute(self, command: str, timeout: int = 120) -> str | ToolFailure:
         return self.executor.run(command, timeout=timeout)
 
 

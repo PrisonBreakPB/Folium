@@ -161,6 +161,8 @@ class ToolValidationTests(unittest.TestCase):
         result = agent._exec_tool(tc)
 
         self.assertEqual(result.status, "bad_arguments")
+        self.assertEqual(result.error_code, "bad_arguments")
+        self.assertEqual(result.error_category, "validation")
         self.assertIn("bad arguments for read_file", result.content)
         self.assertIn("field 'file_path'", result.content)
         self.assertIn("field 'offset'", result.content)
@@ -198,6 +200,8 @@ class ToolValidationTests(unittest.TestCase):
         result = agent._exec_tool(tc)
 
         self.assertEqual(result.status, "timeout")
+        self.assertEqual(result.error_code, "timeout")
+        self.assertEqual(result.error_category, "timeout")
         self.assertIn("timed out after 1s", result.content)
 
     def test_agent_clamps_tool_timeout_argument(self):

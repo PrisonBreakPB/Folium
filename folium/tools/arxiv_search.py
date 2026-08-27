@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 DEFAULT_RESULTS = 5
@@ -39,10 +39,10 @@ class ArxivSearchTool(Tool):
     args_model = ArxivSearchArgs
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
-                year_from: int = None, year_to: int = None) -> str:
+                year_from: int = None, year_to: int = None) -> str | ToolFailure:
         query = query.strip()
         if not query:
-            return "Error: query is required"
+            return tool_failure("missing_query", "validation", "query is required")
 
         count = max(1, min(int(max_results or DEFAULT_RESULTS), MAX_RESULTS))
 
@@ -76,18 +76,24 @@ class ArxivSearchTool(Tool):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 body = resp.read(5_000_000).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
-            return f"Error: arXiv request failed with HTTP {e.code}"
+            return tool_failure(
+                f"http_{e.code}",
+                "network",
+                f"arXiv request failed with HTTP {e.code}",
+                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                details={"http_status": e.code},
+            )
         except urllib.error.URLError as e:
-            return f"Error: arXiv request failed: {e.reason}"
+            return tool_failure("network_error", "network", f"arXiv request failed: {e.reason}", retryable=True)
         except TimeoutError:
-            return "Error: arXiv request timed out"
+            return tool_failure("timeout", "timeout", "arXiv request timed out", retryable=True)
         except Exception as e:
-            return f"Error: arXiv request failed: {e}"
+            return tool_failure("request_failed", "network", f"arXiv request failed: {e}")
 
         try:
             root = ET.fromstring(body)
         except ET.ParseError:
-            return "Error: arXiv returned invalid XML"
+            return tool_failure("invalid_response", "protocol", "arXiv returned invalid XML")
 
         entries = root.findall("atom:entry", NS)
         if not entries:

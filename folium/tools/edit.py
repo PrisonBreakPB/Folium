@@ -10,7 +10,7 @@ import difflib
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 # track files changed this session for /diff
@@ -37,25 +37,28 @@ class EditFileTool(Tool):
     )
     args_model = EditFileArgs
 
-    def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput:
+    def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput | ToolFailure:
         try:
             p = resolve_tool_path(file_path)
             if not p.exists():
-                return f"Error: {file_path} not found"
+                return tool_failure("file_not_found", "resource", f"{file_path} not found")
 
             content = p.read_text(encoding="utf-8")
             occurrences = content.count(old_string)
 
             if occurrences == 0:
                 preview = content[:500] + ("..." if len(content) > 500 else "")
-                return (
-                    f"Error: old_string not found in {file_path}.\n"
+                message = (
+                    f"old_string not found in {file_path}.\n"
                     f"File starts with:\n{preview}"
                 )
+                return tool_failure("text_not_found", "resource", message)
             if occurrences > 1:
-                return (
-                    f"Error: old_string appears {occurrences} times in {file_path}. "
-                    f"Include more surrounding lines to make it unique."
+                return tool_failure(
+                    "text_not_unique",
+                    "validation",
+                    f"old_string appears {occurrences} times in {file_path}. "
+                    "Include more surrounding lines to make it unique.",
                 )
 
             new_content = content.replace(old_string, new_string, 1)
@@ -71,9 +74,9 @@ class EditFileTool(Tool):
                 diff=diff,
             )
         except SandboxPathError as e:
-            return f"Error: {e}"
+            return tool_failure("sandbox_path_error", "permission", str(e))
         except Exception as e:
-            return f"Error: {e}"
+            return tool_failure("edit_failed", "filesystem", str(e))
 
 
 def _unified_diff(

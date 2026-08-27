@@ -287,7 +287,7 @@ paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial 
 工具接口保持简单：
 
 ```python
-from folium.tools.base import Tool
+from folium.tools.base import Tool, ToolFailure, tool_failure
 
 class HttpTool(Tool):
     name = "http"
@@ -298,9 +298,12 @@ class HttpTool(Tool):
         "required": ["url"],
     }
 
-    def execute(self, url: str) -> str:
+    def execute(self, url: str) -> str | ToolFailure:
         import urllib.request
-        return urllib.request.urlopen(url).read().decode()[:5000]
+        try:
+            return urllib.request.urlopen(url).read().decode()[:5000]
+        except TimeoutError:
+            return tool_failure("timeout", "timeout", "request timed out", retryable=True)
 ```
 
 工具调用流程：
@@ -311,7 +314,10 @@ class HttpTool(Tool):
 -> 使用 Tool.validate_arguments() 按 parameters 校验参数
 -> 校验通过后调用 execute()
 -> 校验失败时返回参数错误，不执行真实工具
+-> 工具执行失败时返回 ToolFailure，由 Agent 读取结构化错误字段
 ```
+
+工具成功结果可以是字符串或 `ToolOutput`；执行失败应返回 `ToolFailure`，其中包含 `code`、`category`、`message` 和可选的 `retryable`、`details`。Agent 不会因为成功正文中出现 `Error` 等词而误判失败；旧版字符串错误仍仅作为兼容路径处理。
 
 如果连续 5 次工具参数校验失败，Agent 会停止当前任务并返回：
 

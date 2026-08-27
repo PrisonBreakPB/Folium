@@ -9,7 +9,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 from .paper_search import OPENALEX_API
 
 
@@ -32,9 +32,9 @@ class PaperValidateTool(Tool):
     )
     args_model = PaperValidateArgs
 
-    def execute(self, papers: list) -> str:
+    def execute(self, papers: list) -> str | ToolFailure:
         if not isinstance(papers, list):
-            return "Error: papers must be a list"
+            return tool_failure("invalid_papers", "validation", "papers must be a list")
 
         results = []
         for paper in papers[:MAX_PAPERS]:
@@ -45,7 +45,10 @@ class PaperValidateTool(Tool):
                     "input": paper,
                 })
                 continue
-            results.append(_validate_one(paper))
+            result = _validate_one(paper)
+            if isinstance(result, ToolFailure):
+                return result
+            results.append(result)
 
         return json.dumps({
             "source": "openalex",
@@ -54,7 +57,7 @@ class PaperValidateTool(Tool):
         }, ensure_ascii=False, indent=2)
 
 
-def _validate_one(paper: dict) -> dict:
+def _validate_one(paper: dict) -> dict | ToolFailure:
     title = str(paper.get("title") or "").strip()
     doi = str(paper.get("doi") or "").strip()
     year = paper.get("year")
@@ -64,8 +67,12 @@ def _validate_one(paper: dict) -> dict:
         return _result(paper, "unverified", ["missing title and doi"])
 
     candidate, lookup = _lookup_by_doi(doi) if doi else (None, "title")
+    if isinstance(candidate, ToolFailure):
+        return candidate
     if candidate is None and title:
         candidate, lookup = _lookup_by_title(title)
+        if isinstance(candidate, ToolFailure):
+            return candidate
 
     if candidate is None:
         return _result(paper, "unverified", ["no OpenAlex match found"], lookup=lookup)
@@ -120,10 +127,22 @@ def _openalex_lookup(params: dict):
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = resp.read(1_000_000).decode("utf-8", errors="replace")
         data = json.loads(body)
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return None
-    except Exception:
-        return None
+    except urllib.error.HTTPError as e:
+        return tool_failure(
+            f"http_{e.code}",
+            "network",
+            f"OpenAlex validation request failed with HTTP {e.code}",
+            retryable=e.code in {408, 429, 500, 502, 503, 504},
+            details={"http_status": e.code},
+        )
+    except urllib.error.URLError as e:
+        return tool_failure("network_error", "network", f"OpenAlex validation request failed: {e.reason}", retryable=True)
+    except TimeoutError:
+        return tool_failure("timeout", "timeout", "OpenAlex validation request timed out", retryable=True)
+    except json.JSONDecodeError:
+        return tool_failure("invalid_response", "protocol", "OpenAlex validation returned invalid JSON")
+    except Exception as e:
+        return tool_failure("validation_request_failed", "network", f"OpenAlex validation request failed: {e}")
 
     results = data.get("results") or []
     return results[0] if results else None

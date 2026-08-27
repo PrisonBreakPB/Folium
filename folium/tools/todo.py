@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 
 
 TODO_REMINDER = "<reminder>Update your todos.</reminder>"
@@ -81,8 +81,8 @@ class TodoTool(Tool):
     def __init__(self, manager: TodoManager | None = None):
         self.manager = manager or TodoManager()
 
-    def execute(self, items: list) -> str:
+    def execute(self, items: list) -> str | ToolFailure:
         try:
             return self.manager.update(items)
         except ValueError as e:
-            return f"Error: {e}"
+            return tool_failure("invalid_todo", "validation", str(e))

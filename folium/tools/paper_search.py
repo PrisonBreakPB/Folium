@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 
 OPENALEX_API = "https://api.openalex.org/works"
 DEFAULT_RESULTS = 5
@@ -74,10 +74,10 @@ class PaperSearchTool(Tool):
 
     def execute(self, query: str, max_results: int = DEFAULT_RESULTS, sort: str = "relevance",
                 year_from: int = None, year_to: int = None, publication_type: str = None,
-                language: str = None, journal: str = "core") -> str:
+                language: str = None, journal: str = "core") -> str | ToolFailure:
         query = query.strip()
         if not query:
-            return "Error: query is required"
+            return tool_failure("missing_query", "validation", "query is required")
 
         # Apply defaults when not provided
         if publication_type is None:
@@ -141,18 +141,24 @@ class PaperSearchTool(Tool):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 body = resp.read(1_000_000).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
-            return f"Error: OpenAlex request failed with HTTP {e.code}"
+            return tool_failure(
+                f"http_{e.code}",
+                "network",
+                f"OpenAlex request failed with HTTP {e.code}",
+                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                details={"http_status": e.code},
+            )
         except urllib.error.URLError as e:
-            return f"Error: OpenAlex request failed: {e.reason}"
+            return tool_failure("network_error", "network", f"OpenAlex request failed: {e.reason}", retryable=True)
         except TimeoutError:
-            return "Error: OpenAlex request timed out"
+            return tool_failure("timeout", "timeout", "OpenAlex request timed out", retryable=True)
         except Exception as e:
-            return f"Error: OpenAlex request failed: {e}"
+            return tool_failure("request_failed", "network", f"OpenAlex request failed: {e}")
 
         try:
             data = json.loads(body)
         except json.JSONDecodeError:
-            return "Error: OpenAlex returned invalid JSON"
+            return tool_failure("invalid_response", "protocol", "OpenAlex returned invalid JSON")
 
         results = data.get("results") or []
         if not results:

@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 from .todo import TodoTool
 
 
@@ -129,15 +129,27 @@ class AgentTool(Tool):
         output_format: str = "text",
         context: str = "none",
         timeout: int | None = None,
-    ) -> str | ToolOutput:
+    ) -> str | ToolOutput | ToolFailure:
         if self._parent_agent is None:
-            return "Error: agent tool not initialized (no parent agent)"
+            return tool_failure("agent_uninitialized", "state", "agent tool not initialized (no parent agent)")
         if agent_type not in SUBAGENT_SPECS:
-            return f"Error: unknown agent_type '{agent_type}'. Available: {', '.join(SUBAGENT_SPECS)}"
+            return tool_failure(
+                "invalid_agent_type",
+                "validation",
+                f"unknown agent_type '{agent_type}'. Available: {', '.join(SUBAGENT_SPECS)}",
+            )
         if output_format not in OUTPUT_FORMAT_INSTRUCTIONS:
-            return f"Error: unknown output_format '{output_format}'. Available: {', '.join(OUTPUT_FORMAT_INSTRUCTIONS)}"
+            return tool_failure(
+                "invalid_output_format",
+                "validation",
+                f"unknown output_format '{output_format}'. Available: {', '.join(OUTPUT_FORMAT_INSTRUCTIONS)}",
+            )
         if context != "none":
-            return "Error: only context='none' is supported for Folium sub-agents right now"
+            return tool_failure(
+                "unsupported_context",
+                "validation",
+                "only context='none' is supported for Folium sub-agents right now",
+            )
 
         # import here to avoid circular dep
         from ..agent import Agent
@@ -168,9 +180,14 @@ class AgentTool(Tool):
                 )
             return f"[Sub-agent completed: {agent_type}]\n{result}"
         except TimeoutError:
-            return f"Sub-agent error: timed out after {timeout_seconds}s"
+            return tool_failure(
+                "subagent_timeout",
+                "timeout",
+                f"Sub-agent timed out after {timeout_seconds}s",
+                retryable=None,
+            )
         except Exception as e:
-            return f"Sub-agent error: {e}"
+            return tool_failure("subagent_failed", "dependency", f"Sub-agent failed: {e}")
 
 
 def _clamp_timeout(timeout: int | None, default: int, parent_timeout: int) -> int:

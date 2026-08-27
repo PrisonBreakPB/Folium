@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 from ..database import get_connection
 
 
@@ -47,24 +47,24 @@ class SessionHistoryTool(Tool):
         limit: int | None = None,
         offset: int | None = None,
         max_chars: int | None = None,
-    ) -> str | ToolOutput:
+    ) -> str | ToolOutput | ToolFailure:
         session_id = self._current_session_id()
         if not session_id:
-            return "Error: session_history is unavailable because there is no active session"
+            return tool_failure("session_unavailable", "state", "session_history is unavailable because there is no active session")
 
         if action == "search":
             return self._search(session_id, query or "", limit)
         if action == "read":
             if message_id is None:
-                return "Error: message_id is required for action='read'"
+                return tool_failure("missing_message_id", "validation", "message_id is required for action='read'")
             return self._read(session_id, message_id, offset, max_chars)
-        return "Error: action must be 'search' or 'read'"
+        return tool_failure("invalid_action", "validation", "action must be 'search' or 'read'")
 
     def _current_session_id(self) -> str | None:
         session_id = getattr(self._parent_agent, "session_id", None)
         return session_id if isinstance(session_id, str) and session_id else None
 
-    def _search(self, session_id: str, query: str, limit: int | None) -> str | ToolOutput:
+    def _search(self, session_id: str, query: str, limit: int | None) -> str | ToolOutput | ToolFailure:
         result_limit = _bounded(limit, _DEFAULT_SEARCH_LIMIT, _MAX_SEARCH_LIMIT)
         clauses = [
             "session_id = ?",
@@ -119,7 +119,7 @@ class SessionHistoryTool(Tool):
         message_id: int,
         offset: int | None,
         max_chars: int | None,
-    ) -> str | ToolOutput:
+    ) -> str | ToolOutput | ToolFailure:
         read_offset = max(0, offset or 0)
         char_limit = _bounded(max_chars, _DEFAULT_READ_CHARS, _MAX_READ_CHARS)
         with get_connection() as conn:
@@ -134,11 +134,11 @@ class SessionHistoryTool(Tool):
             ).fetchone()
 
         if not row:
-            return f"Error: message_id {message_id} was not found in the current session"
+            return tool_failure("message_not_found", "resource", f"message_id {message_id} was not found in the current session")
 
         content = row["content"]
         if read_offset >= len(content):
-            return f"Error: offset {read_offset} is beyond message length {len(content)}"
+            return tool_failure("offset_out_of_range", "validation", f"offset {read_offset} is beyond message length {len(content)}")
         chunk = content[read_offset:read_offset + char_limit]
         end = read_offset + len(chunk)
         tool = f", tool={row['tool_name']}" if row["tool_name"] else ""

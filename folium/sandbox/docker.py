@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from ..observability.context import record_sandbox_event
+from ..tools.base import ToolFailure, tool_failure
 from .local import check_dangerous, decode_process_output, truncate_output
 from .session import get_current_session, get_host_workspace, use_bash_sandbox, use_copy_workspace
 
@@ -43,17 +44,22 @@ class DockerSandboxExecutor:
         self.container_name = f"folium-sandbox-{uuid.uuid4().hex[:12]}"
         self.container_id: str | None = None
 
-    def run(self, command: str, timeout: int = 120) -> str:
+    def run(self, command: str, timeout: int = 120) -> str | ToolFailure:
         warning = check_dangerous(command)
         if warning:
             self._record_event("command_blocked", {
                 "reason": warning,
                 "command_hash": _stable_command_hash(command),
             })
-            return f"[Warning] Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            message = f"[Warning] Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            return tool_failure("command_blocked", "security", message, content=message)
         if not shutil.which("docker"):
             self._record_event("docker_missing", {})
-            return "Error: Docker sandbox requested but docker executable was not found."
+            return tool_failure(
+                "docker_missing",
+                "dependency",
+                "Docker sandbox requested but docker executable was not found.",
+            )
 
         try:
             self._ensure_container()
@@ -87,7 +93,14 @@ class DockerSandboxExecutor:
                 if stderr:
                     out += f"\n[stderr]\n{stderr}"
                 out += f"\nError: timed out after {timeout}s and terminated process"
-                return truncate_output(out)
+                message = truncate_output(out)
+                return tool_failure(
+                    "command_timeout",
+                    "timeout",
+                    f"command timed out after {timeout}s",
+                    retryable=None,
+                    content=message,
+                )
 
             stdout = decode_process_output(stdout_bytes)
             stderr = decode_process_output(stderr_bytes)
@@ -101,13 +114,27 @@ class DockerSandboxExecutor:
                 "timeout": timeout,
                 "command_hash": _stable_command_hash(command),
             })
-            return truncate_output(out)
+            message = truncate_output(out)
+            if proc.returncode != 0:
+                return tool_failure(
+                    "command_failed",
+                    "process",
+                    f"command exited with code {proc.returncode}",
+                    retryable=False,
+                    details={"exit_code": proc.returncode},
+                    content=message,
+                )
+            return message
         except Exception as e:
             self._record_event("command_error", {
                 "error": str(e),
                 "command_hash": _stable_command_hash(command),
             })
-            return f"Error running command in Docker sandbox: {e}"
+            return tool_failure(
+                "command_execution_failed",
+                "dependency",
+                f"Error running command in Docker sandbox: {e}",
+            )
 
     def cleanup(self):
         if not self.container_id:

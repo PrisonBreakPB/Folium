@@ -11,7 +11,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -36,14 +36,14 @@ class WebSearchTool(Tool):
     )
     args_model = WebSearchArgs
 
-    def execute(self, query: str, max_results: int = 5) -> str:
+    def execute(self, query: str, max_results: int = 5) -> str | ToolFailure:
         query = query.strip()
         if not query:
-            return "Error: query required"
+            return tool_failure("missing_query", "validation", "query required")
 
         api_key = os.getenv("TAVILY_API_KEY", "").strip()
         if not api_key:
-            return "Error: TAVILY_API_KEY is required for web_search"
+            return tool_failure("missing_api_key", "configuration", "TAVILY_API_KEY is required for web_search")
 
         count = max(1, min(int(max_results or 5), 10))
         payload = json.dumps({
@@ -66,18 +66,24 @@ class WebSearchTool(Tool):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 body = resp.read(1_000_000).decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
-            return f"Error: Tavily request failed with HTTP {e.code}: {_read_error(e)}"
+            return tool_failure(
+                f"http_{e.code}",
+                "network",
+                f"Tavily request failed with HTTP {e.code}: {_read_error(e)}",
+                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                details={"http_status": e.code},
+            )
         except urllib.error.URLError as e:
-            return f"Error: Tavily request failed: {e.reason}"
+            return tool_failure("network_error", "network", f"Tavily request failed: {e.reason}", retryable=True)
         except TimeoutError:
-            return "Error: Tavily request timed out"
+            return tool_failure("timeout", "timeout", "Tavily request timed out", retryable=True)
         except Exception as e:
-            return f"Error: Tavily request failed: {e}"
+            return tool_failure("request_failed", "network", f"Tavily request failed: {e}")
 
         try:
             data = json.loads(body)
         except json.JSONDecodeError as e:
-            return f"Error: Tavily returned invalid JSON: {e}"
+            return tool_failure("invalid_response", "protocol", f"Tavily returned invalid JSON: {e}")
 
         results = data.get("results") or []
         if not results:
@@ -116,14 +122,14 @@ class WebFetchTool(Tool):
     )
     args_model = WebFetchArgs
 
-    def execute(self, url: str, max_chars: int = DEFAULT_FETCH_CHARS) -> str | ToolOutput:
+    def execute(self, url: str, max_chars: int = DEFAULT_FETCH_CHARS) -> str | ToolOutput | ToolFailure:
         url = url.strip()
         if not url:
-            return "Error: url required"
+            return tool_failure("missing_url", "validation", "url required")
 
         error = _validate_public_http_url(url)
         if error:
-            return f"Error: {error}"
+            return tool_failure("invalid_url", "validation", error)
 
         limit = max(1000, min(int(max_chars or DEFAULT_FETCH_CHARS), 30_000))
         req = urllib.request.Request(
@@ -141,17 +147,23 @@ class WebFetchTool(Tool):
                 final_url = resp.geturl()
                 error = _validate_public_http_url(final_url)
                 if error:
-                    return f"Error: redirected to disallowed URL: {error}"
+                    return tool_failure("invalid_redirect", "security", f"redirected to disallowed URL: {error}")
                 content_type = resp.headers.get("Content-Type", "")
                 body = resp.read(MAX_FETCH_BYTES + 1)
         except urllib.error.HTTPError as e:
-            return f"Error: web_fetch failed with HTTP {e.code}: {_read_error(e)}"
+            return tool_failure(
+                f"http_{e.code}",
+                "network",
+                f"web_fetch failed with HTTP {e.code}: {_read_error(e)}",
+                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                details={"http_status": e.code},
+            )
         except urllib.error.URLError as e:
-            return f"Error: web_fetch failed: {e.reason}"
+            return tool_failure("network_error", "network", f"web_fetch failed: {e.reason}", retryable=True)
         except TimeoutError:
-            return "Error: web_fetch timed out"
+            return tool_failure("timeout", "timeout", "web_fetch timed out", retryable=True)
         except Exception as e:
-            return f"Error: web_fetch failed: {e}"
+            return tool_failure("fetch_failed", "network", f"web_fetch failed: {e}")
 
         truncated_bytes = len(body) > MAX_FETCH_BYTES
         body = body[:MAX_FETCH_BYTES]

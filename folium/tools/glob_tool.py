@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 
@@ -21,11 +21,11 @@ class GlobTool(Tool):
     )
     args_model = GlobArgs
 
-    def execute(self, pattern: str, path: str = ".") -> str:
+    def execute(self, pattern: str, path: str = ".") -> str | ToolFailure:
         try:
             base = resolve_tool_path(path)
             if not base.is_dir():
-                return f"Error: {path} is not a directory"
+                return tool_failure("not_a_directory", "resource", f"{path} is not a directory")
 
             hits = list(base.glob(pattern))
             # sort by mtime, newest first
@@ -40,6 +40,6 @@ class GlobTool(Tool):
                 result += f"\n... ({total} matches, showing first 100)"
             return result or "No files matched."
         except SandboxPathError as e:
-            return f"Error: {e}"
+            return tool_failure("sandbox_path_error", "permission", str(e))
         except Exception as e:
-            return f"Error: {e}"
+            return tool_failure("glob_failed", "filesystem", str(e))

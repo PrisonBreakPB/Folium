@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
 
@@ -32,13 +32,13 @@ class ReadFileTool(Tool):
     )
     args_model = ReadFileArgs
 
-    def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
+    def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str | ToolFailure:
         try:
             p = resolve_tool_path(file_path)
             if not p.exists():
-                return f"Error: {file_path} not found"
+                return tool_failure("file_not_found", "resource", f"{file_path} not found")
             if not p.is_file():
-                return f"Error: {file_path} is a directory, not a file"
+                return tool_failure("not_a_file", "resource", f"{file_path} is a directory, not a file")
 
             text = _read_text_prefer_utf8(p)
             lines = text.splitlines()
@@ -53,6 +53,6 @@ class ReadFileTool(Tool):
                 result += f"\n... ({total} lines total, showing {start+1}-{start+len(chunk)})"
             return result or "(empty file)"
         except SandboxPathError as e:
-            return f"Error: {e}"
+            return tool_failure("sandbox_path_error", "permission", str(e))
         except Exception as e:
-            return f"Error: {e}"
+            return tool_failure("read_failed", "filesystem", str(e))

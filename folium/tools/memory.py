@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool
+from .base import Tool, ToolFailure, tool_failure
 from ..prompt import MAX_MEMORY_CHARS, MEMORY_FILE
 
 
@@ -49,45 +49,61 @@ class MemoryTool(Tool):
         content: str | None = None,
         action: str | None = None,
         expected_version: str | None = None,
-    ) -> str:
+    ) -> str | ToolFailure:
         action = action or "append"
         if action == "read":
             if section is not None or content is not None or expected_version is not None:
-                return "Error: read does not accept section, content, or expected_version"
-            with _MEMORY_LOCK:
-                memory = _read_memory(MEMORY_FILE)
+                return tool_failure("invalid_read_arguments", "validation", "read does not accept section, content, or expected_version")
+            try:
+                with _MEMORY_LOCK:
+                    memory = _read_memory(MEMORY_FILE)
+            except Exception as exc:
+                return tool_failure("memory_read_failed", "filesystem", str(exc))
             return f"Memory version: {_memory_version(memory)}\n\n{memory}"
         if action != "append":
-            return "Error: action must be one of: read, append"
+            return tool_failure("invalid_action", "validation", "action must be one of: read, append")
         if section is None or content is None:
-            return "Error: append requires section and content"
+            return tool_failure("missing_memory_fields", "validation", "append requires section and content")
 
         heading = _SECTIONS.get(section)
         if heading is None:
-            return "Error: section must be one of: " + ", ".join(_SECTIONS)
+            return tool_failure("invalid_memory_section", "validation", "section must be one of: " + ", ".join(_SECTIONS))
 
         entry = " ".join(content.split())
         if not entry:
-            return "Error: content must not be empty"
+            return tool_failure("empty_memory_content", "validation", "content must not be empty")
         if len(entry) > _MAX_ENTRY_CHARS:
-            return f"Error: content must be at most {_MAX_ENTRY_CHARS} characters"
+            return tool_failure("memory_content_too_long", "validation", f"content must be at most {_MAX_ENTRY_CHARS} characters")
 
         with _MEMORY_LOCK:
-            memory = _read_memory(MEMORY_FILE)
+            try:
+                memory = _read_memory(MEMORY_FILE)
+            except Exception as exc:
+                return tool_failure("memory_read_failed", "filesystem", str(exc))
             if expected_version is not None and expected_version != _memory_version(memory):
-                return "Conflict: memory changed; read the latest memory before retrying."
+                return tool_failure(
+                    "memory_conflict",
+                    "conflict",
+                    "memory changed; read the latest memory before retrying.",
+                    retryable=True,
+                    content="Conflict: memory changed; read the latest memory before retrying.",
+                )
             bullet = f"- {entry}"
             if bullet in memory.splitlines():
-                return "Error: this memory entry already exists"
+                return tool_failure("duplicate_memory_entry", "conflict", "this memory entry already exists")
 
             updated = _append_to_section(memory, heading, bullet)
             if len(updated) > MAX_MEMORY_CHARS:
-                return (
-                    f"Error: memory would exceed the {MAX_MEMORY_CHARS}-character prompt limit; "
-                    "do not add this entry"
+                return tool_failure(
+                    "memory_limit_exceeded",
+                    "validation",
+                    f"memory would exceed the {MAX_MEMORY_CHARS}-character prompt limit; do not add this entry",
                 )
 
-            _write_memory(MEMORY_FILE, updated)
+            try:
+                _write_memory(MEMORY_FILE, updated)
+            except Exception as exc:
+                return tool_failure("memory_write_failed", "filesystem", str(exc))
 
         return f"Saved long-term memory in {section}: {entry}"
 

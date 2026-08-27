@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolOutput
+from .base import Tool, ToolFailure, ToolOutput, tool_failure
 from .edit import _changed_files, _unified_diff
 from ..sandbox.filesystem import SandboxPathError, resolve_tool_path
 
@@ -25,7 +25,7 @@ class WriteFileTool(Tool):
     )
     args_model = WriteFileArgs
 
-    def execute(self, file_path: str, content: str) -> str | ToolOutput:
+    def execute(self, file_path: str, content: str) -> str | ToolOutput | ToolFailure:
         try:
             p = resolve_tool_path(file_path)
             old_exists = p.exists()
@@ -42,6 +42,6 @@ class WriteFileTool(Tool):
                 diff=diff,
             )
         except SandboxPathError as e:
-            return f"Error: {e}"
+            return tool_failure("sandbox_path_error", "permission", str(e))
         except Exception as e:
-            return f"Error: {e}"
+            return tool_failure("write_failed", "filesystem", str(e))
