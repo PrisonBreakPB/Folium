@@ -79,9 +79,11 @@ export function formatEvent(message: EventMessage): string[] {
       const preview = event.preview ? ` ${event.preview}` : "";
       return [`< ${event.name || "tool"} status=${event.status || "ok"}${preview}`];
     }
-    if (event.type === "context_update") return [`context: ${String(event.estimated_context_tokens || 0)} tokens`];
-    if (event.type === "usage_update") return [`usage: ${String(event.prompt_tokens || 0)} in + ${String(event.completion_tokens || 0)} out`];
-    if (event.type === "agent_status" && event.message) return [event.message];
+    // These informational events are mostly noise in the scrollback; the live
+    // status is already surfaced in the footer activity line, so don't render them.
+    if (event.type === "context_update") return [];
+    if (event.type === "usage_update") return [];
+    if (event.type === "agent_status") return [];
     return [];
   }
   if (message.type === "command_result") {
