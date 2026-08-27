@@ -18,6 +18,7 @@ function App(): React.ReactElement {
   const [approval, setApproval] = useState<Approval | null>(null);
   const [ready, setReady] = useState<EventMessage | null>(null);
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<string | null>(null);
   const streamRef = useRef("");
   const requestCounter = useRef(0);
   const childRef = useRef<ChildProcess | null>(null);
@@ -71,10 +72,12 @@ function App(): React.ReactElement {
         }
         if (message.type === "approval_required") {
           setApproval({request_id: String(message.request_id), proposal: message.proposal || {}});
+          setActivity("Waiting for approval...");
           setBusy(true);
           return;
         }
         if (message.type === "token") {
+          setActivity("Generating response...");
           streamRef.current += message.content || "";
           setMessages((previous) => {
             if (streamMessageId.current) {
@@ -91,13 +94,22 @@ function App(): React.ReactElement {
           streamRef.current = "";
           streamMessageId.current = null;
           if (message.model) setReady((previous) => previous ? {...previous, model: message.model} : previous);
+          setActivity(null);
           setBusy(false);
           return;
         }
         if (message.type === "error") {
           streamRef.current = "";
           streamMessageId.current = null;
+          setActivity(null);
           setBusy(false);
+        }
+        if (message.type === "agent_event" && message.event) {
+          const event = message.event;
+          if (event.type === "agent_status" && event.message) setActivity(event.message);
+          else if (event.type === "tool_start") setActivity(`Running tool: ${event.name || "tool"}`);
+          else if (event.type === "tool_result" || event.type === "tool_error") setActivity(`Finished tool: ${event.name || "tool"}`);
+          else if (event.type === "context_update") setActivity("Updating context...");
         }
         if (message.type === "command_result" && message.session_id !== undefined) {
           setReady((previous) => previous ? {
@@ -139,6 +151,7 @@ function App(): React.ReactElement {
     sendRequest({type, request_id, [type === "message" ? "content" : "command"]: value});
     appendMessage(type === "message" ? "user" : "command", value);
     setBusy(type === "message");
+    setActivity(type === "message" ? "Connecting to model..." : null);
   };
 
   const approve = (decision: "approved" | "rejected" | "revision_requested") => {
@@ -156,7 +169,7 @@ function App(): React.ReactElement {
         <Text color="cyan" bold>FOLIUM</Text><Text> / RESEARCH AGENT / v0.3.0</Text>
       </Box>
       <MessageViewport messages={messages} height={messageHeight} columns={terminalColumns} />
-      <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
+      <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} activity={activity} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
     </Box>
   );
 }
