@@ -1,5 +1,14 @@
 export type Completion = {command: string; description: string};
 
+export type MessageRole = "user" | "assistant" | "tool" | "system" | "command" | "error";
+
+export type UiMessage = {
+  id: string;
+  role: MessageRole;
+  content: string;
+  kind?: string;
+};
+
 export type Approval = {
   request_id: string;
   proposal: {

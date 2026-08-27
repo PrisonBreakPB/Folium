@@ -4,7 +4,7 @@ import {spawn, ChildProcess} from "node:child_process";
 import {createInterface} from "node:readline";
 import MessageViewport from "./MessageViewport.js";
 import PromptInput from "./PromptInput.js";
-import {formatEvent, type Approval, type EventMessage} from "./protocol.js";
+import {formatEvent, type Approval, type EventMessage, type MessageRole, type UiMessage} from "./protocol.js";
 
 function pythonCommand(): string {
   return process.env.FOLIUM_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -14,13 +14,22 @@ function App(): React.ReactElement {
   const {exit} = useApp();
   const {stdout} = useStdout();
   const [terminalRows, setTerminalRows] = useState(Math.max(stdout.rows || 24, 12));
-  const [lines, setLines] = useState<string[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [approval, setApproval] = useState<Approval | null>(null);
   const [ready, setReady] = useState<EventMessage | null>(null);
   const [busy, setBusy] = useState(false);
   const streamRef = useRef("");
   const requestCounter = useRef(0);
   const childRef = useRef<ChildProcess | null>(null);
+  const streamMessageId = useRef<string | null>(null);
+  const messageCounter = useRef(0);
+
+  const appendMessage = (role: MessageRole, content: string, kind?: string) => {
+    if (!content) return;
+    const id = `${role}-${++messageCounter.current}`;
+    setMessages((previous) => [...previous, {id, role, content, kind}]);
+    return id;
+  };
 
   useEffect(() => {
     if (stdout.isTTY) stdout.write("\u001b[?25l");
@@ -55,7 +64,7 @@ function App(): React.ReactElement {
           const initialPrompt = promptIndex >= 0 ? args[promptIndex + 1] : undefined;
           if (initialPrompt) {
             sendRequest({type: "message", request_id: "initial", content: initialPrompt});
-            setLines((previous) => [...previous, `YOU >> ${initialPrompt}`]);
+            appendMessage("user", initialPrompt);
             setBusy(true);
           }
           return;
@@ -67,33 +76,44 @@ function App(): React.ReactElement {
         }
         if (message.type === "token") {
           streamRef.current += message.content || "";
-          setLines((previous) => {
-            const next = [...previous];
-            const last = next.length - 1;
-            if (last >= 0 && next[last].startsWith("AGENT >> ")) next[last] = `AGENT >> ${streamRef.current}`;
-            else next.push(`AGENT >> ${streamRef.current}`);
-            return next;
+          setMessages((previous) => {
+            if (streamMessageId.current) {
+              return previous.map((item) => item.id === streamMessageId.current ? {...item, content: streamRef.current} : item);
+            }
+            const id = `assistant-${++messageCounter.current}`;
+            streamMessageId.current = id;
+            return [...previous, {id, role: "assistant", content: streamRef.current}];
           });
           return;
         }
         if (message.type === "done") {
-          if (!message.streamed && message.response) setLines((previous) => [...previous, message.response || ""]);
+          if (!message.streamed && message.response) appendMessage("assistant", message.response);
           streamRef.current = "";
+          streamMessageId.current = null;
+          if (message.model) setReady((previous) => previous ? {...previous, model: message.model} : previous);
           setBusy(false);
           return;
+        }
+        if (message.type === "error") {
+          streamRef.current = "";
+          streamMessageId.current = null;
+          setBusy(false);
         }
         if (message.type === "bye") {
           exit();
           return;
         }
         const rendered = formatEvent(message);
-        if (rendered.length) setLines((previous) => [...previous, ...rendered]);
+        if (rendered.length) {
+          const role: MessageRole = message.type === "error" ? "error" : message.type === "agent_event" ? "tool" : "system";
+          rendered.forEach((line) => appendMessage(role, line, message.event?.type || message.kind));
+        }
       } catch {
-        setLines((previous) => [...previous, line]);
+        appendMessage("system", line);
       }
     });
     child.on("error", (error) => {
-      setLines((previous) => [...previous, `Process error: ${error.message}`]);
+      appendMessage("error", `Process error: ${error.message}`);
       setBusy(false);
     });
     child.on("exit", () => exit());
@@ -106,7 +126,7 @@ function App(): React.ReactElement {
   const submit = (type: "message" | "command", value: string) => {
     const request_id = String(++requestCounter.current);
     sendRequest({type, request_id, [type === "message" ? "content" : "command"]: value});
-    setLines((previous) => [...previous, `YOU >> ${value}`]);
+    appendMessage(type === "message" ? "user" : "command", value);
     setBusy(type === "message");
   };
 
@@ -116,6 +136,7 @@ function App(): React.ReactElement {
   };
 
   const shutdown = () => sendRequest({type: "shutdown"});
+  const terminalColumns = Math.max(stdout.columns || 80, 40);
   const messageHeight = Math.max(4, terminalRows - 10);
 
   return (
@@ -123,7 +144,7 @@ function App(): React.ReactElement {
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text color="cyan" bold>FOLIUM</Text><Text> / RESEARCH AGENT / v0.3.0</Text>
       </Box>
-      <MessageViewport lines={lines} height={messageHeight} />
+      <MessageViewport messages={messages} height={messageHeight} columns={terminalColumns} />
       <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
     </Box>
   );

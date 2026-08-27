@@ -1,14 +1,17 @@
 import React, {useEffect, useMemo, useState} from "react";
 import {Box, Text, useInput} from "ink";
+import {displayRows, MarkdownRowView} from "./MarkdownMessage.js";
+import type {UiMessage} from "./protocol.js";
 
 type Props = {
-  lines: string[];
+  messages: UiMessage[];
   height: number;
+  columns: number;
 };
 
-export default function MessageViewport({lines, height}: Props): React.ReactElement {
+export default function MessageViewport({messages, height, columns}: Props): React.ReactElement {
   const [scrollOffset, setScrollOffset] = useState(0);
-  const rows = useMemo(() => lines.flatMap((line) => line.split("\n")), [lines]);
+  const rows = useMemo(() => displayRows(messages, columns), [messages, columns]);
   const visibleHeight = Math.max(1, height - (scrollOffset > 0 ? 1 : 0));
 
   useEffect(() => {
@@ -29,7 +32,7 @@ export default function MessageViewport({lines, height}: Props): React.ReactElem
   return (
     <Box flexDirection="column" height={height} overflow="hidden" marginTop={1}>
       {scrollOffset > 0 && <Text dimColor>...</Text>}
-      {visibleRows.map((line, index) => <Text key={`${end - visibleRows.length + index}-${line}`}>{line}</Text>)}
+      {visibleRows.map((row, index) => <MarkdownRowView key={`${end - visibleRows.length + index}-${row.messageId}`} row={row} />)}
     </Box>
   );
 }

@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
-import {Box, Text, useInput} from "ink";
+import {Box, Text, useInput, useStdout} from "ink";
 import FooterStatus from "./FooterStatus.js";
 import {COMMANDS, type Approval, type Completion, type EventMessage} from "./protocol.js";
 
@@ -41,7 +41,27 @@ function CompletionList({items, selected}: {items: Completion[]; selected: numbe
   );
 }
 
+function lineInfo(input: string, cursor: number): {line: number; column: number; starts: number[]} {
+  const characters = Array.from(input);
+  const starts = [0];
+  characters.forEach((character, index) => {
+    if (character === "\n") starts.push(index + 1);
+  });
+  const line = Math.max(0, starts.findIndex((start, index) => start > cursor && index > 0) - 1);
+  const resolvedLine = line < 0 ? starts.length - 1 : line;
+  return {line: resolvedLine, column: cursor - starts[resolvedLine], starts};
+}
+
+function moveVertical(input: string, cursor: number, direction: -1 | 1): number | null {
+  const info = lineInfo(input, cursor);
+  const targetLine = info.line + direction;
+  if (targetLine < 0 || targetLine >= info.starts.length) return null;
+  const lines = input.split("\n").map((line) => Array.from(line));
+  return info.starts[targetLine] + Math.min(info.column, lines[targetLine].length);
+}
+
 export default function PromptInput({ready, skills, busy, approval, onRequest, onApproval, onShutdown}: Props): React.ReactElement {
+  const {stdout} = useStdout();
   const [input, setInput] = useState("");
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(0);
@@ -77,9 +97,20 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       onShutdown();
       return;
     }
+    const newlineRequested = (key.return && (key.shift || key.meta)) || (key.ctrl && (value === "j" || value === "\n"));
+    if (newlineRequested) {
+      const next = Array.from(input);
+      next.splice(cursor, 0, "\n");
+      setInput(next.join(""));
+      setCursor(cursor + 1);
+      setHistoryIndex(null);
+      return;
+    }
     if (!key.ctrl && !key.meta && key.upArrow) {
       if (matches.length) {
         setSelected((index) => (index - 1 + matches.length) % matches.length);
+      } else if (input.includes("\n") && moveVertical(input, cursor, -1) !== null) {
+        setCursor(moveVertical(input, cursor, -1) as number);
       } else if (history.length) {
         const nextIndex = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
         if (historyIndex === null) draftRef.current = input;
@@ -92,6 +123,8 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
     if (!key.ctrl && !key.meta && key.downArrow) {
       if (matches.length) {
         setSelected((index) => (index + 1) % matches.length);
+      } else if (input.includes("\n") && moveVertical(input, cursor, 1) !== null) {
+        setCursor(moveVertical(input, cursor, 1) as number);
       } else if (historyIndex !== null) {
         if (historyIndex < history.length - 1) {
           const nextIndex = historyIndex + 1;
@@ -112,6 +145,17 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
     }
     if (key.rightArrow) {
       setCursor((index) => Math.min(Array.from(input).length, index + 1));
+      return;
+    }
+    const homePressed = value === "\u001b[H" || value === "\u001bOH";
+    const endPressed = value === "\u001b[F" || value === "\u001bOF";
+    if (homePressed || (key.ctrl && value === "a")) {
+      setCursor(cursorInfo.starts[cursorInfo.line]);
+      return;
+    }
+    if (endPressed || (key.ctrl && value === "e")) {
+      const lineEnd = cursorInfo.line + 1 < cursorInfo.starts.length ? cursorInfo.starts[cursorInfo.line + 1] - 1 : Array.from(input).length;
+      setCursor(lineEnd);
       return;
     }
     if (key.return) {
@@ -147,17 +191,28 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
   });
 
   const characters = Array.from(input);
+  const inputLines = input.split("\n");
+  const cursorInfo = lineInfo(input, cursor);
   return (
     <Box flexDirection="column" marginTop={1}>
       <ApprovalPanel approval={approval} />
       <CompletionList items={matches} selected={selected} />
       <Box flexDirection="column" borderStyle="round" borderColor={busy ? "yellow" : "cyan"} paddingX={1}>
         <FooterStatus ready={ready} />
-        <Box>
-          <Text color="yellow" bold>{ready?.mode === "bash" ? "! " : "> "}</Text>
-          <Text>{characters.slice(0, cursor).join("")}</Text>
-          <Text color="cyan">{busy ? "  [processing]" : "|"}</Text>
-          <Text>{characters.slice(cursor).join("")}</Text>
+        <Box flexDirection="column" width={Math.max(20, stdout.columns || 80)}>
+          {inputLines.map((line, index) => {
+            const lineStart = cursorInfo.starts[index];
+            const lineCursor = index === cursorInfo.line ? cursor - lineStart : -1;
+            const lineCharacters = Array.from(line);
+            return (
+              <Box key={`${index}-${line}`}>
+                <Text color="yellow" bold>{index === 0 ? (ready?.mode === "bash" ? "! " : "> ") : "  "}</Text>
+                <Text>{lineCharacters.slice(0, Math.max(0, lineCursor)).join("")}</Text>
+                {lineCursor >= 0 && <Text color="cyan">{busy ? "..." : "|"}</Text>}
+                <Text>{lineCharacters.slice(Math.max(0, lineCursor)).join("")}</Text>
+              </Box>
+            );
+          })}
         </Box>
       </Box>
     </Box>
