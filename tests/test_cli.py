@@ -15,6 +15,39 @@ def test_cli_workspace_argument_is_parsed(monkeypatch):
     assert cli._parse_args().workspace == "D:/project"
 
 
+def test_cli_defaults_to_ink_ui(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["folium"])
+    assert cli._parse_args().ui == "ink"
+
+
+def test_cli_jsonl_mode_does_not_relaunch_ink(monkeypatch, tmp_path):
+    args = SimpleNamespace(
+        ui="ink",
+        jsonl=True,
+        resume=None,
+        workspace=str(tmp_path),
+        model=None,
+        base_url=None,
+        api_key=None,
+        prompt=None,
+    )
+    monkeypatch.setattr(cli, "_parse_args", lambda: args)
+    monkeypatch.setattr(cli, "_launch_ink_ui", lambda: (_ for _ in ()).throw(AssertionError("must not relaunch Ink")))
+    monkeypatch.setattr(cli, "_validate_cli_sandbox_backend", lambda: None)
+    monkeypatch.setattr(cli, "normalize_workspace_path", lambda path: path)
+    monkeypatch.setattr(cli, "configure_host_workspace", lambda path: None)
+    monkeypatch.setattr(cli, "reset_current_session", lambda: None)
+    monkeypatch.setattr(cli.Config, "from_env", staticmethod(lambda: Config(api_key="key")))
+    monkeypatch.setattr(cli, "LLM", lambda **kwargs: object())
+    monkeypatch.setattr(cli, "Agent", lambda **kwargs: object())
+    called = {}
+    monkeypatch.setattr("folium.cli_server.run_jsonl", lambda *args: called.setdefault("args", args))
+
+    cli.main()
+
+    assert "args" in called
+
+
 def test_cli_slash_command_completer_matches_prefix_and_skills():
     agent = SimpleNamespace(
         skills=[SimpleNamespace(name="literature-review")]

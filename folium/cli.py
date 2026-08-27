@@ -139,8 +139,8 @@ def _parse_args():
     p.add_argument(
         "--ui",
         choices=("python", "ink"),
-        default="python",
-        help="Terminal UI implementation (default: python)",
+        default="ink",
+        help="Terminal UI implementation (default: ink)",
     )
     p.add_argument("--jsonl", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
@@ -149,7 +149,8 @@ def _parse_args():
 
 def main():
     args = _parse_args()
-    if getattr(args, "ui", "python") == "ink":
+    # JSONL is the protocol used by the Ink frontend's Python backend.
+    if getattr(args, "ui", "python") == "ink" and not getattr(args, "jsonl", False):
         _launch_ink_ui()
         return
     if getattr(args, "jsonl", False):
