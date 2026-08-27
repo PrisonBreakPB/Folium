@@ -7,7 +7,6 @@ type Props = {
   ready: EventMessage | null;
   skills: string[];
   busy: boolean;
-  activity: string | null;
   approval: Approval | null;
   onRequest: (type: "message" | "command", value: string) => void;
   onApproval: (decision: "approved" | "rejected" | "revision_requested") => void;
@@ -103,9 +102,8 @@ function logicalLineBounds(input: string, cursor: number): {start: number; end: 
   return {start, end: newline < 0 ? characters.length : cursor + newline};
 }
 
-export default function PromptInput({ready, skills, busy, activity, approval, onRequest, onApproval, onShutdown}: Props): React.ReactElement {
+export default function PromptInput({ready, skills, busy, approval, onRequest, onApproval, onShutdown}: Props): React.ReactElement {
   const {stdout} = useStdout();
-  const [spinnerIndex, setSpinnerIndex] = useState(0);
   const [input, setInput] = useState("");
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(0);
@@ -129,12 +127,6 @@ export default function PromptInput({ready, skills, busy, activity, approval, on
     setSelected(0);
     setHistoryIndex(null);
   };
-
-  useEffect(() => {
-    if (!activity) return;
-    const timer = setInterval(() => setSpinnerIndex((index) => (index + 1) % 4), 250);
-    return () => clearInterval(timer);
-  }, [activity]);
 
   useInput((value, key) => {
     if (approval) {
@@ -249,7 +241,6 @@ export default function PromptInput({ready, skills, busy, activity, approval, on
       <ApprovalPanel approval={approval} />
       <CompletionList items={matches} selected={selected} />
       <Box flexDirection="column" borderStyle="round" borderColor={busy ? "yellow" : "cyan"} paddingX={1}>
-        {activity && <Text color="yellow">{"|/-\\"[spinnerIndex]} {activity}</Text>}
         <FooterStatus ready={ready} />
         <Box flexDirection="column" width={Math.max(20, stdout.columns || 80)}>
           {inputRows.map((row, index) => {

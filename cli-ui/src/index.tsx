@@ -168,8 +168,8 @@ function App(): React.ReactElement {
       <Box borderStyle="round" borderColor="cyan" paddingX={1}>
         <Text color="cyan" bold>FOLIUM</Text><Text> / RESEARCH AGENT / v0.3.0</Text>
       </Box>
-      <MessageViewport messages={messages} height={messageHeight} columns={terminalColumns} />
-      <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} activity={activity} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
+      <MessageViewport messages={messages} height={messageHeight} columns={terminalColumns} activity={activity} />
+      <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
     </Box>
   );
 }

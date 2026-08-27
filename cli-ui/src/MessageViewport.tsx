@@ -7,12 +7,20 @@ type Props = {
   messages: UiMessage[];
   height: number;
   columns: number;
+  activity: string | null;
 };
 
-export default function MessageViewport({messages, height, columns}: Props): React.ReactElement {
+export default function MessageViewport({messages, height, columns, activity}: Props): React.ReactElement {
   const [scrollOffset, setScrollOffset] = useState(0);
+  const [spinnerIndex, setSpinnerIndex] = useState(0);
   const rows = useMemo(() => displayRows(messages, columns), [messages, columns]);
-  const visibleHeight = Math.max(1, height - (scrollOffset > 0 ? 1 : 0));
+  const visibleHeight = Math.max(1, height - (activity ? 1 : 0) - (scrollOffset > 0 ? 1 : 0));
+
+  useEffect(() => {
+    if (!activity) return;
+    const timer = setInterval(() => setSpinnerIndex((index) => (index + 1) % 4), 250);
+    return () => clearInterval(timer);
+  }, [activity]);
 
   useEffect(() => {
     setScrollOffset((offset) => Math.min(offset, Math.max(0, rows.length - 1)));
@@ -33,6 +41,7 @@ export default function MessageViewport({messages, height, columns}: Props): Rea
     <Box flexDirection="column" height={height} overflow="hidden" marginTop={1}>
       {scrollOffset > 0 && <Text dimColor>...</Text>}
       {visibleRows.map((row, index) => <MarkdownRowView key={`${end - visibleRows.length + index}-${row.messageId}`} row={row} />)}
+      {activity && <Text color="yellow">{"|/-\\"[spinnerIndex]} {activity}</Text>}
     </Box>
   );
 }
