@@ -6,12 +6,13 @@ import MessageViewport from "./MessageViewport.js";
 import PromptInput from "./PromptInput.js";
 import {formatEvent, type Approval, type EventMessage, type MessageRole, type UiMessage} from "./protocol.js";
 
-const FOLIUM_LOGO = [
-  "FFFF  OOO  L    III  U U  M   M",
-  "F    O   O L     I   U U  MM MM",
-  "FFF  O   O L     I   U U  M M M",
-  "F    O   O L     I   U U  M   M",
-  "F     OOO  LLL  III   U   M   M",
+const FOLIUM_MARK = [
+  "       /\\       ",
+  "      /  \\      ",
+  "     / /\\ \\     ",
+  "    /_/  \\_\\    ",
+  "      \\  /      ",
+  "       \\/       ",
 ];
 
 function pythonCommand(): string {
@@ -172,13 +173,16 @@ function App(): React.ReactElement {
   const workspace = String(ready?.workspace || process.cwd());
   const projectName = workspace.split(/[\\/]/).filter(Boolean).pop() || "workspace";
   const wideHeader = terminalColumns >= 60;
-  const headerRows = wideHeader ? 8 : 6;
+  const headerRows = wideHeader ? 10 : 6;
   const messageHeight = Math.max(4, terminalRows - headerRows - 7);
 
   return (
     <Box flexDirection="column" height={terminalRows} paddingX={1}>
       <Box borderStyle="round" borderColor="cyan" paddingX={1} paddingY={1} flexDirection="column">
-        {wideHeader ? <Text color="cyan" bold>{FOLIUM_LOGO.join("\n")}</Text> : <Text color="cyan" bold>* F O L I U M</Text>}
+        {wideHeader ? <Box alignItems="center" flexDirection="column">
+          <Text color="green">{FOLIUM_MARK.join("\n")}</Text>
+          <Text color="cyan" bold>F O L I U M</Text>
+        </Box> : <Text color="cyan" bold>* F O L I U M</Text>}
         <Box justifyContent="space-between" width={Math.max(30, terminalColumns - 6)}>
           <Text dimColor>Research agent / {projectName}</Text>
           <Text dimColor>v0.3.0</Text>
