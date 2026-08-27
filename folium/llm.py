@@ -11,6 +11,8 @@ single unified interface. Set FOLIUM_PROVIDER=litellm.
 
 import json
 import time
+
+import httpx
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -290,7 +292,14 @@ class LLM:
         self.breaker_key = kwargs.pop("breaker_key", self.provider)
         self.api_key = api_key
         self.base_url = base_url
-        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            # GMI 端 (api.gmi-serving.com) 对 python-httpx 默认 UA 走慢速/降级通道，
+            # 伪装成 curl UA 后响应从 ~70s 降到 ~6s。
+            http_client=httpx.Client(headers={"User-Agent": "curl/8.0.0"}),
+        )
         self.api_format = kwargs.pop("api_format", "chat_completions")
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
