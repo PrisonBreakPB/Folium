@@ -14,6 +14,7 @@ import contextvars
 import copy
 import re
 import threading
+import random
 import time
 from dataclasses import dataclass
 from .skills.types import Skill
@@ -190,6 +191,7 @@ class ToolExecutionResult:
     error_category: str | None = None
     retryable: bool | None = None
     error_details: dict | None = None
+    attempts: int = 1
 
 
 @dataclass
@@ -209,6 +211,7 @@ class Agent:
         max_bad_tool_calls_warn: int = 3,
         max_tool_errors: int = 5,
         max_tool_errors_warn: int = 3,
+        max_tool_retries: int = 3,
         tool_timeout: int = 120,
         skills: list[Skill] | None = None,
         system_addendum: str | None = None,
@@ -234,7 +237,9 @@ class Agent:
         self.max_bad_tool_calls_warn = max_bad_tool_calls_warn
         self.max_tool_errors = max_tool_errors
         self.max_tool_errors_warn = max_tool_errors_warn
+        self.max_tool_retries = max_tool_retries
         self.tool_timeout = tool_timeout
+        self._tool_by_name = {t.name: t for t in self.tools}
         self._tool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self._skill_sources = (
             None
@@ -473,6 +478,31 @@ class Agent:
         return "(reached maximum tool-call rounds)"
 
     def _exec_tool(self, tc) -> ToolExecutionResult:
+        tool = self._tool_by_name.get(tc.name)
+        retry_safe = bool(getattr(tool, "retry_safe", False)) if tool else False
+        attempts = 0
+        while True:
+            attempts += 1
+            result = self._exec_tool_once(tc)
+            result.attempts = attempts
+            # Retry only explicit, idempotent, transient failures up to the cap.
+            if not self._should_autoretry(retry_safe, result) or attempts > self.max_tool_retries:
+                return result
+            time.sleep(self._retry_delay(attempts))
+
+    def _should_autoretry(self, retry_safe: bool, result: ToolExecutionResult) -> bool:
+        return (
+            retry_safe
+            and result.retryable is True
+            and result.status in {"error", "timeout"}
+        )
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Exponential backoff with jitter: base 0.5s, factor 2, full jitter."""
+        exponent = 0.5 * (2 ** (attempt - 1))
+        return random.uniform(0.0, exponent)
+
+    def _exec_tool_once(self, tc) -> ToolExecutionResult:
         timed_out = threading.Event()
         started_at = time.perf_counter()
         future = self._tool_executor.submit(

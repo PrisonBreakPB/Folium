@@ -118,6 +118,7 @@ class AgentTool(Tool):
         "or work the main agent can complete directly without losing focus."
     )
     args_model = AgentArgs
+    retry_safe = False
 
     # set by Agent.__init__ after construction
     _parent_agent = None

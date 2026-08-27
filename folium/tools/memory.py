@@ -42,6 +42,7 @@ class MemoryTool(Tool):
         "chat transcripts, temporary guesses, or raw tool output."
     )
     args_model = MemoryArgs
+    retry_safe = False
 
     def execute(
         self,

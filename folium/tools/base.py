@@ -101,6 +101,11 @@ class Tool(ABC):
     description: str
     args_model: ClassVar[type[BaseModel]]
 
+    # Whether a failed execution may be automatically retried by the system.
+    # Default True is suitable for read/query tools (idempotent, no side
+    # effects); tools that mutate state or have side effects must set False.
+    retry_safe: ClassVar[bool] = True
+
     @abstractmethod
     def execute(self, **kwargs) -> str | ToolOutput | ToolFailure:
         """Run the tool and return a text, success, or structured failure result."""

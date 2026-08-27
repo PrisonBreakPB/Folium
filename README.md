@@ -169,6 +169,7 @@ FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (def
 FOLIUM_LLM_TIMEOUT            OpenAI 客户端请求超时（秒），默认 30
 FOLIUM_CIRCUIT_FAILURE_THRESHOLD  熔断器触发阈值（连续失败次数），默认 3
 FOLIUM_CIRCUIT_COOLDOWN_SECONDS    熔断器冷却时长（秒），默认 10
+FOLIUM_MAX_TOOL_RETRIES            工具失败自动重试次数上限（除首次外），默认 3
 FOLIUM_BUDGET_USD        单次会话成本预算（美元）；0 或未设 = 不限（默认），设正数才生效
 FOLIUM_BUDGET_SOFT_RATIO 软阈值（花到预算的比例后转用便宜模型），默认 0.8
 ```
@@ -292,11 +293,8 @@ from folium.tools.base import Tool, ToolFailure, tool_failure
 class HttpTool(Tool):
     name = "http"
     description = "请求一个 URL。"
-    parameters = {
-        "type": "object",
-        "properties": {"url": {"type": "string"}},
-        "required": ["url"],
-    }
+    args_model = ...  # Pydantic 模型，自动生成 JSON Schema
+    retry_safe = True  # 幂等/无副作用，失败时允许系统自动重试
 
     def execute(self, url: str) -> str | ToolFailure:
         import urllib.request
@@ -311,13 +309,16 @@ class HttpTool(Tool):
 ```text
 模型输出工具调用
 -> 根据工具名找到 Tool
--> 使用 Tool.validate_arguments() 按 parameters 校验参数
+-> 使用 Tool.validate_arguments() 按参数模型校验参数
 -> 校验通过后调用 execute()
 -> 校验失败时返回参数错误，不执行真实工具
 -> 工具执行失败时返回 ToolFailure，由 Agent 读取结构化错误字段
+-> 对 retryable=True 且工具声明 retry_safe 的失败，Agent 做指数退避自动重试（上限 max_tool_retries，默认 3），达上限后回投最终失败结果
 ```
 
 工具成功结果可以是字符串或 `ToolOutput`；执行失败应返回 `ToolFailure`，其中包含 `code`、`category`、`message` 和可选的 `retryable`、`details`。Agent 不会因为成功正文中出现 `Error` 等词而误判失败；旧版字符串错误仍仅作为兼容路径处理。
+
+**自动重试规则**：仅当 `retryable == True` 且工具声明 `retry_safe = True` 时，Agent 才对该失败做系统级自动重试（指数退避 + 抖动，默认最多重试 `FOLIUM_MAX_TOOL_RETRIES` 次，默认 3）。`retry_safe` 默认 `True`，适合幂等、无副作用的读/查询/外部网络工具；写文件、编辑、执行 shell、子 Agent、memory 等有副作用或非幂等的工具应显式设为 `False`，避免重复执行造成二次副作用。自动重试的中间失败不会写入对话历史，也只以最终状态计入失败连击计数。重试次数通过工具结果的 `attempts` 字段与观测记录透出。
 
 如果连续 5 次工具参数校验失败，Agent 会停止当前任务并返回：
 

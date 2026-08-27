@@ -36,6 +36,7 @@ class EditFileTool(Tool):
         "Do not edit files through bash with sed or awk."
     )
     args_model = EditFileArgs
+    retry_safe = False
 
     def execute(self, file_path: str, old_string: str, new_string: str) -> str | ToolOutput | ToolFailure:
         try:

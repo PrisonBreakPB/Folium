@@ -24,6 +24,7 @@ class WriteFileTool(Tool):
         "For targeted edits to an existing file, use edit_file instead."
     )
     args_model = WriteFileArgs
+    retry_safe = False
 
     def execute(self, file_path: str, content: str) -> str | ToolOutput | ToolFailure:
         try:

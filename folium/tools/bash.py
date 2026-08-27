@@ -29,6 +29,7 @@ class BashTool(Tool):
         "use write_file instead."
     )
     args_model = BashArgs
+    retry_safe = False
 
     def __init__(self, executor=None):
         self._executor = executor
