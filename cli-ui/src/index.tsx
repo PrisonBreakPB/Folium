@@ -114,7 +114,9 @@ function App(): React.ReactElement {
         }
         const rendered = formatEvent(message);
         if (rendered.length) {
-          const role: MessageRole = message.type === "error" ? "error" : message.type === "agent_event" ? "tool" : "system";
+          const eventType = message.event?.type;
+          const isToolEvent = eventType === "tool_start" || eventType === "tool_result" || eventType === "tool_error";
+          const role: MessageRole = message.type === "error" ? "error" : isToolEvent ? "tool" : message.type === "command_result" ? "command" : "system";
           rendered.forEach((line) => appendMessage(role, line, message.event?.type || message.kind));
         }
       } catch {
