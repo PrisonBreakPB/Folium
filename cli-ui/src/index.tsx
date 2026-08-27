@@ -161,12 +161,18 @@ function App(): React.ReactElement {
 
   const shutdown = () => sendRequest({type: "shutdown"});
   const terminalColumns = Math.max(stdout.columns || 80, 40);
-  const messageHeight = Math.max(4, terminalRows - 10);
+  const workspace = String(ready?.workspace || process.cwd());
+  const projectName = workspace.split(/[\\/]/).filter(Boolean).pop() || "workspace";
+  const messageHeight = Math.max(4, terminalRows - 11);
 
   return (
     <Box flexDirection="column" height={terminalRows} paddingX={1}>
-      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text color="cyan" bold>FOLIUM</Text><Text> / RESEARCH AGENT / v0.3.0</Text>
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
+        <Box justifyContent="space-between" width={Math.max(30, terminalColumns - 6)}>
+          <Text color="cyan" bold>* FOLIUM</Text>
+          <Text dimColor>v0.3.0</Text>
+        </Box>
+        <Text dimColor>Research agent / {projectName}</Text>
       </Box>
       <MessageViewport messages={messages} height={messageHeight} columns={terminalColumns} activity={activity} />
       <PromptInput ready={ready} skills={ready?.skills || []} busy={busy} approval={approval} onRequest={submit} onApproval={approve} onShutdown={shutdown} />
