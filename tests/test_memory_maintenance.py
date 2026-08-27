@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import os
 import threading
 from unittest import mock
 
@@ -495,4 +496,15 @@ def test_scheduler_trims_all_large_tool_outputs_then_runs_without_rechecking_bud
         await task
         assert await scheduler.pending_turns("session_trim") == 0
 
-    asyncio.run(scenario())
+    # This test's trim decision sits right at the 0.8 context-usage threshold.
+    # The machine-local .env sets FOLIUM_DEEPSEEK_TOKENIZER, which flips the
+    # token estimator between a real BPE (≈260 tokens) and len//3 (424),
+    # straddling the threshold and making the trim count flaky in full-suite
+    # runs once Config.from_env()'s load_dotenv injects .env into os.environ.
+    # Pin the estimator to the deterministic approx so the test is stable.
+    with mock.patch.dict(
+        os.environ,
+        {"FOLIUM_TOKEN_ESTIMATOR": "approx", "FOLIUM_DEEPSEEK_TOKENIZER": ""},
+        clear=False,
+    ):
+        asyncio.run(scenario())
