@@ -69,7 +69,7 @@ def test_config_defaults(monkeypatch):
     assert c.max_tokens == 32000
     assert c.max_context_tokens == DEFAULT_MAX_CONTEXT_TOKENS
     assert c.temperature == 0.0
-    assert c.token_estimator == "deepseek"
+    assert c.token_estimator == "approx"
 
 
 # --- Context ---

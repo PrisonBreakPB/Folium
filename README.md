@@ -153,8 +153,8 @@ FOLIUM_API_FORMAT           API 格式：chat_completions（默认）或 respons
 FOLIUM_MAX_TOKENS           单次输出 token 上限
 FOLIUM_TEMPERATURE          采样温度
 FOLIUM_MAX_CONTEXT          上下文 token 上限，默认 1000000
-FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：deepseek 或 approx，默认 deepseek
-FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，默认估算器会优先使用它
+FOLIUM_TOKEN_ESTIMATOR      无真实 usage 时的 token 估算器：approx 或 deepseek，默认 approx
+FOLIUM_DEEPSEEK_TOKENIZER   DeepSeek 官方 tokenizer 本地路径，仅在 deepseek 估算器下使用
 FOLIUM_BASH_BACKEND         bash 工具执行后端：local 或 docker，默认 docker；如需本地执行可显式设为 local
 FOLIUM_HOST_WORKSPACE       真实项目目录，默认当前进程工作目录
 FOLIUM_SANDBOX_WORKSPACE_MODE 工作区模式：host、copy 或 bash；Web 默认 copy。copy 会在每个会话复制项目到 .folium/sandbox/sessions，文件改动不会自动回写真实项目；bash 只为 Bash 创建空工作区
@@ -379,7 +379,7 @@ Folium 采用预处理层加三级渐进式上下文压缩策略，自动触发�
 Token 计算：
 - 自动触发时优先使用最近一次 LLM API 返回的真实 `prompt_tokens` 和 `completion_tokens`
 - 新加入的消息（用户输入或工具结果）、压缩后的 `after_tokens`、首次调用前以及手动 `/compact` 使用本地估算器
-- 默认估算器为 `deepseek`；配置 `FOLIUM_DEEPSEEK_TOKENIZER` 后，会优先使用 DeepSeek 官方 tokenizer，加载失败时自动回退到 `approx`（兼容原有 `len(text) // 3`）。如需强制使用旧估算方式，可设置 `FOLIUM_TOKEN_ESTIMATOR=approx`
+- 默认估算器为 `approx`（`len(text) // 3`，不依赖 transformers/numpy）。如需更精确的 DeepSeek tokenizer 估算，可设置 `FOLIUM_TOKEN_ESTIMATOR=deepseek` 并配置 `FOLIUM_DEEPSEEK_TOKENIZER`（会惰性加载 transformers，加载失败时自动回退到 `approx`）
 - 压缩水位按输入预算判断：`输入预算 = FOLIUM_MAX_CONTEXT - 20000`，默认给模型输出预留 20000 tokens 缓冲
 - 压缩后不再保留 recent tail；系统会从真实用户消息中倒序保护最近原文，默认预算 20000 tokens。若最近一条用户消息本身超过预算，也会整条保留。该预算使用同一个本地 token 估算器：优先 tokenizer，失败再回退 `len(text) // 3`
 - 预处理层会先对超过 50% 输入预算时出现的重复 tool 输出做精确去重，再进入后续可能有损的截断、占位符压缩和摘要流程；仅字符串内容、长度不少于 200 字符且不属于豁免工具的结果参与去重

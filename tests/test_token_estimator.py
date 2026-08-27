@@ -15,11 +15,18 @@ class TokenEstimatorTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"FOLIUM_TOKEN_ESTIMATOR": "deepseek"}, clear=True):
             self.assertEqual(estimate_text_tokens("abcdef"), 2)
 
-    def test_default_deepseek_estimator_uses_configured_tokenizer(self):
+    def test_deepseek_estimator_uses_configured_tokenizer_default_path(self):
         tokenizer = mock.Mock()
         tokenizer.encode.return_value = [1, 2, 3]
 
-        with mock.patch.dict(os.environ, {"FOLIUM_DEEPSEEK_TOKENIZER": "D:\\tokenizers\\deepseek"}, clear=True):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FOLIUM_TOKEN_ESTIMATOR": "deepseek",
+                "FOLIUM_DEEPSEEK_TOKENIZER": "D:\\tokenizers\\deepseek",
+            },
+            clear=True,
+        ):
             with mock.patch("folium.token_estimator._load_deepseek_tokenizer", return_value=tokenizer):
                 self.assertEqual(estimate_text_tokens("abcdef"), 3)
 

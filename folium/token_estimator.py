@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TOKEN_ESTIMATOR = "deepseek"
+DEFAULT_TOKEN_ESTIMATOR = "approx"
 
 
 def estimator_name() -> str:

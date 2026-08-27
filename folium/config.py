@@ -58,7 +58,7 @@ class Config:
     budget_soft_ratio: float = 0.8
     model_fast: str = "gpt-4o-mini"
     model_flagship: str = "gpt-4o"
-    token_estimator: str = "deepseek"
+    token_estimator: str = "approx"
     memory_maintenance_turns: int = 10
     memory_maintenance_max_steps: int = 5
     memory_maintenance_max_tokens: int = 2000
@@ -111,7 +111,7 @@ class Config:
             budget_soft_ratio=float(os.getenv("FOLIUM_BUDGET_SOFT_RATIO", "0.8")),
             model_fast=os.getenv("FOLIUM_MODEL_FAST", "gpt-4o-mini"),
             model_flagship=os.getenv("FOLIUM_MODEL_FLAGSHIP", "gpt-4o"),
-            token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "deepseek"),
+            token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "approx"),
             memory_maintenance_turns=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")
             ),
