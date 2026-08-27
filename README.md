@@ -126,6 +126,16 @@ CLI 与 Web 使用相同的会话、工具、审批和沙箱规则。CLI 默认�
 输入 `/` 开头的命令时会实时显示匹配候选，可用方向键选择并按回车确认；已加载的 Skill 也支持补全。
 输入 `/context` 可查看上下文窗口、输入/输出预算、本次及累计 Token、缓存命中率和预计价格。
 
+CLI 也提供 TypeScript + React/Ink 终端 UI。首次使用前构建前端：
+
+```bash
+npm --prefix cli-ui install
+npm --prefix cli-ui run build
+folium --ui ink --workspace D:\\Projects\\my-project
+```
+
+Ink UI 只负责终端交互，Python Agent 仍负责模型调用、工具、沙箱、审批和会话；不指定 `--ui ink` 时继续使用 Python CLI。
+
 ## 配置
 
 常用环境变量：

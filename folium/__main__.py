@@ -2,9 +2,14 @@ import sys
 
 
 def main():
-    if "--cli" in sys.argv:
+    if (
+        "--cli" in sys.argv
+        or any(argument == "--ui" or argument.startswith("--ui=") for argument in sys.argv)
+        or "--jsonl" in sys.argv
+    ):
         # remove --cli so argparse doesn't choke on it
-        sys.argv.remove("--cli")
+        if "--cli" in sys.argv:
+            sys.argv.remove("--cli")
         from folium.cli import main as cli_main
         cli_main()
     else:

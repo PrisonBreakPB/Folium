@@ -3,6 +3,7 @@ __pycache__/
 *$py.class
 *.egg-info/
 dist/
+cli-ui/node_modules/
 build/
 .eggs/
 *.egg

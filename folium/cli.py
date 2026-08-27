@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import threading
 import copy
+import shutil
+import subprocess
 from pathlib import Path
 
 from rich.console import Console
@@ -134,12 +136,25 @@ def _parse_args():
     p.add_argument("-p", "--prompt", help="One-shot prompt (non-interactive mode)")
     p.add_argument("-r", "--resume", metavar="ID", help="Resume a saved session")
     p.add_argument("--workspace", help="Project workspace directory")
+    p.add_argument(
+        "--ui",
+        choices=("python", "ink"),
+        default="python",
+        help="Terminal UI implementation (default: python)",
+    )
+    p.add_argument("--jsonl", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     return p.parse_args()
 
 
 def main():
     args = _parse_args()
+    if getattr(args, "ui", "python") == "ink":
+        _launch_ink_ui()
+        return
+    if getattr(args, "jsonl", False):
+        global console
+        console = Console(stderr=True)
     os.environ.setdefault("FOLIUM_SANDBOX_WORKSPACE_MODE", "bash")
     _validate_cli_sandbox_backend()
     saved_workspace = get_session_workspace(args.resume) if args.resume else None
@@ -254,6 +269,12 @@ def main():
             console.print(f"[red]Session '{args.resume}' not found.[/red]")
             sys.exit(1)
 
+    if getattr(args, "jsonl", False):
+        from .cli_server import run_jsonl
+
+        run_jsonl(agent, config, workspace, args.resume)
+        return
+
     # one-shot mode
     if args.prompt:
         _run_once(agent, args.prompt, config, workspace, args.resume)
@@ -261,6 +282,41 @@ def main():
 
     # interactive REPL
     _repl(agent, config, workspace, args.resume)
+
+
+def _launch_ink_ui() -> None:
+    """Start the bundled TypeScript/Ink UI, forwarding normal CLI options."""
+    ui_entry = Path(__file__).resolve().parent.parent / "cli-ui" / "dist" / "index.js"
+    if not ui_entry.exists():
+        console.print(
+            "[red]Ink UI is not built.[/] Run `npm install` and `npm run build` in cli-ui."
+        )
+        sys.exit(2)
+
+    node = shutil.which("node")
+    if not node:
+        console.print("[red]Node.js is required to run the Ink UI.[/]")
+        sys.exit(2)
+
+    forwarded = []
+    skip_next = False
+    for argument in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument == "--ui":
+            skip_next = True
+        elif not argument.startswith("--ui="):
+            forwarded.append(argument)
+
+    child_env = os.environ.copy()
+    child_env.setdefault("FOLIUM_PYTHON", sys.executable)
+    result = subprocess.run(
+        [node, str(ui_entry), *forwarded],
+        cwd=os.getcwd(),
+        env=child_env,
+    )
+    sys.exit(result.returncode)
 
 
 def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session_id: str | None = None):
@@ -1030,3 +1086,7 @@ def _reset_last_llm_usage(llm) -> None:
     for name in ("last_prompt_tokens", "last_completion_tokens", "last_cached_tokens"):
         if hasattr(llm, name):
             setattr(llm, name, 0)
+
+
+if __name__ == "__main__":
+    main()
