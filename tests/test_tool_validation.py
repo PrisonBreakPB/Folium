@@ -12,7 +12,7 @@ from folium.tools import ALL_TOOLS, get_tool
 from folium.tools.agent import _sub_agent_tool
 from pydantic import BaseModel, ConfigDict
 
-from folium.tools.base import Tool, ToolValidationError
+from folium.tools.base import Tool, ToolError, ToolExecutionError, ToolFailure, ToolOutput, ToolValidationError
 from folium.tools.todo import TodoTool
 
 
@@ -46,6 +46,39 @@ class EchoTool(Tool):
 
     def execute(self):
         return "ok"
+
+
+class StructuredFailureTool(Tool):
+    name = "structured_failure"
+    description = "Return a structured tool failure."
+    args_model = _AnyArgs
+
+    def execute(self):
+        return ToolFailure(
+            ToolError(
+                code="http_503",
+                category="network",
+                message="service unavailable",
+                retryable=True,
+                details={"http_status": 503},
+            )
+        )
+
+
+class RaisedToolExecutionErrorTool(Tool):
+    name = "raised_tool_error"
+    description = "Raise a structured tool execution error."
+    args_model = _AnyArgs
+
+    def execute(self):
+        raise ToolExecutionError(
+            ToolError(
+                code="permission_denied",
+                category="permission",
+                message="access denied",
+                retryable=False,
+            )
+        )
 
 
 class ToolValidationTests(unittest.TestCase):
@@ -175,6 +208,42 @@ class ToolValidationTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.content, "timeout=3")
+
+    def test_agent_preserves_structured_tool_failure(self):
+        agent = Agent(llm=None, tools=[StructuredFailureTool()])
+        result = agent._exec_tool(ToolCall(id="call_1", name="structured_failure", arguments={}))
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.error_code, "http_503")
+        self.assertEqual(result.error_category, "network")
+        self.assertTrue(result.retryable)
+        self.assertEqual(result.error_details, {"http_status": 503})
+        self.assertEqual(result.content, "service unavailable")
+
+    def test_agent_converts_structured_tool_execution_exception(self):
+        agent = Agent(llm=None, tools=[RaisedToolExecutionErrorTool()])
+        result = agent._exec_tool(ToolCall(id="call_1", name="raised_tool_error", arguments={}))
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.error_code, "permission_denied")
+        self.assertEqual(result.error_category, "permission")
+        self.assertFalse(result.retryable)
+        self.assertEqual(result.content, "access denied")
+
+    def test_tool_output_content_is_not_parsed_as_error(self):
+        class ErrorTextTool(Tool):
+            name = "error_text"
+            description = "Return successful content beginning with Error."
+            args_model = _AnyArgs
+
+            def execute(self):
+                return ToolOutput(content="Error handling is documented here")
+
+        agent = Agent(llm=None, tools=[ErrorTextTool()])
+        result = agent._exec_tool(ToolCall(id="call_1", name="error_text", arguments={}))
+
+        self.assertEqual(result.status, "ok")
+        self.assertIsNone(result.error_code)
 
     def test_agent_stops_after_five_bad_tool_arguments(self):
         class BadToolLLM:

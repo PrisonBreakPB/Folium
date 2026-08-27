@@ -27,6 +27,43 @@ class ToolOutput:
     diff: str = ""
     raw_content: str | None = None
 
+
+@dataclass(frozen=True)
+class ToolError:
+    """Structured information about a tool execution failure."""
+
+    code: str
+    category: str
+    message: str
+    retryable: bool | None = None
+    details: dict | None = None
+
+
+@dataclass
+class ToolFailure:
+    """Explicit failure result returned by a tool."""
+
+    error: ToolError
+    content: str | None = None
+    preview: str = ""
+    diff: str = ""
+    raw_content: str | None = None
+
+    @property
+    def message(self) -> str:
+        return self.content or self.error.message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+class ToolExecutionError(Exception):
+    """Raised by a tool when it cannot return a ``ToolFailure`` directly."""
+
+    def __init__(self, error: ToolError):
+        super().__init__(error.message)
+        self.error = error
+
 class Tool(ABC):
     """Minimal tool interface. Subclass this to add new capabilities."""
 
@@ -35,8 +72,8 @@ class Tool(ABC):
     args_model: ClassVar[type[BaseModel]]
 
     @abstractmethod
-    def execute(self, **kwargs) -> str | ToolOutput:
-        """Run the tool and return a text result."""
+    def execute(self, **kwargs) -> str | ToolOutput | ToolFailure:
+        """Run the tool and return a text, success, or structured failure result."""
         ...
 
     def validate_arguments(self, arguments: str | dict) -> dict:

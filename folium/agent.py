@@ -19,7 +19,13 @@ from dataclasses import dataclass
 from .skills.types import Skill
 from .llm import LLM, LLMResponse, estimate_cost, parse_arguments_lenient
 from .tools import create_tools
-from .tools.base import Tool, ToolOutput, ToolValidationError
+from .tools.base import (
+    Tool,
+    ToolExecutionError,
+    ToolFailure,
+    ToolOutput,
+    ToolValidationError,
+)
 from .tools.agent import AgentTool
 from .tools.session_history import SessionHistoryTool
 from .tools.todo import TODO_REMINDER, TodoTool
@@ -180,6 +186,10 @@ class ToolExecutionResult:
     diff: str = ""
     raw_content: str | None = None
     duration_ms: int | None = None
+    error_code: str | None = None
+    error_category: str | None = None
+    retryable: bool | None = None
+    error_details: dict | None = None
 
 
 @dataclass
@@ -501,6 +511,9 @@ class Agent:
                 preview=_preview_text(message),
                 raw_content=message,
                 duration_ms=duration_ms,
+                error_code="timeout",
+                error_category="timeout",
+                retryable=True,
             )
 
     def _exec_tool_batch(self, tool_calls, on_tool=None, on_event=None) -> list[ToolExecutionResult]:
@@ -756,6 +769,10 @@ class Agent:
         }
         with span(tc.name, "tool", metadata=metadata):
             started_at = time.perf_counter()
+            error_code = None
+            error_category = None
+            retryable = None
+            error_details = None
             try:
                 arguments = tool.validate_arguments(tc.arguments)
                 if (
@@ -799,29 +816,72 @@ class Agent:
                         duration_ms=duration_ms,
                     )
                 tool_output = tool.execute(**arguments)
-                if isinstance(tool_output, ToolOutput):
+                if isinstance(tool_output, ToolFailure):
+                    failure = tool_output.error
+                    result = repair_mojibake_text(tool_output.message)
+                    raw_content = repair_mojibake_text(tool_output.raw_content or result)
+                    preview = repair_mojibake_text(tool_output.preview or result)
+                    diff = repair_mojibake_text(tool_output.diff)
+                    status = "error"
+                    error_code = failure.code
+                    error_category = failure.category
+                    retryable = failure.retryable
+                    error_details = failure.details
+                elif isinstance(tool_output, ToolOutput):
                     result = repair_mojibake_text(tool_output.content)
                     raw_content = repair_mojibake_text(tool_output.raw_content or tool_output.content)
                     preview = repair_mojibake_text(tool_output.preview)
                     diff = repair_mojibake_text(tool_output.diff)
+                    status = "ok"
                 else:
                     result = repair_mojibake_text(tool_output)
                     raw_content = result
                     preview = _preview_text(result)
                     diff = ""
-                status = _status_from_tool_result(result)
+                    status = _status_from_tool_result(result)
+                    if status == "error":
+                        error_code = "legacy_string_error"
+                        error_category = "unknown"
+                        error_details = {"legacy": True}
+                    elif status == "timeout":
+                        error_code = "timeout"
+                        error_category = "timeout"
             except ToolValidationError as e:
                 result = f"Error: {e}"
                 status = "bad_arguments"
                 preview = _preview_text(result)
                 diff = ""
                 raw_content = result
+                error_code = "bad_arguments"
+                error_category = "validation"
+            except ToolExecutionError as e:
+                result = e.error.message
+                status = "error"
+                preview = _preview_text(result)
+                diff = ""
+                raw_content = result
+                error_code = e.error.code
+                error_category = e.error.category
+                retryable = e.error.retryable
+                error_details = e.error.details
+            except TimeoutError as e:
+                result = f"Error executing {tc.name}: timed out"
+                status = "timeout"
+                preview = _preview_text(result)
+                diff = ""
+                raw_content = result
+                error_code = "timeout"
+                error_category = "timeout"
+                retryable = True
             except Exception as e:
                 result = f"Error executing {tc.name}: {e}"
                 status = "error"
                 preview = _preview_text(result)
                 diff = ""
                 raw_content = result
+                error_code = "unexpected_exception"
+                error_category = "unknown"
+                retryable = False
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             if timed_out and timed_out.is_set():
                 return ToolExecutionResult(
@@ -831,6 +891,10 @@ class Agent:
                     diff=diff,
                     raw_content=raw_content,
                     duration_ms=duration_ms,
+                    error_code=error_code,
+                    error_category=error_category,
+                    retryable=retryable,
+                    error_details=error_details,
                 )
             if status in {"error", "bad_arguments", "timeout"}:
                 mark_current_span_status("error")
@@ -847,7 +911,18 @@ class Agent:
                         include_full=cfg.full_tool_output,
                         max_preview_chars=cfg.max_preview_chars,
                         redact=cfg.redact_secrets,
-                    )
+                    ),
+                    **({
+                        "error_code": error_code,
+                        "error_category": error_category,
+                        "retryable": retryable,
+                        "error_details": compact_payload(
+                            error_details,
+                            include_full=cfg.full_tool_output,
+                            max_preview_chars=cfg.max_preview_chars,
+                            redact=cfg.redact_secrets,
+                        ) if error_details is not None else None,
+                    } if error_code else {}),
                 },
             })
             return ToolExecutionResult(
@@ -857,6 +932,10 @@ class Agent:
                 diff=diff,
                 raw_content=raw_content,
                 duration_ms=duration_ms,
+                error_code=error_code,
+                error_category=error_category,
+                retryable=retryable,
+                error_details=error_details,
             )
 
     def _requires_serial_execution(self, tool_calls) -> bool:
@@ -936,6 +1015,10 @@ class Agent:
             preview=result.preview or _preview_text(result.content),
             diff=_preview_text(result.diff, max_chars=6000),
             content=_preview_text(result.content, max_chars=6000),
+            error_code=result.error_code,
+            error_category=result.error_category,
+            retryable=result.retryable,
+            error_details=result.error_details,
         )
 
     def _assistant_message(self, resp: LLMResponse) -> dict:
