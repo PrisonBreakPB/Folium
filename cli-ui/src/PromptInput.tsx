@@ -212,16 +212,15 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       }
       return;
     }
-    // PowerShell commonly sends Backspace as DEL (0x7f), which Ink exposes as key.delete.
-    const backspacePressed = key.backspace || value === "\b" || value === "\u007f" || value === "\u001b\b";
-    const deletePressed = key.delete && !backspacePressed;
-    if (backspacePressed || deletePressed) {
+    // Ink exposes PowerShell's Backspace (DEL) as key.delete and hides the raw sequence.
+    const backspacePressed = key.backspace || key.delete || value === "\b" || value === "\u007f" || value === "\u001b\b";
+    if (backspacePressed) {
       const characters = Array.from(input);
-      const offset = backspacePressed ? cursor - 1 : cursor;
+      const offset = cursor - 1;
       if (offset >= 0 && offset < characters.length) {
         characters.splice(offset, 1);
         setInput(characters.join(""));
-        if (backspacePressed) setCursor(offset);
+        setCursor(offset);
         setHistoryIndex(null);
       }
       return;
