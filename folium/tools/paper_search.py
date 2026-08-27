@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolFailure, tool_failure
+from .base import Tool, ToolFailure, should_retry_status, tool_failure
 
 OPENALEX_API = "https://api.openalex.org/works"
 DEFAULT_RESULTS = 5
@@ -145,7 +145,7 @@ class PaperSearchTool(Tool):
                 f"http_{e.code}",
                 "network",
                 f"OpenAlex request failed with HTTP {e.code}",
-                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                retryable=should_retry_status(e.code),
                 details={"http_status": e.code},
             )
         except urllib.error.URLError as e:

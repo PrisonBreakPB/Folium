@@ -51,7 +51,7 @@ class Config:
     provider: str = "openai"
     api_format: str = "chat_completions"
     llm_timeout: float = 30.0
-    max_tool_retries: int = 3
+    max_tool_retries: int = 10
     circuit_failure_threshold: int = 3
     circuit_cooldown_seconds: float = 10.0
     budget_usd: float = 0.0
@@ -100,7 +100,7 @@ class Config:
             provider=os.getenv("FOLIUM_PROVIDER", "openai"),
             api_format=os.getenv("FOLIUM_API_FORMAT", "chat_completions"),
             llm_timeout=float(os.getenv("FOLIUM_LLM_TIMEOUT", "30")),
-            max_tool_retries=int(os.getenv("FOLIUM_MAX_TOOL_RETRIES", "3")),
+            max_tool_retries=int(os.getenv("FOLIUM_MAX_TOOL_RETRIES", "10")),
             circuit_failure_threshold=int(
                 os.getenv("FOLIUM_CIRCUIT_FAILURE_THRESHOLD", "3")
             ),

@@ -211,7 +211,7 @@ class Agent:
         max_bad_tool_calls_warn: int = 3,
         max_tool_errors: int = 5,
         max_tool_errors_warn: int = 3,
-        max_tool_retries: int = 3,
+        max_tool_retries: int = 10,
         tool_timeout: int = 120,
         skills: list[Skill] | None = None,
         system_addendum: str | None = None,

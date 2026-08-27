@@ -6,7 +6,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolFailure, ToolOutput, tool_failure
+from .base import Tool, ToolFailure, ToolOutput, should_retry_status, tool_failure
 from .web import _validate_public_http_url, _SafeRedirectHandler
 
 MAX_PDF_BYTES = 20_000_000  # 20 MB
@@ -79,7 +79,7 @@ def _download_pdf(url: str) -> bytes | ToolFailure:
             f"http_{e.code}",
             "network",
             f"PDF download failed with HTTP {e.code}",
-            retryable=e.code in {408, 429, 500, 502, 503, 504},
+            retryable=should_retry_status(e.code),
             details={"http_status": e.code},
         )
     except urllib.error.URLError as e:

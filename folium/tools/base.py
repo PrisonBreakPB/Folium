@@ -63,6 +63,18 @@ class ToolFailure(str):
         return self.content or self.error.message
 
 
+# HTTP status codes treated as transient network failures worth an automatic
+# retry. Narrower than all 5xx on purpose: 501/505 are permanent "not
+# implemented / version not supported" responses, and 401/403 signal a bad key
+# or auth problem rather than a transient glitch - neither should be retried.
+_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def should_retry_status(code: int) -> bool:
+    """Return whether an HTTP status code is a retryable transient failure."""
+    return code in _RETRYABLE_STATUS_CODES
+
+
 def tool_failure(
     code: str,
     category: str,

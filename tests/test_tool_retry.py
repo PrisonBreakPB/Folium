@@ -9,7 +9,7 @@ from typing import ClassVar
 
 from folium.agent import Agent
 from folium.llm import LLMResponse, ToolCall
-from folium.tools.base import Tool, ToolOutput, tool_failure
+from folium.tools.base import Tool, ToolOutput, should_retry_status, tool_failure
 
 
 class _EmptyArgs(BaseModel):
@@ -147,6 +147,19 @@ class ToolRetryTests(unittest.TestCase):
         for r in ratios:
             self.assertGreaterEqual(r, 0.0)
             self.assertLess(r, 1.0)
+
+
+class ShouldRetryStatusTests(unittest.TestCase):
+    def test_retryable_status_codes(self):
+        for code in (408, 429, 500, 502, 503, 504):
+            with self.subTest(code=code):
+                self.assertTrue(should_retry_status(code))
+
+    def test_non_retryable_status_codes(self):
+        # auth errors (bad key), permanent "not supported" 5xx, 4xx unlisted.
+        for code in (200, 304, 400, 401, 403, 404, 501, 505):
+            with self.subTest(code=code):
+                self.assertFalse(should_retry_status(code))
 
 
 if __name__ == "__main__":

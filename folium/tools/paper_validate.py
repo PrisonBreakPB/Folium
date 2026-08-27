@@ -9,7 +9,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolFailure, tool_failure
+from .base import Tool, ToolFailure, should_retry_status, tool_failure
 from .paper_search import OPENALEX_API
 
 
@@ -132,7 +132,7 @@ def _openalex_lookup(params: dict):
             f"http_{e.code}",
             "network",
             f"OpenAlex validation request failed with HTTP {e.code}",
-            retryable=e.code in {408, 429, 500, 502, 503, 504},
+            retryable=should_retry_status(e.code),
             details={"http_status": e.code},
         )
     except urllib.error.URLError as e:

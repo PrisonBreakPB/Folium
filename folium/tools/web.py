@@ -11,7 +11,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .base import Tool, ToolFailure, ToolOutput, tool_failure
+from .base import Tool, ToolFailure, ToolOutput, should_retry_status, tool_failure
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -70,7 +70,7 @@ class WebSearchTool(Tool):
                 f"http_{e.code}",
                 "network",
                 f"Tavily request failed with HTTP {e.code}: {_read_error(e)}",
-                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                retryable=should_retry_status(e.code),
                 details={"http_status": e.code},
             )
         except urllib.error.URLError as e:
@@ -155,7 +155,7 @@ class WebFetchTool(Tool):
                 f"http_{e.code}",
                 "network",
                 f"web_fetch failed with HTTP {e.code}: {_read_error(e)}",
-                retryable=e.code in {408, 429, 500, 502, 503, 504},
+                retryable=should_retry_status(e.code),
                 details={"http_status": e.code},
             )
         except urllib.error.URLError as e:
