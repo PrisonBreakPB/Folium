@@ -22,6 +22,10 @@ export type Approval = {
 export type EventMessage = {
   type: string;
   request_id?: string;
+  session_id?: string | null;
+  model?: string;
+  mode?: string;
+  workspace?: string;
   content?: string;
   response?: string;
   text?: string;

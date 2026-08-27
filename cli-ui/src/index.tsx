@@ -99,6 +99,15 @@ function App(): React.ReactElement {
           streamMessageId.current = null;
           setBusy(false);
         }
+        if (message.type === "command_result" && message.session_id !== undefined) {
+          setReady((previous) => previous ? {
+            ...previous,
+            session_id: message.session_id,
+            model: message.model ?? previous.model,
+            mode: message.mode ?? previous.mode,
+            workspace: message.workspace ?? previous.workspace,
+          } : previous);
+        }
         if (message.type === "bye") {
           exit();
           return;

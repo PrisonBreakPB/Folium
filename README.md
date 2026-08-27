@@ -134,7 +134,7 @@ npm --prefix cli-ui run build
 folium --workspace D:\\Projects\\my-project
 ```
 
-Ink UI 只负责终端交互，Python Agent 仍负责模型调用、工具、沙箱、审批和会话。Ink UI 提供可滚动消息区、多行输入框、自动折行、输入历史、slash 命令补全、Markdown 消息渲染、结构化的用户/助手/工具消息、审批面板和底部状态栏。输入达到终端宽度时会自动视觉折行；也可用 `Shift+Enter` 或 `Ctrl+J` 插入明确换行，普通回车提交。需要使用旧版 Python CLI 时，显式指定 `--ui python`。
+Ink UI 只负责终端交互，Python Agent 仍负责模型调用、工具、沙箱、审批和会话。Ink UI 提供可滚动消息区、多行输入框、自动折行、输入历史、slash 命令补全、Markdown 消息渲染、结构化的用户/助手/工具消息、审批面板和包含 Model、Mode、Session、Workspace 的底部状态栏。输入达到终端宽度时会自动视觉折行；也可用 `Shift+Enter` 或 `Ctrl+J` 插入明确换行，普通回车提交。需要使用旧版 Python CLI 时，显式指定 `--ui python`。
 
 ## 配置
 

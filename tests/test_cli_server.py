@@ -112,4 +112,7 @@ def test_jsonl_server_routes_context_and_model_commands(monkeypatch):
     assert results[0]["kind"] == "context"
     assert results[0]["data"]["estimated_context_tokens"] == 250
     assert results[1]["text"] == "Switched to new-model"
+    assert results[1]["session_id"] is None
+    assert results[1]["model"] == "new-model"
+    assert results[1]["mode"] == "build"
     assert server.agent.llm.model == "new-model"

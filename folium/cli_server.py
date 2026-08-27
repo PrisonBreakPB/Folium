@@ -312,7 +312,15 @@ class JsonlServer:
             self._start_message(command, request_id)
 
     def _result(self, request_id, command, text=None, *, data=None, kind=None, level="ok"):
-        payload = {"request_id": request_id, "command": command, "level": level}
+        payload = {
+            "request_id": request_id,
+            "command": command,
+            "level": level,
+            "session_id": self.session_id,
+            "model": self.config.model,
+            "mode": self.agent.mode,
+            "workspace": self.workspace,
+        }
         if text is not None:
             payload["text"] = text
         if data is not None:
