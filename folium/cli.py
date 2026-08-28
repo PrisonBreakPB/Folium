@@ -149,10 +149,19 @@ def _parse_args():
 def main():
     # 中文 Windows 控制台默认 codepage 是 GBK(936)；模型可能输出 GBK 无法表示的
     # 字符(如 emoji)，写 stdout 会抛 UnicodeEncodeError 中断整条响应；且 Ink 前端
-    # 按 UTF-8 读取后端 stdout。这里在主流程最开头统一把两个流强行配成 UTF-8。
+    # 按 UTF-8 读取后端 stdout。这里在主流程最开头统一把两个流强行配成 UTF-8，
+    # 同时把控制台输出代码页切到 UTF-8(65001)，否则写出的 UTF-8 中文会被 936
+    # 终端按 GBK 解码成乱码。只切输出侧；输入码页保持与 sys.stdin(未强制 UTF-8)一致。
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        except Exception:
+            pass
     args = _parse_args()
     # JSONL is the protocol used by the Ink frontend's Python backend.
     if getattr(args, "ui", "python") == "ink" and not getattr(args, "jsonl", False):
