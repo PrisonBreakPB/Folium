@@ -95,6 +95,17 @@ OPENAI_BASE_URL=https://api.deepseek.com
 FOLIUM_MODEL=deepseek-chat
 ```
 
+全局配置（可选）：在 `~/.folium/.env`（Windows 为 `C:\Users\PB\.folium\.env`）写一份
+**全局默认配置**，无论从哪个目录启动 folium 都会读取它；在某个项目里再放 `.env` 可
+覆盖全局默认值。优先级：已设的环境变量 > 项目 `.env` > 全局 `~/.folium/.env`。
+
+```bash
+# ~/.folium/.env
+FOLIUM_API_KEY=sk-...
+FOLIUM_BASE_URL=https://api.deepseek.com
+FOLIUM_MODEL=deepseek-chat
+```
+
 启动 Web 界面：
 
 ```bash

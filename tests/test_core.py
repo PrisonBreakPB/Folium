@@ -72,6 +72,41 @@ def test_config_defaults(monkeypatch):
     assert c.token_estimator == "approx"
 
 
+def test_config_global_env_file_supplies_defaults(tmp_path, monkeypatch):
+    """A per-user ~/.folium/.env is read regardless of the launch directory."""
+    global_file = tmp_path / ".folium" / ".env"
+    global_file.parent.mkdir()
+    global_file.write_text(
+        "FOLIUM_MODEL=global-model\nFOLIUM_BASE_URL=https://global.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("folium.config._global_env_path", lambda: global_file)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # an unrelated folder
+    for k in ["FOLIUM_MODEL", "FOLIUM_BASE_URL"]:
+        monkeypatch.delenv(k, raising=False)
+
+    c = Config.from_env()
+    assert c.model == "global-model"
+    assert c.base_url == "https://global.example"
+
+
+def test_config_project_env_overrides_global(tmp_path, monkeypatch):
+    """Project .env beats the global file; the global file only fills gaps."""
+    global_file = tmp_path / ".folium" / ".env"
+    global_file.parent.mkdir()
+    global_file.write_text("FOLIUM_MODEL=global-model\n", encoding="utf-8")
+    monkeypatch.setattr("folium.config._global_env_path", lambda: global_file)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / ".env").write_text("FOLIUM_MODEL=project-model\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+    monkeypatch.delenv("FOLIUM_MODEL", raising=False)
+
+    assert Config.from_env().model == "project-model"
+
+
 # --- Context ---
 
 def test_estimate_tokens():

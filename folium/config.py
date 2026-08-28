@@ -20,8 +20,15 @@ class LLMProfile:
     model: str
 
 
+def _global_env_path() -> Path:
+    """Per-user global folium config file, shared across every launch directory."""
+    return Path.home() / ".folium" / ".env"
+
+
 def _load_dotenv():
-    """Load .env from cwd, walking up to home dir. No-op if python-dotenv missing."""
+    """Load the project .env (walking up to home) then a per-user global .env.
+    Precedence: already-set env vars > project .env > global ~/.folium/.env.
+    No-op if python-dotenv missing."""
     try:
         from dotenv import load_dotenv
         # search cwd first, then parent dirs up to ~
@@ -35,7 +42,9 @@ def _load_dotenv():
                     env_path = candidate
                     break
                 cur = cur.parent
+        # project first (higher priority), then global as fallback defaults
         load_dotenv(env_path, override=False)
+        load_dotenv(_global_env_path(), override=False)
     except ImportError:
         pass  # python-dotenv not installed, silently skip
 
