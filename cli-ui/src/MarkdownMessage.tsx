@@ -92,21 +92,18 @@ export function markdownRows(content: string): MarkdownRow[] {
 export function displayRows(messages: UiMessage[], columns: number): DisplayRow[] {
   const rows: DisplayRow[] = [];
   for (const message of messages) {
-    const prefix = message.role === "user" ? "YOU >> "
-      : message.role === "assistant" ? "AGENT >> "
-        : message.role === "tool" ? "TOOL >> "
-          : message.role === "error" ? "ERROR >> " : "INFO >> ";
-    const continuation = " ".repeat(prefix.length);
     const messageRows = markdownRows(message.content);
-    const availableWidth = Math.max(8, columns - prefix.length - 1);
+    const availableWidth = Math.max(8, columns - 1);
     messageRows.forEach((row, index) => {
       const chunks = row.text ? splitWidth(row.text, availableWidth) : [""];
       chunks.forEach((text, chunkIndex) => rows.push({
         ...row,
-        text,
+        // Pad user rows to the column width so their background highlight spans
+        // the whole line instead of stopping at the last visible character.
+        text: message.role === "user" ? text.padEnd(availableWidth, " ") : text,
         messageId: message.id,
         role: message.role,
-        prefix: index === 0 && chunkIndex === 0 ? prefix : continuation,
+        prefix: "",
       }));
     });
     if (message.role !== "assistant" && message.role !== "user") rows.push({text: "", kind: "normal", messageId: `${message.id}-gap`, role: message.role, prefix: ""});
@@ -143,10 +140,14 @@ function inlineParts(text: string): React.ReactNode[] {
 }
 
 export function MarkdownRowView({row}: {row: DisplayRow}): React.ReactElement {
-  const color = row.role === "error" ? "red" : row.role === "tool" ? "magenta" : row.role === "user" ? "cyan" : undefined;
-  if (row.kind === "code") return <Text color="gray">{row.prefix}{row.text}</Text>;
-  if (row.kind === "heading") return <Text color="cyan" bold>{row.prefix}{inlineParts(row.text)}</Text>;
-  if (row.kind === "quote") return <Text dimColor>{row.prefix}| {inlineParts(row.text)}</Text>;
-  if (row.kind === "rule") return <Text dimColor>{row.prefix}{row.text}</Text>;
-  return <Text color={color}>{row.prefix}{inlineParts(row.text)}</Text>;
+  const isUser = row.role === "user";
+  // User input gets a full-line dark background to stand out from agent output.
+  const backgroundColor = isUser ? "#555" : undefined;
+  const userText = (color?: string) => isUser ? {color: "white", backgroundColor} : {color};
+  if (row.kind === "code") return <Text {...userText("gray")}>{row.prefix}{row.text}</Text>;
+  if (row.kind === "heading") return <Text {...userText("cyan")} bold>{row.prefix}{inlineParts(row.text)}</Text>;
+  if (row.kind === "quote") return <Text {...userText(undefined)} dimColor={!isUser}>{row.prefix}| {inlineParts(row.text)}</Text>;
+  if (row.kind === "rule") return <Text {...userText(undefined)} dimColor={!isUser}>{row.prefix}{row.text}</Text>;
+  const color = isUser ? "white" : row.role === "error" ? "red" : row.role === "tool" ? "magenta" : undefined;
+  return <Text color={color} backgroundColor={isUser ? "#555" : undefined}>{row.prefix}{inlineParts(row.text)}</Text>;
 }
