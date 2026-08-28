@@ -45,7 +45,7 @@ export const COMMANDS: Completion[] = [
   ["workspace", "Show workspace paths"], ["todos", "Show todo list"], ["tokens", "Show token usage"],
   ["compact", "Compress conversation context"], ["diff", "Show modified files"], ["save", "Save session"],
   ["sessions", "List saved sessions"], ["switch", "Switch session"], ["delete", "Delete session"],
-  ["traces", "List execution traces"], ["trace", "Show a trace"], ["quit", "Exit Folium"], ["exit", "Exit Folium"],
+  ["traces", "List execution traces"], ["trace", "Show a trace"], ["exit", "Exit Folium"],
 ].map(([command, description]) => ({command: `/${command}`, description}));
 
 function formatStructured(kind: string, data: Record<string, unknown>): string[] {

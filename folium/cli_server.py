@@ -221,7 +221,7 @@ class JsonlServer:
     def _handle_command(self, raw: str, request_id: str | None) -> None:
         command = raw.strip()
         lowered = command.lower()
-        if lowered in {"quit", "exit", "/quit", "/exit"}:
+        if lowered in {"exit", "/exit"}:
             self.emit("command_result", request_id=request_id, command=command, text="Bye!")
             self.emit("bye")
             self._stop.set()
@@ -504,7 +504,7 @@ def _help_text() -> str:
         "Commands:\n"
         "/help /new /reset /model [name] /mode [name] /skills /status /context\n"
         "/workspace /todos /tokens /compact /diff /save /sessions /switch <id>\n"
-        "/delete <id> /traces /trace <id> /quit"
+        "/delete <id> /traces /trace <id> /exit"
     )
 
 

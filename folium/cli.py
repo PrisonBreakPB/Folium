@@ -79,7 +79,6 @@ class SlashCommandCompleter(Completer):
         ("/delete", "Delete a saved session"),
         ("/traces", "List recent execution traces"),
         ("/trace", "Show a trace summary"),
-        ("/quit", "Exit Folium"),
         ("/exit", "Exit Folium"),
     )
 
@@ -413,7 +412,7 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
             continue
 
         # built-in commands
-        if user_input.lower() in ("quit", "exit", "/quit", "/exit"):
+        if user_input.lower() in ("exit", "/exit"):
             break
         if user_input in ("/help", "help"):
             _show_help()
@@ -887,7 +886,7 @@ def _show_help():
         "  /delete <id>   Delete a saved session\n"
         "  /traces        List recent execution traces\n"
         "  /trace <id>    Show a trace summary\n"
-        "  quit           Exit Folium\n"
+        "  exit           Exit Folium\n"
         "\n"
         "[bold]Input:[/bold]\n"
         "  Enter          Submit message\n"

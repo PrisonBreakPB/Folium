@@ -202,7 +202,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       return;
     }
     if (key.return) {
-      if (matches.length) {
+      if (matches.length && matches[selected].command.toLowerCase() !== input.toLowerCase()) {
         const command = matches[selected].command;
         setInput(command);
         setCursor(command.length);
