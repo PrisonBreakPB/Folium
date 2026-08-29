@@ -1,4 +1,10 @@
-"""System prompt - the instructions that turn an LLM into a research assistant."""
+"""System prompt - the instructions that turn an LLM into a research assistant.
+
+The prompt is assembled from modular Markdown files under ``folium/prompts/``.
+Static blocks (01-04) are fixed guidance; dynamic blocks (05-07) are templates
+filled with runtime data (skills, memory, environment). This keeps the prompt
+readable as separate concerns instead of one large f-string.
+"""
 
 import os
 import platform
@@ -28,14 +34,31 @@ their result before continuing. The runtime only detects overlapping
 paths among file tools, so decide other dependencies carefully and
 compare, deduplicate, and cite research results after parallel calls return."""
 
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-def _load_role() -> str:
-    """Load role description from role.md, falling back to default."""
-    role_file = Path(__file__).parent / "role.md"
+# Runtime data fillers for the dynamic block templates.
+_SKILLS_PLACEHOLDER = "{skills}"
+_MEMORY_SECTIONS_PLACEHOLDER = "{sections}"
+
+
+def _load_block(filename: str, fallback: str = "") -> str:
+    """Read a prompt block file, falling back to a default when missing."""
+    path = _PROMPTS_DIR / filename
     try:
-        return role_file.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8").strip()
     except OSError:
-        return _ROLE_FALLBACK
+        return fallback
+
+
+def _static_sections() -> list[str]:
+    """Static guidance blocks, in display order."""
+    sections = [
+        _load_block("01-soul.md", _ROLE_FALLBACK),
+        _load_block("02-rules.md"),
+        _load_block("03-parallel-tools.md", _PARALLEL_TOOLS),
+        _load_block("04-scratchpad.md"),
+    ]
+    return [s for s in sections if s]
 
 
 _MEMORY_SECTION_LABELS = {
@@ -59,55 +82,7 @@ def _memory_section() -> str:
         blocks.append(f"## {label}\n\n{content}")
     if not blocks:
         return ""
-    return f"""# Long-Term Memory
-The following is persistent context for this project. Use it as background information,
-but prioritize the current user request when they conflict. Update these files via the
-`write_file` / `edit_file` tools when the user states durable facts or confirms decisions —
-do not silently accumulate here on every turn.
-
-{"\n\n".join(blocks)}"""
-
-
-def system_prompt(tools, skills=None) -> str:
-    cwd = os.getcwd()
-    skills_section = _skills_section(skills or [])
-    memory_section = _memory_section()
-    uname = platform.uname()
-    role = _load_role()
-
-    return f"""\
-{role}
-
-# Rules
-1. **Cite sources.** When referencing papers or findings, always mention the source (author, year, title).
-2. **Do not invent papers.** Do not invent papers, venues, DOIs, authors, years, or evidence. When listing papers, rely on tool-returned metadata and clearly distinguish verified papers from unverified candidates.
-3. **Use academic tools deliberately.** For literature search, prefer structured academic tools such as paper_search and arxiv_search before web_search. Use web_search mainly as fallback or source verification.
-4. **Read before edit.** Always inspect relevant files before modifying code or documents.
-5. **Keep changes scoped.** For software tasks, make the smallest change that solves the request and avoid unrelated refactors.
-6. **Verify changes.** After code changes, run the most relevant available tests or checks. Do not assume the test framework; inspect project files when needed.
-7. **Verify experiments.** After writing experiment code, run it and check the results before reporting.
-8. **Be structured.** Research reports should have clear sections: background, methodology, findings, references.
-9. **Be concise.** Show data over prose. Explain only what's necessary.
-10. **Ask when unsure.** If the topic is ambiguous, ask for clarification rather than guessing.
-11. **Track multi-step work.** For multi-step tasks, use the `todo` tool to keep a task list. Mark one item `in_progress` before starting it and `completed` when done.
-12. **Handle runtime reminders.** Messages enclosed in `<reminder>...</reminder>` are internal Folium workflow reminders, not user-provided task content. Follow them when relevant, but do not quote them or present them as part of the user's request.
-13. **Respect LaTeX boundaries.** Edit .tex files only when the user explicitly asks. Otherwise inspect, compile-check, locate issues, and suggest changes.
-14. **Do not commit unless asked.** Only create git commits when the user explicitly requests it.
-15. **Use long-term memory selectively.** The project memory directory holds three files (`user.md`, `feedback.md`, `project.md`); review them as background context. Update them with `write_file`/`edit_file` only for durable preferences, confirmed decisions, stable research context, or open items — not for secrets, temporary guesses, full chat logs, or raw tool output.
-
-{_PARALLEL_TOOLS}
-
-Tool schemas are provided separately by the runtime. Use tools when needed for file inspection, command execution, literature search, paper validation, source fetching, or focused delegation.
-
-{skills_section}
-
-{memory_section}
-
-# Environment
-- Working directory: {cwd}
-- OS: {uname.system} {uname.release} ({uname.machine})
-- Python: {platform.python_version()}
-"""
+    return "\n\n".join(blocks)
 
 
 def _skills_section(skills) -> str:
@@ -118,18 +93,42 @@ def _skills_section(skills) -> str:
         f"  - {_oneline(skill.name)}: {_oneline(skill.description)}"
         for skill in skills
     )
-    return f"""# Skills
-<skill_system>
-Before replying, scan the skills below. If a skill matches or is even partially relevant to the task, load it first by calling `read_file` on `skills/<name>/SKILL.md` (relative to the working directory above), then follow its workflow before choosing a general approach.
+    template = _load_block("05-skills.md")
+    if not template:
+        return ""
+    return template.replace(_SKILLS_PLACEHOLDER, skill_items)
 
-Skills encode specialized knowledge and proven workflows — literature search strategies, debugging discipline, planning and verification routines — that outperform ad-hoc approaches. Load a skill even if you think you could handle the task with basic tools like web_search, paper_search, or bash. Skills also encode the user's preferred conventions and quality standards, so load them even for tasks you already know how to do.
 
-Only proceed without loading a skill if genuinely none are relevant.
+def _environment_section() -> str:
+    uname = platform.uname()
+    template = _load_block("07-environment.md")
+    if not template:
+        return ""
+    return template.format(
+        cwd=os.getcwd(),
+        os=f"{uname.system} {uname.release} ({uname.machine})",
+        python=platform.python_version(),
+    )
 
-<available_skills>
-{skill_items}
-</available_skills>
-</skill_system>"""
+
+def system_prompt(tools, skills=None) -> str:
+    memory_section = _memory_section()
+
+    memory_template = _load_block("06-memory.md")
+    if memory_template and memory_section:
+        memory_block = memory_template.replace(_MEMORY_SECTIONS_PLACEHOLDER, memory_section)
+    else:
+        memory_block = ""
+
+    dynamic = [
+        _skills_section(skills or []),
+        memory_block,
+        _environment_section(),
+    ]
+    dynamic = [s for s in dynamic if s]
+
+    sections = _static_sections() + dynamic
+    return "\n\n".join(sections)
 
 
 def _oneline(text: str) -> str:

@@ -469,8 +469,15 @@ folium/
 ├── context.py               上下文估算与压缩
 ├── session.py               会话保存、读取、切换和删除
 ├── config.py                环境变量配置
-├── prompt.py                系统提示词
-├── role.md                  角色介绍，可自定义
+├── prompt.py                系统提示词组装（读取 prompts/ 模块）
+├── prompts/
+│   ├── 01-soul.md           人设（原 role.md 演进而来，可自定义）
+│   ├── 02-rules.md          行为规则（分组散文）
+│   ├── 03-parallel-tools.md 多工具并行纪律
+│   ├── 04-scratchpad.md     独立临时工作目录
+│   ├── 05-skills.md         技能库模板
+│   ├── 06-memory.md         长期记忆模板
+│   └── 07-environment.md    环境元数据模板
 ├── observability/           本地 trace、span、脱敏和摘要读取
 ├── tools/                   内置工具
 └── web/
