@@ -53,6 +53,10 @@ class DummyTodoManager:
 
 class DummyConfig:
     model = "test-model"
+    memory_maintenance_turns = 5
+    memory_maintenance_max_tokens = 2000
+    memory_maintenance_max_steps = 5
+    max_context_tokens = 1_000_000
 
 
 class DummyLLM:

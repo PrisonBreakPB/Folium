@@ -174,7 +174,7 @@ FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需�
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
 FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
-FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance before scheduling (default 10)
+FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance before scheduling (default 5)
 FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           Maximum maintenance model/tool rounds (default 5)
 FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (default 2000)
 FOLIUM_LLM_TIMEOUT            OpenAI 客户端请求超时（秒），默认 30
@@ -329,7 +329,7 @@ class HttpTool(Tool):
 
 工具成功结果可以是字符串或 `ToolOutput`；执行失败应返回 `ToolFailure`，其中包含 `code`、`category`、`message` 和可选的 `retryable`、`details`。Agent 不会因为成功正文中出现 `Error` 等词而误判失败；旧版字符串错误仍仅作为兼容路径处理。
 
-**自动重试规则**：仅当 `retryable == True` 且工具声明 `retry_safe = True` 时，Agent 才对该失败做系统级自动重试（指数退避 + 抖动，默认最多重试 `FOLIUM_MAX_TOOL_RETRIES` 次，默认 3）。`retry_safe` 默认 `True`，适合幂等、无副作用的读/查询/外部网络工具；写文件、编辑、执行 shell、子 Agent、memory 等有副作用或非幂等的工具应显式设为 `False`，避免重复执行造成二次副作用。自动重试的中间失败不会写入对话历史，也只以最终状态计入失败连击计数。重试次数通过工具结果的 `attempts` 字段与观测记录透出。
+**自动重试规则**：仅当 `retryable == True` 且工具声明 `retry_safe = True` 时，Agent 才对该失败做系统级自动重试（指数退避 + 抖动，默认最多重试 `FOLIUM_MAX_TOOL_RETRIES` 次，默认 3）。`retry_safe` 默认 `True`，适合幂等、无副作用的读/查询/外部网络工具；写文件、编辑、执行 shell、子 Agent 等有副作用或非幂等的工具应显式设为 `False`，避免重复执行造成二次副作用。自动重试的中间失败不会写入对话历史，也只以最终状态计入失败连击计数。重试次数通过工具结果的 `attempts` 字段与观测记录透出。
 
 如果连续 5 次工具参数校验失败，Agent 会停止当前任务并返回：
 
@@ -492,23 +492,40 @@ folium/
 - 评估与反馈机制
 - Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
 
+## Long-term memory
+
+Memory is stored under the current project's git root as a set of per-category Markdown
+files in `~/.folium/projects/<slug>/` — `user.md` (user profile and collaboration
+preferences), `feedback.md` (methodological corrections and confirmed approaches), and
+`project.md` (project context, decisions, open items). The git root is found by walking
+up the filesystem for a `.git` directory, and the slug sanitises that path to
+alphanumeric characters (hashing when it exceeds 200 chars) so different checkouts of
+the same project share one memory location and sibling repos stay separate.
+
+The main agent reaches memory through the ordinary `read_file` / `write_file` /
+`edit_file` tools: the system prompt injects the three files as background context and
+Rule 15 asks it to update them only for durable facts. The `memory` tool is removed.
+
 ## Background memory maintenance
 
-The Web server schedules a conservative background memory pass after the response is
-fully sent. By default, it runs after 10 completed turns without main-agent memory use,
-uses the same model as the main agent, and is limited to 5 model/tool rounds with a
-2,000-token output budget. It receives a copy of the completed main-agent messages and
+A conservative background pass runs after the configured number of completed turns
+(`FOLIUM_MEMORY_MAINTENANCE_TURNS`, default 5) without the main agent writing to this
+project's memory directory. It receives a copy of the completed main-agent messages and
 the same visible tool schemas, then appends a final English memory-maintenance user
-prompt. Runtime execution remains memory-only: calls to any other visible tool are
-rejected without side effects.
+prompt. It is limited to 5 model/tool rounds with a 2,000-token output budget, and its
+allow-list tools are `read_file`, `grep`, `glob` freely plus `write_file` / `edit_file`
+clamped to the project memory directory — any other tool call is rejected without side
+effects, and any write outside the memory directory is refused.
 
-The pass may choose `NO_CHANGE`. It skips rather than truncates context when the copied
-request plus its output budget would exceed the model context limit, and treats that
-pass as checked. Its trace records the copied-context source, message and visible-tool
-counts, approximate input tokens, rejected tool calls, final status, and cache-hit
-tokens, without recording memory contents. Memory writes use version checks so a
-concurrent main-agent write wins; the background task rereads and retries once, then
-skips conflicts.
+The main/background agents are mutually exclusive for a given project: if the main agent
+already wrote to this project's memory dir on the current turn (detected by scanning its
+tool calls for `write_file` / `edit_file` into those paths), the background pass is
+skipped and the checkpoint clears. The pass may choose `NO_CHANGE`. It skips rather than
+truncates context when the copied request plus its output budget would exceed the model
+context limit, and treats that pass as checked. A watchdog abandons a pass that hangs past
+a wall-clock limit so later turns can retry instead of staying wedged. Its trace records
+the copied-context source, message and visible-tool counts, approximate input tokens,
+rejected tool calls, final status, and cache-hit tokens, without recording memory contents.
 
 ## 测试
 

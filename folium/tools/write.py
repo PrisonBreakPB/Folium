@@ -20,7 +20,6 @@ class WriteFileTool(Tool):
         "Create a new file or write the complete contents of a file, replacing any existing contents. "
         "Use this tool to create complete LaTeX (.tex) source files. "
         "Do not create or overwrite files through bash with echo, cat, heredocs, or shell redirection. "
-        "Never use this tool to create or modify memory.md; use the memory tool to manage persistent long-term memory. "
         "For targeted edits to an existing file, use edit_file instead."
     )
     args_model = WriteFileArgs

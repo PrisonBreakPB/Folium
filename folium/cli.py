@@ -49,7 +49,8 @@ from .sandbox.session import (
     use_copy_workspace,
 )
 from .edit_approval import ApprovalDecision
-from .memory_maintenance import MemoryMaintenanceScheduler, build_memory_maintenance_runner
+from .memory_maintenance import MemoryMaintenanceScheduler, build_memory_maintenance_runner, main_agent_wrote_to_memory
+from . import memory_store
 from . import __version__
 
 console = Console()
@@ -149,12 +150,21 @@ def _parse_args():
 def main():
     # 中文 Windows 控制台默认 codepage 是 GBK(936)；模型可能输出 GBK 无法表示的
     # 字符(如 emoji)，写 stdout 会抛 UnicodeEncodeError 中断整条响应；且 Ink 前端
-    # 按 UTF-8 读取后端 stdout。这里在主流程最开头统一把两个流强行配成 UTF-8，
-    # 同时把控制台输出代码页切到 UTF-8(65001)，否则写出的 UTF-8 中文会被 936
-    # 终端按 GBK 解码成乱码。只切输出侧；输入码页保持与 sys.stdin(未强制 UTF-8)一致。
+    # 按 UTF-8 读取后端 stdout。先解析 args(需判断是否 --jsonl)，再统一配流。
+    args = _parse_args()
+    # 输出侧一律强制 UTF-8；同时把控制台输出代码页切到 UTF-8(65001)，否则写出的
+    # UTF-8 中文会被 936 终端按 GBK 解码成乱码。
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    # 输入侧分场景：终端 REPL 的 stdin 来自控制台(GBK)，保持不强制；而 JSONL 后端
+    # 的 stdin 是 Ink 前端以 UTF-8 写入的 pipe，若按 GBK+surrogateescape 解码中文，
+    # 会产生非法代理字符(\udcXX)，回写 stdout 时抛 "surrogates not allowed"。故仅
+    # 在 --jsonl(pipe 输入)下把 stdin 也配成 UTF-8。
+    if getattr(args, "jsonl", False):
+        for stream in (sys.stdin,):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
     if sys.platform == "win32":
         try:
             import ctypes
@@ -162,7 +172,6 @@ def main():
             ctypes.windll.kernel32.SetConsoleOutputCP(65001)
         except Exception:
             pass
-    args = _parse_args()
     # JSONL is the protocol used by the Ink frontend's Python backend.
     if getattr(args, "ui", "python") == "ink" and not getattr(args, "jsonl", False):
         _launch_ink_ui()
@@ -362,9 +371,8 @@ def _run_once(agent: Agent, prompt: str, config: Config, workspace: str, session
         session_id=session_id,
         messages=copy.deepcopy(agent._full_messages()),
         visible_tools=copy.deepcopy(agent._tool_schemas()),
-        main_agent_used_memory=any(
-            message.get("role") == "tool" and message.get("name") == "memory"
-            for message in agent.transcript[transcript_start:]
+        main_agent_used_memory=main_agent_wrote_to_memory(
+            agent.transcript[transcript_start:]
         ),
         main_prompt_tokens=getattr(agent.llm, "last_prompt_tokens", 0),
         main_completion_tokens=getattr(agent.llm, "last_completion_tokens", 0),
@@ -638,9 +646,8 @@ def _repl(agent: Agent, config: Config, workspace: str, session_id: str | None =
                 session_id=current_session_id,
                 messages=copy.deepcopy(agent._full_messages()),
                 visible_tools=copy.deepcopy(agent._tool_schemas()),
-                main_agent_used_memory=any(
-                    message.get("role") == "tool" and message.get("name") == "memory"
-                    for message in agent.transcript[transcript_start:]
+                main_agent_used_memory=main_agent_wrote_to_memory(
+                    agent.transcript[transcript_start:]
                 ),
                 main_prompt_tokens=getattr(agent.llm, "last_prompt_tokens", 0),
                 main_completion_tokens=getattr(agent.llm, "last_completion_tokens", 0),
@@ -1061,9 +1068,10 @@ class _CliMaintenance:
 
     def _run(self, agent: Agent, config: Config):
         asyncio.set_event_loop(self.loop)
+        memory_store.ensure_memory_dir(Path.cwd())
         self.scheduler = MemoryMaintenanceScheduler(
             lambda: build_memory_maintenance_runner(agent, config),
-            threshold=getattr(config, "memory_maintenance_turns", 10),
+            threshold=config.memory_maintenance_turns,
             max_context_tokens=getattr(
                 getattr(agent, "context", None),
                 "max_tokens",

@@ -4,8 +4,9 @@ import os
 import platform
 from pathlib import Path
 
-MEMORY_FILE = Path(r"D:\learn-Agent\Folium\memory.md")
-MAX_MEMORY_CHARS = 2000
+from . import memory_store
+
+MAX_MEMORY_CHARS_PER_FILE = 2000
 
 _ROLE_FALLBACK = """\
 You are Folium, an AI research assistant designed to support the full academic research workflow.
@@ -37,19 +38,34 @@ def _load_role() -> str:
         return _ROLE_FALLBACK
 
 
-def _memory_section() -> str:
-    try:
-        memory = MEMORY_FILE.read_text(encoding="utf-8-sig").strip()
-    except OSError:
-        return ""
-    if not memory:
-        return ""
-    memory = memory[:MAX_MEMORY_CHARS]
-    return f"""# Long-Term Memory
-The following is persistent user-provided context. Use it as background information,
-but prioritize the current user request when they conflict.
+_MEMORY_SECTION_LABELS = {
+    "user": "User profile and collaboration preferences",
+    "feedback": "Methodological corrections and confirmed approaches",
+    "project": "Project context, decisions, and open items",
+}
 
-{memory}"""
+
+def _memory_section() -> str:
+    blocks = []
+    for category, path in memory_store.current_memory_file_paths().items():
+        label = _MEMORY_SECTION_LABELS.get(category, category)
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not content:
+            continue
+        content = content[:MAX_MEMORY_CHARS_PER_FILE]
+        blocks.append(f"## {label}\n\n{content}")
+    if not blocks:
+        return ""
+    return f"""# Long-Term Memory
+The following is persistent context for this project. Use it as background information,
+but prioritize the current user request when they conflict. Update these files via the
+`write_file` / `edit_file` tools when the user states durable facts or confirms decisions —
+do not silently accumulate here on every turn.
+
+{"\n\n".join(blocks)}"""
 
 
 def system_prompt(tools, skills=None) -> str:
@@ -77,7 +93,7 @@ def system_prompt(tools, skills=None) -> str:
 12. **Handle runtime reminders.** Messages enclosed in `<reminder>...</reminder>` are internal Folium workflow reminders, not user-provided task content. Follow them when relevant, but do not quote them or present them as part of the user's request.
 13. **Respect LaTeX boundaries.** Edit .tex files only when the user explicitly asks. Otherwise inspect, compile-check, locate issues, and suggest changes.
 14. **Do not commit unless asked.** Only create git commits when the user explicitly requests it.
-15. **Use long-term memory selectively.** Use the `memory` tool only for user-requested memories or durable preferences, confirmed decisions, stable research context, and open items. Do not save secrets, temporary guesses, full chat logs, or raw tool output.
+15. **Use long-term memory selectively.** The project memory directory holds three files (`user.md`, `feedback.md`, `project.md`); review them as background context. Update them with `write_file`/`edit_file` only for durable preferences, confirmed decisions, stable research context, or open items — not for secrets, temporary guesses, full chat logs, or raw tool output.
 
 {_PARALLEL_TOOLS}
 

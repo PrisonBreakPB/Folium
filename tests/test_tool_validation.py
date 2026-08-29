@@ -52,6 +52,10 @@ class StructuredFailureTool(Tool):
     name = "structured_failure"
     description = "Return a structured tool failure."
     args_model = _AnyArgs
+    # This test verifies error propagation, not the auto-retry loop (which is
+    # covered separately in test_tool_retry.py). Allowing retry here would burn
+    # the full 10-attempt exponential backoff on the retryable network failure.
+    retry_safe = False
 
     def execute(self):
         return ToolFailure(
@@ -99,7 +103,6 @@ class ToolValidationTests(unittest.TestCase):
             "paper_validate": {"papers": [{"title": "Attention Is All You Need"}]},
             "arxiv_search": {"query": "event-triggered control"},
             "session_history": {"action": "search"},
-            "memory": {"section": "user_preferences", "content": "Prefer Chinese responses."},
         }
 
         for tool in ALL_TOOLS:

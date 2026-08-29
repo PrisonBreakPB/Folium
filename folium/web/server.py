@@ -20,6 +20,7 @@ from ..memory_maintenance import (
     MemoryAgent,
     MemoryMaintenanceScheduler,
     build_memory_maintenance_runner,
+    main_agent_wrote_to_memory,
 )
 from ..session import (
     calculate_session_stats,
@@ -310,10 +311,7 @@ async def chat(req: ChatRequest):
                     "last_llm_request_had_visible_tools",
                     False,
                 )
-                completion["main_agent_used_memory"] = any(
-                    message.get("role") == "tool" and message.get("name") == "memory"
-                    for message in turn_transcript
-                )
+                completion["main_agent_used_memory"] = main_agent_wrote_to_memory(turn_transcript)
                 queue.put_nowait({"type": "done", "content": ""})
         completion: dict = {}
         task.add_done_callback(_on_complete)
@@ -635,7 +633,7 @@ def run_server(agent: Agent, config: Config, host: str = "0.0.0.0", port: int = 
     _state["dirty"] = False
     _state["memory_maintenance"] = MemoryMaintenanceScheduler(
         lambda: _new_memory_maintenance_runner(agent, config),
-        threshold=getattr(config, "memory_maintenance_turns", 10),
+        threshold=config.memory_maintenance_turns,
         max_context_tokens=getattr(
             getattr(agent, "context", None),
             "max_tokens",

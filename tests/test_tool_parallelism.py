@@ -1,6 +1,6 @@
 import unittest
 
-from folium.agent import _NEVER_PARALLEL_TOOLS, _should_parallelize_tool_batch
+from folium.agent import _should_parallelize_tool_batch
 from folium.llm import ToolCall
 from folium.prompt import _PARALLEL_TOOLS
 
@@ -74,10 +74,6 @@ class ToolParallelismTests(unittest.TestCase):
         ]
 
         self.assertFalse(_should_parallelize_tool_batch(tool_calls))
-
-    def test_memory_tool_never_runs_in_parallel(self):
-        self.assertIn("memory", _NEVER_PARALLEL_TOOLS)
-        self.assertFalse(_should_parallelize_tool_batch(_tool_calls("web_search", "memory")))
 
     def test_prompt_matches_serial_tool_policy(self):
         self.assertIn("Do not batch bash or agent calls", _PARALLEL_TOOLS)

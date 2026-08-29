@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
+DEFAULT_MEMORY_MAINTENANCE_TURNS = 5
 
 
 @dataclass
@@ -68,7 +69,7 @@ class Config:
     model_fast: str = "gpt-4o-mini"
     model_flagship: str = "gpt-4o"
     token_estimator: str = "approx"
-    memory_maintenance_turns: int = 10
+    memory_maintenance_turns: int = DEFAULT_MEMORY_MAINTENANCE_TURNS
     memory_maintenance_max_steps: int = 5
     memory_maintenance_max_tokens: int = 2000
 
@@ -122,7 +123,10 @@ class Config:
             model_flagship=os.getenv("FOLIUM_MODEL_FLAGSHIP", "gpt-4o"),
             token_estimator=os.getenv("FOLIUM_TOKEN_ESTIMATOR", "approx"),
             memory_maintenance_turns=int(
-                os.getenv("FOLIUM_MEMORY_MAINTENANCE_TURNS", "10")
+                os.getenv(
+                    "FOLIUM_MEMORY_MAINTENANCE_TURNS",
+                    str(DEFAULT_MEMORY_MAINTENANCE_TURNS),
+                )
             ),
             memory_maintenance_max_steps=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS", "5")

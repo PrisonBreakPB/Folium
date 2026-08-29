@@ -12,6 +12,7 @@ from typing import TextIO
 
 from .context import estimate_tokens
 from .edit_approval import ApprovalDecision
+from .memory_maintenance import main_agent_wrote_to_memory
 from .sandbox.session import (
     configure_host_workspace,
     get_current_session,
@@ -172,9 +173,8 @@ class JsonlServer:
             session_id=self.session_id,
             messages=copy.deepcopy(self.agent._full_messages()),
             visible_tools=copy.deepcopy(self.agent._tool_schemas()),
-            main_agent_used_memory=any(
-                message.get("role") == "tool" and message.get("name") == "memory"
-                for message in self.agent.transcript[transcript_start:]
+            main_agent_used_memory=main_agent_wrote_to_memory(
+                self.agent.transcript[transcript_start:]
             ),
             main_prompt_tokens=getattr(self.agent.llm, "last_prompt_tokens", 0),
             main_completion_tokens=getattr(self.agent.llm, "last_completion_tokens", 0),
