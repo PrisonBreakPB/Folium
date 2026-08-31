@@ -110,6 +110,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const draftRef = useRef("");
+  const [menuVisible, setMenuVisible] = useState(false);
   const skillCommands = useMemo(() => skills.map((name) => ({command: `/${name}`, description: "Skill"})), [skills]);
   const matches = useMemo(() => {
     if (!input.startsWith("/") || /\s/.test(input)) return [];
@@ -139,6 +140,10 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       onShutdown();
       return;
     }
+    if (key.tab && !key.shift) {
+      setMenuVisible((visible) => !visible);
+      return;
+    }
     const newlineRequested = (key.return && (key.shift || key.meta)) || (key.ctrl && (value === "j" || value === "\n"));
     if (newlineRequested) {
       const next = Array.from(input);
@@ -151,7 +156,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
     const contentWidth = Math.max(8, (stdout.columns || 80) - 7);
     const visualRows = wrapInput(input, contentWidth);
     if (!key.ctrl && !key.meta && key.upArrow) {
-      if (matches.length) {
+      if (matches.length && menuVisible) {
         setSelected((index) => (index - 1 + matches.length) % matches.length);
       } else if (visualRows.length > 1 && moveVertical(visualRows, cursor, -1) !== null) {
         setCursor(moveVertical(visualRows, cursor, -1) as number);
@@ -165,7 +170,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       return;
     }
     if (!key.ctrl && !key.meta && key.downArrow) {
-      if (matches.length) {
+      if (matches.length && menuVisible) {
         setSelected((index) => (index + 1) % matches.length);
       } else if (visualRows.length > 1 && moveVertical(visualRows, cursor, 1) !== null) {
         setCursor(moveVertical(visualRows, cursor, 1) as number);
@@ -215,6 +220,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
     // Ink exposes PowerShell's Backspace (DEL) as key.delete and hides the raw sequence.
     const backspacePressed = key.backspace || key.delete || value === "\b" || value === "\u007f" || value === "\u001b\b";
     if (backspacePressed) {
+      setMenuVisible(false);
       const characters = Array.from(input);
       const offset = cursor - 1;
       if (offset >= 0 && offset < characters.length) {
@@ -226,6 +232,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
       return;
     }
     if (!key.ctrl && !key.meta && value) {
+      setMenuVisible(false);
       const characters = Array.from(input);
       const inserted = Array.from(value);
       characters.splice(cursor, 0, ...inserted);
@@ -241,7 +248,7 @@ export default function PromptInput({ready, skills, busy, approval, onRequest, o
   return (
     <Box flexDirection="column" marginTop={1}>
       <ApprovalPanel approval={approval} />
-      <CompletionList items={matches} selected={selected} />
+      <CompletionList items={menuVisible ? matches : []} selected={selected} />
       <Box flexDirection="column" borderStyle="round" borderColor={busy ? "yellow" : "cyan"} paddingX={1}>
         <FooterStatus ready={ready} />
         <Box flexDirection="column" width={Math.max(20, stdout.columns || 80)}>
