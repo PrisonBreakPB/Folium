@@ -1,0 +1,188 @@
+
+\documentclass[lettersize,journal]{IEEEtran}
+
+% --- 数学、符号、字体宏包 ---
+\usepackage{amsmath,amsfonts}
+\usepackage{bm}
+\usepackage{mathrsfs}
+\usepackage{amssymb}
+
+% --- 算法宏包（按需注释/启用）---
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+%\usepackage{algorithmic}
+\usepackage[algo2e,ruled,vlined]{algorithm2e}
+%\usepackage[ruled,linesnumbered]{algorithm2e}
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+% --- 表格 / 图片 ---
+\usepackage{array}
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\usepackage{graphicx}
+\usepackage{epstopdf}
+\usepackage{epsfig}
+\usepackage{booktabs}
+
+% --- 版面 / 其他 ---
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{color}
+\usepackage{setspace}
+\usepackage{adjustbox}
+\usepackage[numbers,sort&compress]{natbib}
+
+% 数学公式允许跨页断行
+\allowdisplaybreaks[4]
+% 断词（可选）
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+
+% --- 定理 / 结论环境 ---
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{remark}{Remark}
+\newtheorem{example}{Example}
+\newtheorem{proof}{Proof}
+\newtheorem{case}{case}
+\newtheorem{problem}{Problem}
+
+\begin{document}
+
+% ======================================================================
+%  题目 / 作者 / 基金 / 联系方式（此处填本次论文信息）
+% ======================================================================
+\title{Placeholder: Paper Title\\*[1em]{\LARGE (rewrite this title)}}
+
+\author{Author One~\IEEEmembership{...}, Author Two,
+  Corresponding Author~\IEEEmembership{...}
+\thanks{Financial support placeholder.}%
+\thanks{Affiliation and email placeholder.}%
+}
+
+\maketitle
+
+% ======================================================================
+%  Abstract / Keywords
+% ======================================================================
+\begin{abstract}
+Abstract placeholder: problem, method, stability conclusion, simulation.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Keywords placeholder: control systems, multi-agent, ...
+\end{IEEEkeywords}
+
+% ======================================================================
+%  I. Introduction —— 由"文献调研结果"填充
+%   段落规划：研究背景与领域发展 → 现状问题 → 本文方法 → 贡献列表
+% ======================================================================
+\section{Introduction}
+\IEEEPARstart{O}{}verview placeholder.
+
+Related work placeholder (cite via \cite{}).
+
+Contributions:
+\begin{enumerate}
+\item Contribution 1 placeholder.
+\item Contribution 2 placeholder.
+\item Contribution 3 placeholder.
+\end{enumerate}
+
+The rest is organized as follows. Section II ..., Section III ..., Section IV ..., Section V ...
+
+% 记法占位（Notations），若有需可在此列 $\cdot$ 定义。
+
+% ======================================================================
+%  II. Preliminaries and Problem Formulation
+%      Graph Theory / 系统模型 / 攻击模型 / 假设与引理
+% ======================================================================
+\section{Preliminaries and Problem Formulation}
+
+\subsection{Graph Theory}
+Graph theory background placeholder.\begin{assumption}Assumption placeholder.\end{assumption}
+\begin{lemma}Lemma placeholder.\end{lemma}
+
+\subsection{Problem Formulation}
+System model placeholder.
+\begin{align}
+% 状态方程占位
+\dot{x}_{ik,1} &= x_{ik,2} \nonumber\\
+\dot{x}_{ik,2} &= u_{ik}+f_{ik}+d_{ik}
+\label{eq:system}
+\end{align}
+where the symbols are defined here.
+
+\begin{assumption}Assumption placeholder.\end{assumption}
+\begin{remark}Remark placeholder.\end{remark}
+
+% ======================================================================
+%  III. Main Result —— 由"理论草稿"填充（本类论文重心）
+%      DRESO 设计 → 观测器设计 → 控制器设计 → 稳定性分析
+% ======================================================================
+\section{Main Result}
+
+{\subsection{DRESO Design}}
+Observer/error system placeholder.
+\begin{align}
+% 观测器方程占位
+\label{eq:observer}
+\end{align}
+\begin{lemma}Lemma placeholder.\end{lemma}
+
+{\subsection{PTFDRO Design}}
+Distributed observer placeholder.
+\begin{theorem}
+Theorem statement placeholder.
+\label{thm:1}
+\end{theorem}
+\textit{Proof:} Proof placeholder.
+
+{\subsection{Prescribed-time Optimal Controller Design}}
+Controller design placeholder.
+\textit{Step 1:} placeholder.
+\begin{align}
+% 代价函数 / HJB 方程 / 控制器占位
+\label{eq:controller}
+\end{align}
+\textit{Step 2:} placeholder.
+
+{\subsection{Stability Analysis}}
+Stability analysis placeholder.
+\begin{theorem}
+Stability theorem placeholder.
+\label{thm:2}
+\end{theorem}
+\textit{Proof:} Using the Lyapunov function $V_i(t)$ Proof placeholder.
+
+% ======================================================================
+%  IV. Simulation —— 由"实验代码跑出的图片"填充
+% ======================================================================
+\section{Simulation}
+Simulation setup placeholder (topology, parameters, baselines). Figures:
+
+\begin{figure}[h]
+	\centering
+	% \includegraphics[height=9cm]{你的实验图.png}
+	\caption{Placeholder: experimental figure 1.}
+	\label{fig:1}
+\end{figure}
+
+% ======================================================================
+%  V. Conclusion
+% ======================================================================
+\section{Conclusion}
+Conclusion placeholder.
+
+% ======================================================================
+%  References：generated from "paper_search/paper_validate metadata" 生成 .bib
+% ======================================================================
+\bibliographystyle{IEEEtran}
+\bibliography{IEEEabrv,main}
+
+\end{document}
