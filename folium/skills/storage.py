@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .parser import parse_skill_file
@@ -7,6 +8,10 @@ from .types import SKILL_MD_FILE, Skill
 
 
 def default_skills_root() -> Path:
+    """Return the global skills root when FOLIUM_SKILLS_ROOT is set, else cwd/skills."""
+    env = os.getenv("FOLIUM_SKILLS_ROOT")
+    if env:
+        return Path(env)
     return Path.cwd() / "skills"
 
 
