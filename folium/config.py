@@ -8,6 +8,7 @@ from pathlib import Path
 
 DEFAULT_MAX_CONTEXT_TOKENS = 1_000_000
 DEFAULT_MEMORY_MAINTENANCE_TURNS = 5
+DEFAULT_MEMORY_MAINTENANCE_LIMIT = 50
 
 
 @dataclass
@@ -72,6 +73,7 @@ class Config:
     memory_maintenance_turns: int = DEFAULT_MEMORY_MAINTENANCE_TURNS
     memory_maintenance_max_steps: int = 5
     memory_maintenance_max_tokens: int = 2000
+    memory_maintenance_limit: int = DEFAULT_MEMORY_MAINTENANCE_LIMIT
 
     def endpoint_profiles(self) -> list[LLMProfile]:
         """Read the active profile and its ordered fallback profiles from env."""
@@ -133,6 +135,12 @@ class Config:
             ),
             memory_maintenance_max_tokens=int(
                 os.getenv("FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS", "2000")
+            ),
+            memory_maintenance_limit=int(
+                os.getenv(
+                    "FOLIUM_MEMORY_MAINTENANCE_LIMIT",
+                    str(DEFAULT_MEMORY_MAINTENANCE_LIMIT),
+                )
             ),
         )
 

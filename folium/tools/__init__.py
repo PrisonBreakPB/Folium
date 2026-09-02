@@ -14,6 +14,7 @@ from .paper_search import PaperSearchTool
 from .paper_validate import PaperValidateTool
 from .arxiv_search import ArxivSearchTool
 from .session_history import SessionHistoryTool
+from .memory_atom import MemoryAtomTool
 
 ALL_TOOLS = [
     BashTool(),
@@ -31,6 +32,7 @@ ALL_TOOLS = [
     PaperValidateTool(),
     ArxivSearchTool(),
     SessionHistoryTool(),
+    MemoryAtomTool(),
 ]
 
 

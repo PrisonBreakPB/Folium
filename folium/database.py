@@ -100,6 +100,39 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
             ON traces(session_id, started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_trace_events_trace_index
             ON trace_events(trace_id, event_index);
+
+        CREATE TABLE IF NOT EXISTS l1_atom (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS l1_atom_fts USING fts5(
+            content, topic,
+            content='l1_atom', content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS l1_atom_ai AFTER INSERT ON l1_atom BEGIN
+            INSERT INTO l1_atom_fts(rowid, content, topic) VALUES (new.id, new.content, new.topic);
+        END;
+        CREATE TRIGGER IF NOT EXISTS l1_atom_ad AFTER DELETE ON l1_atom BEGIN
+            INSERT INTO l1_atom_fts(l1_atom_fts, rowid, content, topic) VALUES('delete', old.id, old.content, old.topic);
+        END;
+        CREATE TRIGGER IF NOT EXISTS l1_atom_au AFTER UPDATE ON l1_atom BEGIN
+            INSERT INTO l1_atom_fts(l1_atom_fts, rowid, content, topic) VALUES('delete', old.id, old.content, old.topic);
+            INSERT INTO l1_atom_fts(rowid, content, topic) VALUES (new.id, new.content, new.topic);
+        END;
+
+        CREATE TABLE IF NOT EXISTS l1_cursor (
+            session_id TEXT PRIMARY KEY,
+            last_position INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_l1_atom_session
+            ON l1_atom(session_id);
         """
     )
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}

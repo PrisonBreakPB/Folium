@@ -69,20 +69,10 @@ _MEMORY_SECTION_LABELS = {
 
 
 def _memory_section() -> str:
-    blocks = []
-    for category, path in memory_store.current_memory_file_paths().items():
-        label = _MEMORY_SECTION_LABELS.get(category, category)
-        try:
-            content = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if not content:
-            continue
-        content = content[:MAX_MEMORY_CHARS_PER_FILE]
-        blocks.append(f"## {label}\n\n{content}")
-    if not blocks:
-        return ""
-    return "\n\n".join(blocks)
+    # The three user/feedback/project Markdown memory files are retired. L1 atom
+    # memory is injected on-demand via the background extractor instead; a
+    # dedicated user persona file is planned separately.
+    return ""
 
 
 def _skills_section(skills) -> str:
