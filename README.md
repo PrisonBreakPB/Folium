@@ -22,7 +22,8 @@
 > 
 > 工具调用、模型推理、上下文压缩、文件变更全程记录，可复盘。
 
-## 目录
+<details>
+<summary>📑 目录</summary>
 
 - [适用场景](#适用场景)
 - [快速开始](#快速开始)
@@ -34,8 +35,13 @@
 - [本地可观测性](#本地可观测性)
 - [项目结构](#项目结构)
 - [科研智能体改造方向](#科研智能体改造方向)
+- [长期记忆](#长期记忆)
+- [后台记忆维护](#后台记忆维护)
 - [测试](#测试)
+- [写入与审批](#写入与审批)
 - [License](#license)
+
+</details>
 
 Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助你检索与阅读论文、检查控制理论中的关键推导、生成并运行仿真实验，并沉淀可复盘的研究过程。项目同时建设**工具调用、Docker 沙箱、记忆和可观测性**等 Agent Harness 组件。
 
@@ -174,9 +180,9 @@ FOLIUM_DOCKER_NETWORK       Docker 沙箱网络模式，默认 bridge；如需�
 FOLIUM_DOCKER_CPUS          Docker 沙箱 CPU 限制，默认 1
 FOLIUM_DOCKER_MEMORY        Docker 沙箱内存限制，默认 2g
 BRAVE_SEARCH_API_KEY        Brave Search API key，用于 web_search 工具
-FOLIUM_MEMORY_MAINTENANCE_TURNS               Turns without memory maintenance before scheduling (default 5)
-FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           Maximum maintenance model/tool rounds (default 5)
-FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          Background model output limit (default 2000)
+FOLIUM_MEMORY_MAINTENANCE_TURNS               连续多少轮没有进行记忆维护后触发后台维护（默认 5）
+FOLIUM_MEMORY_MAINTENANCE_MAX_STEPS           单次维护的模型/工具调用轮数上限（默认 5）
+FOLIUM_MEMORY_MAINTENANCE_MAX_TOKENS          后台维护模型输出上限（默认 2000）
 FOLIUM_LLM_TIMEOUT            OpenAI 客户端请求超时（秒），默认 30
 FOLIUM_CIRCUIT_FAILURE_THRESHOLD  熔断器触发阈值（连续失败次数），默认 3
 FOLIUM_CIRCUIT_COOLDOWN_SECONDS    熔断器冷却时长（秒），默认 10
@@ -296,6 +302,9 @@ paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial 
 - 如果连续 3 个工具调用轮次没有成功更新 todo，Agent 会向 messages 注入 `<reminder>Update your todos.</reminder>`
 - Web 后端提供 `/todos`，并在 todo 更新时通过 SSE 发送 `todo_update`
 
+<details>
+<summary>🧩 工具开发细节：接口、调用流程与自动重试</summary>
+
 工具接口保持简单：
 
 ```python
@@ -346,6 +355,8 @@ Consecutive 5 tool call failures, current task stopped.
 - 注册到 `folium/tools/__init__.py` 的 `ALL_TOOLS`
 - 补充 schema/参数校验测试，有副作用的工具还要覆盖主要成功和失败路径
 
+</details>
+
 ## Skills
 
 Folium 支持轻量级 skill。Skill 位于项目根目录的 `skills/`，每个 skill 使用一个目录和一个 `SKILL.md`：
@@ -374,6 +385,9 @@ description: Use when the user asks for this specialized workflow.
 
 ## 上下文压缩
 
+<details>
+<summary>🗜️ 上下文压缩机制详解</summary>
+
 Folium 采用预处理层加三级渐进式上下文压缩策略，自动触发时优先使用 LLM API 返回的 usage，并对新增内容使用本地估算：
 
 | 层级 | 触发阈值 | 操作 | 成本 |
@@ -401,6 +415,8 @@ Token 计算：
 费用计算：
 - 支持缓存 token 单独计费（`prompt_cache_hit_tokens`）
 - 费用公式：`(prompt - cached) × 输入价 + cached × 缓存价 + completion × 输出价`
+
+</details>
 
 ## 本地可观测性
 
@@ -435,6 +451,9 @@ data/folium.db
 - `context_snapshot`：上下文压缩前后的 `messages` 快照
 - `agent_result`：最终回复摘要、消息数量和上下文 token 估算
 
+<details>
+<summary>🔍 可观测性配置与查看方式</summary>
+
 可观测性配置：
 
 ```text
@@ -458,6 +477,8 @@ FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 /traces
 /trace <trace_id>
 ```
+
+</details>
 
 ## 项目结构
 
@@ -499,40 +520,17 @@ folium/
 - 评估与反馈机制
 - Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
 
-## Long-term memory
+## 长期记忆
 
-Memory is stored under the current project's git root as a set of per-category Markdown
-files in `~/.folium/projects/<slug>/` — `user.md` (user profile and collaboration
-preferences), `feedback.md` (methodological corrections and confirmed approaches), and
-`project.md` (project context, decisions, open items). The git root is found by walking
-up the filesystem for a `.git` directory, and the slug sanitises that path to
-alphanumeric characters (hashing when it exceeds 200 chars) so different checkouts of
-the same project share one memory location and sibling repos stay separate.
+长期记忆以分门别类的 Markdown 文件形式存储在当前项目 git 根目录对应的 `~/.folium/projects/<slug>/` 下：`user.md`（用户画像与协作偏好）、`feedback.md`（方法论纠偏与确认有效的工作方式）和 `project.md`（项目背景、决策与待办事项）。git 根目录通过逐级向上查找 `.git` 目录确定；slug 会对该路径做清洗，只保留字母数字（超过 200 字符时改用哈希），这样同一项目的不同 checkout 共享一份记忆位置，而相邻的兄弟仓库彼此隔离。
 
-The main agent reaches memory through the ordinary `read_file` / `write_file` /
-`edit_file` tools: the system prompt injects the three files as background context and
-Rule 15 asks it to update them only for durable facts. The `memory` tool is removed.
+主 Agent 通过普通的 `read_file` / `write_file` / `edit_file` 工具访问记忆：系统提示词会把这三个文件作为背景上下文注入，规则 15 要求它只为持久性事实更新这些文件。原来的 `memory` 工具已被移除。
 
-## Background memory maintenance
+## 后台记忆维护
 
-A conservative background pass runs after the configured number of completed turns
-(`FOLIUM_MEMORY_MAINTENANCE_TURNS`, default 5) without the main agent writing to this
-project's memory directory. It receives a copy of the completed main-agent messages and
-the same visible tool schemas, then appends a final English memory-maintenance user
-prompt. It is limited to 5 model/tool rounds with a 2,000-token output budget, and its
-allow-list tools are `read_file`, `grep`, `glob` freely plus `write_file` / `edit_file`
-clamped to the project memory directory — any other tool call is rejected without side
-effects, and any write outside the memory directory is refused.
+在主 Agent 连续若干个完成轮次（`FOLIUM_MEMORY_MAINTENANCE_TURNS`，默认 5）没有写入本项目记忆目录后，会运行一次保守的后台维护。它会收到已完成的主 Agent 消息副本和相同的可见工具 schema，并附加一条最终的英文记忆维护用户提示。整个过程最多 5 轮模型/工具调用，输出预算 2000 tokens；允许使用的工具为自由使用 `read_file`、`grep`、`glob`，外加被钳制到项目记忆目录内的 `write_file` / `edit_file` —— 其他任何工具调用都会被无副作用地拒绝，任何写到记忆目录之外的请求都会被拒绝。
 
-The main/background agents are mutually exclusive for a given project: if the main agent
-already wrote to this project's memory dir on the current turn (detected by scanning its
-tool calls for `write_file` / `edit_file` into those paths), the background pass is
-skipped and the checkpoint clears. The pass may choose `NO_CHANGE`. It skips rather than
-truncates context when the copied request plus its output budget would exceed the model
-context limit, and treats that pass as checked. A watchdog abandons a pass that hangs past
-a wall-clock limit so later turns can retry instead of staying wedged. Its trace records
-the copied-context source, message and visible-tool counts, approximate input tokens,
-rejected tool calls, final status, and cache-hit tokens, without recording memory contents.
+对同一个项目，主 Agent 与后台 Agent 互斥：如果主 Agent 在当前轮次已经写入过本项目的记忆目录（通过扫描其工具调用中指向这些路径的 `write_file` / `edit_file` 检测），后台维护会被跳过并清空检查点。后台维护可以选择 `NO_CHANGE`（不做任何变更）。当复制的请求加上输出预算会超过模型上下文上限时，它会直接跳过而不是截断上下文，并把该次视为已检查。看门狗会放弃超过墙钟时限仍挂起的维护，让后续轮次可以重试而不是一直卡死。它的 trace 会记录复制的上下文来源、消息数与可见工具数、估算输入 token、被拒绝的工具调用、最终状态和缓存命中 token，但不记录记忆内容本身。
 
 ## 测试
 
