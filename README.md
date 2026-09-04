@@ -25,21 +25,21 @@
 <details>
 <summary>📑 目录</summary>
 
-- [适用场景](#适用场景)
-- [快速开始](#快速开始)
-- [已实现能力](#已实现能力)
-- [Web 界面](#web-界面)
-- [工具系统](#工具系统)
-- [Skills](#skills)
-- [上下文压缩](#上下文压缩)
-- [本地可观测性](#本地可观测性)
-- [项目结构](#项目结构)
-- [科研智能体改造方向](#科研智能体改造方向)
-- [长期记忆](#长期记忆)
-- [后台记忆维护](#后台记忆维护)
-- [测试](#测试)
-- [写入与审批](#写入与审批)
-- [License](#license)
+- [适用场景](#-适用场景)
+- [快速开始](#-快速开始)
+- [已实现能力](#-已实现能力)
+- [Web 界面](#-web-界面)
+- [工具系统](#-工具系统)
+- [Skills](#-skills)
+- [上下文压缩](#-上下文压缩)
+- [本地可观测性](#-本地可观测性)
+- [项目结构](#-项目结构)
+- [科研智能体改造方向](#-科研智能体改造方向)
+- [长期记忆](#-长期记忆)
+- [后台记忆维护](#-后台记忆维护)
+- [测试](#-测试)
+- [写入与审批](#-写入与审批)
+- [License](#-license)
 
 </details>
 
@@ -47,7 +47,7 @@ Folium 正在从通用 Agent 演进为面向科研闭环的工作助手：帮助
 
 ![Folium Web UI](docs/images/folium-web-ui.png)
 
-## 适用场景
+## 🎯 适用场景
 
 Folium 覆盖科研工作的四个核心环节：
 
@@ -58,7 +58,7 @@ Folium 覆盖科研工作的四个核心环节：
 
 > 学术检索、PDF 读取与工程 Harness 已具备基础能力；理论检查、结构化论文库和实验闭环仍在持续建设。
 
-## 快速开始
+## 🚀 快速开始
 
 ```bash
 git clone https://github.com/PrisonBreakPB/Folium.git
@@ -232,31 +232,31 @@ FOLIUM_MODEL=qwen3:32b
 
 </details>
 
-## 已实现能力
+## ✅ 已实现能力
 
-- Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
-- OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
-- Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
-- 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
-- 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
-- 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
-- Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
-- 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
+- 💬 Web 对话界面：支持新建对话、切换历史对话、流式响应、工具调用展示和 todo 状态展示
+- 🔌 OpenAI 兼容模型接入：通过 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`FOLIUM_MODEL` 配置模型
+- 🔁 Agent 循环：模型可以多轮调用工具，再基于工具结果继续推理；多步骤任务会通过 todo 工具维护当前进度
+- 🧰 工具系统：支持读文件、写文件、本地搜索、Web 搜索、网页读取、编辑、执行 shell 命令、子 Agent 和 todo 列表，执行前会统一校验工具参数，并对长时间无响应的工具调用做超时兜底
+- 💾 本地持久化：会话、完整消息、trace 与 trace event 统一保存到 SQLite 数据库 `data/folium.db`
+- 🗜️ 上下文压缩：三层渐进式压缩（截断工具输出、占位符压缩、LLM 摘要）
+- 📊 Token 统计：实时显示上下文窗口占用、本轮用量、会话累计（含缓存命中率和费用）
+- 🔍 本地可观测性：记录一次用户输入触发的 Agent 执行 trace、LLM 调用、工具调用和上下文压缩
 
-## Web 界面
+## 🖥️ Web 界面
 
 Web 入口提供：
 
-- 新建对话
-- 历史对话列表
-- 切换和删除历史对话
-- 流式输出
-- 工具调用标签
-- 上下文窗口占用（真实 token，带百分比进度条）
-- 本轮用量（输入、输出、缓存、费用）
-- 会话累计（总 token、费用、轮次柱状图）
-- 历史统计（缓存命中、输出、总费用、缓存命中率）
-- 常用命令按钮：帮助、Token 用量、压缩上下文
+- 🆕 新建对话
+- 📜 历史对话列表
+- 🔀 切换和删除历史对话
+- ⚡ 流式输出
+- 🏷️ 工具调用标签
+- 📈 上下文窗口占用（真实 token，带百分比进度条）
+- 💰 本轮用量（输入、输出、缓存、费用）
+- 🧮 会话累计（总 token、费用、轮次柱状图）
+- 🗂️ 历史统计（缓存命中、输出、总费用、缓存命中率）
+- 🎛️ 常用命令按钮：帮助、Token 用量、压缩上下文
 
 当前行为说明：
 
@@ -266,7 +266,7 @@ Web 入口提供：
 - 切换到其他对话前，当前已有内容的对话会自动保存
 - 每个会话同时保留完整历史和当前模型上下文：`messages.content` 保存原始内容，`messages.model_content` 只在内容被裁剪、压缩或注入 skill 后保存模型实际看到的版本；两者相同时只存一份。Web 历史展示使用完整历史，因此被裁剪的网页、PDF 或子 Agent 输出仍可恢复查看
 
-## 工具系统
+## 🧰 工具系统
 
 内置工具位于 `folium/tools/`：
 
@@ -303,7 +303,7 @@ paper_validate  通过 OpenAlex 校验候选论文，标记 confirmed / partial 
 - Web 后端提供 `/todos`，并在 todo 更新时通过 SSE 发送 `todo_update`
 
 <details>
-<summary>🧩 工具开发细节：接口、调用流程与自动重试</summary>
+<summary>🛠️ 工具开发细节：接口、调用流程与自动重试</summary>
 
 工具接口保持简单：
 
@@ -357,7 +357,7 @@ Consecutive 5 tool call failures, current task stopped.
 
 </details>
 
-## Skills
+## 🧩 Skills
 
 Folium 支持轻量级 skill。Skill 位于项目根目录的 `skills/`，每个 skill 使用一个目录和一个 `SKILL.md`：
 
@@ -383,7 +383,7 @@ description: Use when the user asks for this specialized workflow.
 ...
 ```
 
-## 上下文压缩
+## 🗜️ 上下文压缩
 
 <details>
 <summary>🗜️ 上下文压缩机制详解</summary>
@@ -418,7 +418,7 @@ Token 计算：
 
 </details>
 
-## 本地可观测性
+## 🔍 本地可观测性
 
 Folium 将会话与可观测性数据统一保存到本地 SQLite。一次用户输入会生成一个 trace；一次 LLM 调用、工具调用、Agent round、上下文压缩会生成对应 span 或 event。
 
@@ -480,7 +480,7 @@ FOLIUM_TRACE_MAX_PREVIEW_CHARS=1000
 
 </details>
 
-## 项目结构
+## 📁 项目结构
 
 ```text
 folium/
@@ -506,7 +506,7 @@ folium/
     └── static/index.html    Web 前端
 ```
 
-## 科研智能体改造方向
+## 🔬 科研智能体改造方向
 
 后续计划围绕科研工作流和 Harness 组件继续扩展：
 
@@ -520,19 +520,19 @@ folium/
 - 评估与反馈机制
 - Langfuse、Phoenix 或 OpenTelemetry 等外部观测集成
 
-## 长期记忆
+## 🧠 长期记忆
 
 长期记忆以分门别类的 Markdown 文件形式存储在当前项目 git 根目录对应的 `~/.folium/projects/<slug>/` 下：`user.md`（用户画像与协作偏好）、`feedback.md`（方法论纠偏与确认有效的工作方式）和 `project.md`（项目背景、决策与待办事项）。git 根目录通过逐级向上查找 `.git` 目录确定；slug 会对该路径做清洗，只保留字母数字（超过 200 字符时改用哈希），这样同一项目的不同 checkout 共享一份记忆位置，而相邻的兄弟仓库彼此隔离。
 
 主 Agent 通过普通的 `read_file` / `write_file` / `edit_file` 工具访问记忆：系统提示词会把这三个文件作为背景上下文注入，规则 15 要求它只为持久性事实更新这些文件。原来的 `memory` 工具已被移除。
 
-## 后台记忆维护
+## 🧹 后台记忆维护
 
 在主 Agent 连续若干个完成轮次（`FOLIUM_MEMORY_MAINTENANCE_TURNS`，默认 5）没有写入本项目记忆目录后，会运行一次保守的后台维护。它会收到已完成的主 Agent 消息副本和相同的可见工具 schema，并附加一条最终的英文记忆维护用户提示。整个过程最多 5 轮模型/工具调用，输出预算 2000 tokens；允许使用的工具为自由使用 `read_file`、`grep`、`glob`，外加被钳制到项目记忆目录内的 `write_file` / `edit_file` —— 其他任何工具调用都会被无副作用地拒绝，任何写到记忆目录之外的请求都会被拒绝。
 
 对同一个项目，主 Agent 与后台 Agent 互斥：如果主 Agent 在当前轮次已经写入过本项目的记忆目录（通过扫描其工具调用中指向这些路径的 `write_file` / `edit_file` 检测），后台维护会被跳过并清空检查点。后台维护可以选择 `NO_CHANGE`（不做任何变更）。当复制的请求加上输出预算会超过模型上下文上限时，它会直接跳过而不是截断上下文，并把该次视为已检查。看门狗会放弃超过墙钟时限仍挂起的维护，让后续轮次可以重试而不是一直卡死。它的 trace 会记录复制的上下文来源、消息数与可见工具数、估算输入 token、被拒绝的工具调用、最终状态和缓存命中 token，但不记录记忆内容本身。
 
-## 测试
+## 🧪 测试
 
 当前可用的 unittest：
 
@@ -546,10 +546,10 @@ python -m unittest tests.test_tool_validation tests.test_tool_encoding tests.tes
 pytest
 ```
 
-## 写入与审批
+## 🛡️ 写入与审批
 
 Web UI 中，`write_file` 和 `edit_file` 修改 `.tex`、`.bib`、`.sty`、`.py`、`.m`、`.ipynb`、`.sh` 时，会先聚合同一轮的受保护文件变更并展示 diff。用户可以确认应用全部变更、要求修改或拒绝并结束：要求修改不会写入文件，反馈会作为工具结果交给 Agent 生成新的变更，并再次等待审批；拒绝后当前 Agent 任务会停止，不会自动重试。同一批次在拒绝或要求修改后，其他尚未执行的工具调用会被跳过。审批面板支持在多个文件之间切换，并可按需分段加载完整 diff；应用前会再次校验文件基线，避免覆盖审批期间的外部修改。非受保护文件仍直接执行并返回 diff。看起来会写入挂载工作区的 `bash` 命令仍会在执行前展示命令预览并等待用户审批；审批不会自动超时。`general` 子 Agent 会继承同一审批规则。
 
-## License
+## 📄 License
 
 MIT。基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 二开，原作者何宇峰。
